@@ -1,6 +1,0 @@
-{
-  "name": "CodeDrop Workspace",
-  "description": "PROMPTGPT ∞ Style DNA Transfer Engine: глубокое извлечение и перенос стилевой ДНК автора (Текст 1 ➔ Текст 2) с защитой от 15 ИИ-детекторов.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
