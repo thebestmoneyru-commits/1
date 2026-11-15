@@ -35,7 +35,7 @@ const COMMON_FUNCTION_WORDS = new Set([
   "без","через","перед","после","надо","можно","нужно",
 ]);
 
-function fingerprint(text: string): string {
+export function fingerprintStyleSource(text: string): string {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
   return `fnv1a32:${(h >>> 0).toString(16).padStart(8,"0")}:${text.length}`;
@@ -224,7 +224,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
     ? "sufficient" : stats.words >= 120 && stats.sentences >= 6 ? "limited" : "insufficient";
   return {
     profileVersion: STYLE_PROFILE_VERSION, status, confidence: corpusConfidence,
-    corpus: stats, features, warnings, sourceFingerprint: fingerprint(text),
+    corpus: stats, features, warnings, sourceFingerprint: fingerprintStyleSource(text),
   };
 }
 
