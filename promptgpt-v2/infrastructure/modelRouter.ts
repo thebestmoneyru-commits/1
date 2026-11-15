@@ -135,7 +135,10 @@ function numericStatus(error: unknown): number {
 
 export function classifyModelError(error: unknown): ModelErrorKind {
   const message = errorText(error);
-  const upper = message.toUpperCase();
+  const errorName = error && typeof error === "object" && "name" in error
+    ? String((error as { name?: unknown }).name ?? "")
+    : "";
+  const upper = (errorName + " " + message).toUpperCase();
   const status = numericStatus(error);
   if (/API_KEY_INVALID|API KEY NOT VALID|UNAUTHENTICATED|INVALID API KEY/.test(upper) || status === 401 || status === 403) return "invalid-auth";
   if (/SAFETY|BLOCKED BY.*POLICY|PROHIBITED CONTENT/.test(upper)) return "safety-block";
@@ -143,7 +146,7 @@ export function classifyModelError(error: unknown): ModelErrorKind {
   if (/INVALID_ARGUMENT|INVALID REQUEST|BAD REQUEST|MALFORMED/.test(upper) || status === 400) return "invalid-request";
   if (/QUOTA|RESOURCE_EXHAUSTED|DAILY LIMIT|BILLING/.test(upper)) return "quota-exhausted";
   if (/RATE.?LIMIT|TOO MANY REQUESTS/.test(upper) || status === 429) return "rate-limit";
-  if (/TIMEOUT|TIMED OUT|DEADLINE_EXCEEDED|ABORT_ERR/.test(upper) || status === 408 || status === 504) return "timeout";
+  if (/TIMEOUT|TIMED OUT|DEADLINE_EXCEEDED|ABORT_ERR|ABORTERROR|OPERATION WAS ABORTED/.test(upper) || status === 408 || status === 504) return "timeout";
   if (/ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|NETWORK/.test(upper)) return "network";
   if (/UNAVAILABLE|OVERLOADED|INTERNAL SERVER ERROR|BAD GATEWAY/.test(upper) || status === 500 || status === 502 || status === 503) return "unavailable";
   return "unknown";
