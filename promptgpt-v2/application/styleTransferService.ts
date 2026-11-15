@@ -8,6 +8,7 @@ import type { StyleCriticAdapter } from "../critic/styleCritic";
 import type { SurgicalRepairAdapter } from "../repair/surgicalRepair";
 import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
 import type { PropositionAssessment } from "../types";
+import type { LogicalRelationAssessment } from "../semantic/logicalRelationPreservation";
 import type {
   CandidateOutcome, SemanticVerifier, StyleProfiler, StyleTransferRequest,
   StyleTransferResponse, TransferTraceEvent,
@@ -79,10 +80,11 @@ export class StyleTransferService {
         if (request.signal?.aborted) break;
         mark("evaluating-candidates", "Независимая семантическая и стилевая оценка.", candidate.candidateId);
         let assessments: PropositionAssessment[];
+        let relationAssessments: LogicalRelationAssessment[];
         let structureReport: ReturnType<typeof validateLogicalRelationAssessments>;
         let profile: StyleDNAProfile;
         try {
-          const [propositionAssessments, relationAssessments] = await Promise.all([
+          const [propositionAssessments, checkedRelationAssessments] = await Promise.all([
             this.deps.semanticVerifier.assess({
               sourceText: request.sourceText,
               candidateText: candidate.text,
@@ -97,6 +99,7 @@ export class StyleTransferService {
             }),
           ]);
           assessments = propositionAssessments;
+          relationAssessments = checkedRelationAssessments;
           structureReport = validateLogicalRelationAssessments(
             candidate.text, request.inventory.propositions, relationAssessments,
           );
@@ -170,6 +173,11 @@ export class StyleTransferService {
             styleProfiler: this.deps.styleProfiler,
             semanticPolicy: request.semanticPolicy,
             signal: request.signal,
+            initialVerification: {
+              propositionAssessments: assessments,
+              relationAssessments,
+              styleProfile: profile,
+            },
           }, {
             critic: request.critic,
             repair: request.repair,
