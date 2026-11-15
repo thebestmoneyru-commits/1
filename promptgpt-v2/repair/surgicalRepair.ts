@@ -161,7 +161,7 @@ export async function repairCandidateSurgically(input: {
     if (!issue || !spanIsExact(issue.outputSpan, input.candidateText)) {
       throw new Error(`Repair patch references an unknown issue or stale span: ${patch.issueId}.`);
     }
-    if (patch.expectedText !== issue.outputSpan.text) {
+    if (typeof patch.expectedText !== "string" || patch.expectedText !== issue.outputSpan.text) {
       throw new Error(`Repair patch does not match the exact critic span: ${patch.issueId}.`);
     }
     if (typeof patch.replacement !== "string" || !patch.replacement.trim() ||
