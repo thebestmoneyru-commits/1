@@ -45,7 +45,7 @@ export function validatePropositionExtraction(
     const mandatory = item.mandatory;
     const span = isRecord(item.sourceSpan) ? item.sourceSpan : undefined;
 
-    if (!id || ids.has(id)) errors.push(`Пропозиция #${index + 1}: отсутствует ID или ID повторяется.`);
+    if (!id || item.id !== id || ids.has(id)) errors.push(`Пропозиция #${index + 1}: отсутствует ID, ID содержит внешние пробелы или ID повторяется.`);
     if (id) ids.add(id);
     if (!summary || !subject || !predicate) {
       errors.push(`Пропозиция ${id || "#" + (index + 1)}: summary, subject и predicate обязательны.`);
