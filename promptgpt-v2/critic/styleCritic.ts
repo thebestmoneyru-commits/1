@@ -231,8 +231,8 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
     });
   }
 
-  const blocking = issues.some((issue) => issue.severity === "blocking");
-  const passed = !blocking &&
+  const actionable = issues.some((issue) => issue.severity === "blocking" || issue.severity === "warning");
+  const passed = !actionable &&
     (styleScore as number) >= options.minimumStyleScore &&
     (naturalness as number) >= options.minimumNaturalnessScore;
 
