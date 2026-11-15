@@ -12,6 +12,7 @@ export interface SemanticAnchor {
   kind: "number" | "date" | "proper-name" | "domain-term" | "quotation" | "scripture-reference" | "user-defined";
   value: string;
   required: boolean;
+  requiredOccurrences: number;
   evidence: Evidence[];
 }
 export type Polarity = "positive" | "negative" | "unknown";
