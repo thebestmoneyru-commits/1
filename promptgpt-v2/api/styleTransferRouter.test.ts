@@ -13,7 +13,9 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     if (req.header("x-test-auth") !== "allowed") return res.status(401).json({ error: "unauthorized" });
     next();
   };
-  let rateLimitCalls = 0;\n  const rateLimit: RequestHandler = (_req, _res, next) => { rateLimitCalls++; next(); };\n  const service = {
+  let rateLimitCalls = 0;
+  const rateLimit: RequestHandler = (_req, _res, next) => { rateLimitCalls++; next(); };
+  const service = {
     async execute(request: { requestId: string; sourceText: string; signal?: AbortSignal }) {
       executeCalls++;
       return {
