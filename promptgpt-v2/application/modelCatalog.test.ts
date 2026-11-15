@@ -16,7 +16,8 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
     candidateGeneration: { preferredModel: "gen", fallbackModels: ["backup"] },
     styleCritique: { preferredModel: "critic" },
     surgicalRepair: { preferredModel: "repair" },
-    semanticVerification: { preferredModel: "semantic" },\n    semanticExtraction: { preferredModel: "extractor" },
+    semanticVerification: { preferredModel: "semantic" },
+    semanticExtraction: { preferredModel: "extractor" },
   };
   const valid = validateModelCatalog({
     models: [
@@ -24,7 +25,8 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
       model("backup", ["candidate-generation"]),
       model("critic", ["style-critique"]),
       model("repair", ["surgical-repair"]),
-      model("semantic", ["semantic-verification"]),\n      model("extractor", ["semantic-extraction"]),
+      model("semantic", ["semantic-verification""]),
+      model("extractor", ["semantic-extraction"]),
     ],
     routes,
   });
@@ -37,7 +39,7 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
   let taskMismatchRejected = false;
   try {
     validateModelCatalog({
-      models: [model("gen", tasks), model("backup", ["general"]), model("critic", tasks), model("repair", tasks), model("semantic", tasks)],
+      models: [model("gen", tasks), model("backup", ["general"]), model("critic", tasks), model("repair", tasks), model("semantic", tasks), model("extractor", tasks)],
       routes,
     });
   } catch { taskMismatchRejected = true; }
@@ -51,6 +53,7 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
         model("critic", ["style-critique"]),
         model("repair", ["surgical-repair"]),
         model("semantic", ["semantic-verification"]),
+        model("extractor", ["semantic-extraction"]),
       ],
       routes,
     });
