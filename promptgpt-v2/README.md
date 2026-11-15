@@ -103,4 +103,4 @@ Do not connect this directory to the production API until:
 5. frontend response contracts are preserved;
 6. server and frontend builds are checked separately.
 
-The existing application remains untouched during this foundation phase. The application service and an isolated Express router factory are injectable library components only; the router is not mounted on the legacy server. A host application must supply authentication middleware and a server-side preparation callback before exposing it.
+The existing application remains untouched during this foundation phase. The application service and an isolated Express router factory are injectable library components only; the router is not mounted on the legacy server. A host application must supply authentication and rate-limit middleware before exposing it; the prepared-router factory supplies the server-side extraction and baseline preparation pipeline.
