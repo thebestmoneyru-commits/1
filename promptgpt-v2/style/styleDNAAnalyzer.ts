@@ -53,7 +53,7 @@ function feature(
   unit: StyleFeature["unit"], confidence: number, observations: number,
   examples: StyleEvidence[], interpretation: string, scale = 100,
 ): StyleFeature {
-  return { id, family, label, count, denominator, rate: unit === "mean" ? (denominator ? count / denominator : 0) : rate(count, denominator, scale),
+  return { id, family, label, count, denominator, rate: unit === "mean" ? count : rate(count, denominator, scale),
     unit, confidence, observations, evidence: examples, interpretation };
 }
 function phraseOccurrences(text: string, phrase: string): number[] {
@@ -81,8 +81,8 @@ function distribution(values: number[]): StyleCorpusStats["sentenceLengthDistrib
 }
 function wordsIn(sentence: Sentence): string[] { return sentence.words.map((w) => w.normalized); }
 function meaningfulOpening(sentence: Sentence): string {
-  const words = wordsIn(sentence).filter((w) => !COMMON_FUNCTION_WORDS.has(w));
-  return words.slice(0, 2).join(" ");
+  // Keep function words: "и тогда", "но он", "в то время" can be authorial signals.
+  return wordsIn(sentence).slice(0, 2).join(" ");
 }
 function makeCorpusStats(text: string, sentences: Sentence[], paragraphs: ReturnType<typeof splitParagraphs>): StyleCorpusStats {
   const lengths = sentences.map((s) => s.words.length);
@@ -138,7 +138,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   const commaSentences = sentences.filter((s)=>s.text.includes(","));
   const subordinate = sentences.filter((s)=>/\b(?:который|которая|которые|которое|поскольку|потому что|если|когда|хотя|чтобы|так как)\b/iu.test(s.text));
   const participleSentences = sentences.filter((s)=>s.words.some((w)=>PARTICIPLE_SUFFIX.test(w.normalized) && w.normalized.length > 5));
-  const gerundSentences = sentences.filter((s)=>s.words.some((w)=>GERUND_SUFFIX.test(w.normalized) && w.normalized.length > 6 && /(?:в|вши|ши|я|а)$/u.test(w.normalized)));
+  const gerundSentences = sentences.filter((s)=>s.text.includes(",") && s.words.some((w)=>GERUND_SUFFIX.test(w.normalized) && w.normalized.length > 7));
   const parentheticalSentences = sentences.filter((s)=>s.words.some((w)=>PARENTHETICAL.has(w.normalized)));
   for (const [id,label,list,description] of [
     ["comma-rich","Предложения с запятыми",commaSentences,"Предложения, содержащие хотя бы одну запятую."],
