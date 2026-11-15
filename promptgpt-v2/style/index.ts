@@ -4,3 +4,4 @@ export * from "./styleDNAAnalyzer";
 export * from "./styleDNAScorer";
 export * from "./donorBaseline";
 export * from "./candidateEvaluator";
+export * from "./candidateGenerator";
