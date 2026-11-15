@@ -120,7 +120,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
       { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
     )({ requestId: "structure-issue", sourceText: source, donorText: donor });
   } catch (error) {
-    structuralIssueRejected = String(error).includes("potential structural issue");
+    structuralIssueRejected = String(error).includes("confirmed structural issue");
   }
   assert(structuralIssueRejected, "a validated structural finding must stop preparation");
   names.push("stop preparation when independent audit finds a structural issue");
@@ -237,5 +237,45 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   );
   names.push("anchor verbatim spans and normalize LLM IDs/nulls during preparation");
 
+  const falsePositiveRelation = {
+    kind: "relation-omission", propositionIds: ["p1", "p2"],
+    evidenceSpan: { start: 0, end: source.length, text: source },
+    explanation: "Предположительно отсутствует межпропозиционная связь.",
+  };
+  const falsePositivePrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]),
+      structureAudit(["p1", "p2"], [falsePositiveRelation]),
+      { decisions: [{ issueIndex: 0, classification: "already-represented", explanation: "Связь уже представлена в содержании пропозиций." }] },
+    ), routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "relation-false-positive", sourceText: source, donorText: donor });
+  assert(falsePositivePrepared.inventory.propositions.length === 2, "an adjudicated internal modifier must not block preparation");
+  names.push("dismiss relation-omission false positives when the meaning is already represented");
+
+  let genuineOmissionRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]),
+        structureAudit(["p1", "p2"], [falsePositiveRelation]),
+        { decisions: [{ issueIndex: 0, classification: "genuine-missing", explanation: "Явная связь между самостоятельными утверждениями отсутствует в relations." }] },
+      ), routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "relation-genuine-omission", sourceText: source, donorText: donor });
+  } catch (error) { genuineOmissionRejected = String(error).includes("confirmed structural issue"); }
+  assert(genuineOmissionRejected, "a confirmed missing cross-proposition relation must still stop preparation");
+  names.push("retain fail-closed behavior for independently confirmed missing relations");
+
+  let incompleteAdjudicationRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]),
+        structureAudit(["p1", "p2"], [falsePositiveRelation]),
+        { decisions: [] },
+      ), routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "relation-incomplete-adjudication", sourceText: source, donorText: donor });
+  } catch (error) { incompleteAdjudicationRejected = String(error).includes("did not decide every candidate"); }
+  assert(incompleteAdjudicationRejected, "an incomplete adjudication must fail closed");
+  names.push("fail closed when the second-pass relation adjudication is incomplete");
   return { passed: names.length, names };
 }
