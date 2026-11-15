@@ -304,7 +304,7 @@ function normalizeEvidenceText(value: string): string {
     .toLocaleLowerCase("ru-RU")
     .replace(/ё/gu, "е")
     .replace(/[«»„“”"'\x60]/gu, "")
-    .replace(/[^\\p{L}\\p{N}]+/gu, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
 
@@ -922,9 +922,9 @@ export function createStyleTransferRequestPreparer(
         if (decisions.size !== expectedIndexes.size) {
           throw new Error("Shared-constituent adjudication did not decide every candidate; preparation stopped safely.");
         }
-        confirmedInterpretationIssues = confirmedInterpretationIssues.filter((issue, index) => {
-          const decision = decisions.get(index);
-          return decision !== "already-grounded-in-sentence";
+        confirmedInterpretationIssues = confirmedInterpretationIssues.filter((issue) => {
+          const originalIndex = interpretation.audit!.issues.indexOf(issue);
+          return decisions.get(originalIndex) !== "already-grounded-in-sentence";
         });
       }
 
