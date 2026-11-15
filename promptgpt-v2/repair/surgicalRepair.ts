@@ -52,9 +52,10 @@ function buildRepairPrompt(input: {
   criticReport: StyleCriticReport;
   donorBaseline: DonorStyleBaseline;
   maxPatches: number;
+  allowInfoIssues: boolean;
 }): string {
   const actionableIssues = input.criticReport.issues
-    .filter((issue) => issue.severity !== "info")
+    .filter((issue) => issue.severity !== "info" || input.allowInfoIssues)
     .slice(0, input.maxPatches)
     .map((issue) => ({
       id: issue.id,
@@ -109,6 +110,9 @@ export async function repairCandidateSurgically(input: {
 }): Promise<SurgicalRepairResult> {
   const options = normalizeOptions(input.options ?? {});
   const originalFingerprint = fingerprintSource(input.candidateText);
+  if (input.criticReport.criticVersion !== "1.0.0") {
+    throw new Error("Unsupported critic report version.");
+  }
   if (input.criticReport.candidateFingerprint !== originalFingerprint) {
     throw new Error("Critic report belongs to a different candidate revision.");
   }
@@ -131,7 +135,15 @@ export async function repairCandidateSurgically(input: {
 
   const actionable = input.criticReport.issues.filter((issue) =>
     issue.severity !== "info" || options.allowInfoIssues
-  );
+  ).slice(0, options.maxPatches);
+  for (const issue of actionable) {
+    const feature = input.donorBaseline.profile.features.find((item) => item.id === issue.donorFeatureId);
+    const evidenceIsGrounded = !!feature && typeof issue.donorEvidenceExcerpt === "string" &&
+      feature.evidence.some((item) => item.excerpt.includes(issue.donorEvidenceExcerpt.trim()));
+    if (!issue.id || !evidenceIsGrounded || !issue.rationale.trim() || !issue.suggestedChange.trim()) {
+      throw new Error(`Critic issue ${issue.id || "(без ID)"} lacks verifiable donor evidence or repair guidance.`);
+    }
+  }
   if (!actionable.length) {
     return {
       applied: false, originalFingerprint, repairedText: input.candidateText,
@@ -145,6 +157,7 @@ export async function repairCandidateSurgically(input: {
     criticReport: input.criticReport,
     donorBaseline: input.donorBaseline,
     maxPatches: options.maxPatches,
+    allowInfoIssues: options.allowInfoIssues,
   }));
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new Error("Repair model returned invalid JSON."); }
