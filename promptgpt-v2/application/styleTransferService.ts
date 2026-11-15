@@ -115,6 +115,17 @@ export class StyleTransferService {
           continue;
         }
 
+        // The critic/repair stage is style-only. Do not spend additional model
+        // calls or risk changing text when the hard semantic gate has failed.
+        if (!initial.semanticReport.passed) {
+          outcomes.push({
+            candidateId: candidate.candidateId, initial, finalText: candidate.text,
+            finalEvaluation: initial, repaired: false,
+            warnings: [...initial.warnings, "Стилистическая правка пропущена: кандидат не прошёл обязательную проверку сохранности смысла."],
+          });
+          continue;
+        }
+
         mark("critic-repair", "Одна ограниченная попытка точечной правки с независимой повторной проверкой.", candidate.candidateId);
         try {
           const pipeline = await runCriticRepairPipeline({
