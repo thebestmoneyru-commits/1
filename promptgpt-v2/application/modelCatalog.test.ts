@@ -42,5 +42,19 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
     });
   } catch { taskMismatchRejected = true; }
   assert(taskMismatchRejected, "route model with incompatible task must be rejected");
-  return { passed: 3, names: ["accept explicit allowlist", "reject model outside allowlist", "reject task capability mismatch"] };
+  let disabledRejected = false;
+  try {
+    validateModelCatalog({
+      models: [
+        { ...model("gen", ["candidate-generation"]), enabled: false },
+        model("backup", ["candidate-generation"]),
+        model("critic", ["style-critique"]),
+        model("repair", ["surgical-repair"]),
+        model("semantic", ["semantic-verification"]),
+      ],
+      routes,
+    });
+  } catch { disabledRejected = true; }
+  assert(disabledRejected, "disabled route model must be rejected");
+  return { passed: 4, names: ["accept explicit allowlist", "reject model outside allowlist", "reject task capability mismatch", "reject disabled route model"] };
 }
