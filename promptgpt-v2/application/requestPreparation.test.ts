@@ -61,8 +61,8 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   ];
   const sharedPredicateIssue = {
     propositionId: "p2", field: "predicate",
-    evidenceSpan: { start: secondObjectStart, end: secondObjectStart + secondObject.length, text: secondObject },
-    explanation: "Сказуемое отсутствует в узком sourceSpan второй однородной пропозиции.",
+    evidenceSpan: { start: sharedPredicateStart, end: sharedPredicateStart + "влечет за собой".length, text: "влечет за собой" },
+    explanation: "Сказуемое отсутствует в узком sourceSpan второй однородной пропозиции, но явно выражено в том же предложении.",
   };
   const sharedPredicatePrepared = await createStyleTransferRequestPreparer(
     fakeRouter(
