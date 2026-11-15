@@ -21,7 +21,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * conditions are not collapsed into one claim.
  */
 export function getPropositionSemanticKey(proposition: Proposition): string {
-  const normalize = (value: string) => value.trim().replace(/\\s+/gu, " ").toLocaleLowerCase("ru-RU");
+  const normalize = (value: string) => value.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU");
   return [
     proposition.sourceSpan.start, proposition.sourceSpan.end,
     normalize(proposition.subject), normalize(proposition.predicate),
