@@ -7,7 +7,7 @@ import { runCriticRepairPipeline } from "../repair/criticRepairPipeline";
 import type { StyleCriticAdapter } from "../critic/styleCritic";
 import type { SurgicalRepairAdapter } from "../repair/surgicalRepair";
 import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
-import type { PropositionAssessment } from "../types";
+import { DEFAULT_SEMANTIC_POLICY, type PropositionAssessment } from "../types";
 import type { LogicalRelationAssessment } from "../semantic/logicalRelationPreservation";
 import type {
   CandidateOutcome, SemanticVerifier, StyleProfiler, StyleTransferRequest,
@@ -102,6 +102,7 @@ export class StyleTransferService {
           relationAssessments = checkedRelationAssessments;
           structureReport = validateLogicalRelationAssessments(
             candidate.text, request.inventory.propositions, relationAssessments,
+            request.semanticPolicy?.minimumAssessmentConfidence ?? DEFAULT_SEMANTIC_POLICY.minimumAssessmentConfidence,
           );
           if (request.signal?.aborted) break;
           profile = this.deps.styleProfiler.analyze(candidate.text);
