@@ -145,7 +145,7 @@ async function invoke(
     responseSchema,
     signal,
     timeoutMs: task === "candidate-generation" ? 90_000 : 45_000,
-    maxAttemptsPerModel: 2,
+    maxAttemptsPerModel: 3,
   });
   return result.text;
 }
