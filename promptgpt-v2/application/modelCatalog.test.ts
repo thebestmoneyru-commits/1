@@ -25,7 +25,7 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
       model("backup", ["candidate-generation"]),
       model("critic", ["style-critique"]),
       model("repair", ["surgical-repair"]),
-      model("semantic", ["semantic-verification""]),
+      model("semantic", ["semantic-verification"]),
       model("extractor", ["semantic-extraction"]),
     ],
     routes,
