@@ -8,13 +8,13 @@ const source = "Он не пришёл, потому что заболел.";
 const base = {
   id: "p1",
   summary: "Он не пришёл",
-  sourceSpan: { start: 0, end: 14, text: source.slice(0, 14) },
+  sourceSpan: { start: 0, end: 12, text: source.slice(0, 12) },
   subject: "Он",
   predicate: "не пришёл",
   object: undefined,
   polarity: "negative",
   modality: { kind: "certainty", value: "факт", scope: "не пришёл" },
-  qualifications: [{ kind: "cause", value: "потому что заболел" }],
+  qualifications: [],
   relations: [],
   mandatory: true,
 };
