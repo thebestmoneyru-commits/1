@@ -1,0 +1,87 @@
+import type { Proposition } from "../types";
+import { getLogicalRelationAuditKey, validateSemanticStructureAudit } from "./semanticStructureAudit";
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+const source = "Поскольку пошёл дождь, путники укрылись в храме.";
+const propositions: Proposition[] = [
+  {
+    id: "p1", summary: "Пошёл дождь", sourceSpan: { start: 9, end: 20, text: "пошёл дождь" },
+    subject: "дождь", predicate: "пошёл", polarity: "positive",
+    qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }], mandatory: true,
+  },
+  {
+    id: "p2", summary: "Путники укрылись в храме",
+    sourceSpan: { start: 22, end: source.length - 1, text: "путники укрылись в храме" },
+    subject: "путники", predicate: "укрылись", object: "в храме", polarity: "positive",
+    qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }], mandatory: true,
+  },
+];
+const relationKey = getLogicalRelationAuditKey(propositions[0].relations[0]);
+const cleanAudit = {
+  checkedPropositionIds: ["p1", "p2"],
+  checkedRelationKeys: [relationKey],
+  issues: [],
+};
+
+export function runSemanticStructureAuditSelfTests(): { passed: number; names: string[] } {
+  const names: string[] = [];
+  const clean = validateSemanticStructureAudit(source, propositions, cleanAudit);
+  assert(clean.valid && clean.audit?.issues.length === 0, "complete clean structure audit must pass");
+  names.push("accept complete audit of propositions and extracted relations");
+
+  const missingRelation = validateSemanticStructureAudit(source, propositions, {
+    ...cleanAudit, checkedRelationKeys: [],
+  });
+  assert(!missingRelation.valid && missingRelation.errors.some((item) => item.includes("не подтвердил проверку связи")),
+    "every extracted relation must be explicitly checked");
+  names.push("reject structure audits that omit extracted relations");
+
+  const inversion = validateSemanticStructureAudit(source, propositions, {
+    ...cleanAudit,
+    issues: [{
+      kind: "relation-inversion", propositionIds: ["p1", "p2"], relationKey,
+      evidenceSpan: { start: 0, end: 9, text: "Поскольку " },
+      explanation: "Проверить направление причинной связи.",
+    }],
+  });
+  assert(inversion.valid && inversion.audit?.issues.length === 1, "source-grounded relation inversion finding must validate");
+  names.push("accept source-grounded findings tied to an existing relation");
+
+  const fabricatedEvidence = validateSemanticStructureAudit(source, propositions, {
+    ...cleanAudit,
+    issues: [{
+      kind: "relation-omission", propositionIds: ["p1", "p2"],
+      evidenceSpan: { start: 0, end: 9, text: "Потому что" },
+      explanation: "Есть пропущенная связь.",
+    }],
+  });
+  assert(!fabricatedEvidence.valid, "evidence not copied exactly from source must fail");
+  names.push("reject fabricated connective evidence");
+
+  const detachedEvidence = validateSemanticStructureAudit(source, propositions, {
+    ...cleanAudit,
+    issues: [{
+      kind: "relation-omission", propositionIds: ["p1", "p2"],
+      evidenceSpan: { start: 0, end: 8, text: "Поскольку" },
+      explanation: "Связь утрачена.",
+    }],
+  });
+  assert(!detachedEvidence.valid, "evidence outside the proposition envelope must fail");
+  names.push("reject structural findings detached from referenced propositions");
+
+  const unknownRelation = validateSemanticStructureAudit(source, propositions, {
+    ...cleanAudit,
+    issues: [{
+      kind: "relation-inversion", propositionIds: ["p1", "p2"], relationKey: "unknown",
+      evidenceSpan: { start: 0, end: 9, text: "Поскольку " },
+      explanation: "Связь перевёрнута.",
+    }],
+  });
+  assert(!unknownRelation.valid, "findings cannot reference invented relation keys");
+  names.push("reject findings referencing unknown relation keys");
+
+  return { passed: names.length, names };
+}
