@@ -6,12 +6,32 @@ const MODALITY_KINDS = new Set([
 const QUALIFICATION_KINDS = new Set([
   "condition", "exception", "restriction", "approximation", "attribution", "time", "place", "degree", "other",
 ]);
-const RELATION_KINDS = new Set([
+export const LOGICAL_RELATION_KINDS: ReadonlySet<string> = new Set([
   "cause", "effect", "contrast", "concession", "condition", "purpose", "sequence", "comparison", "attribution", "other",
 ]);
+const RELATION_KINDS = LOGICAL_RELATION_KINDS;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Canonical semantic identity shared by extraction and completeness-audit checks.
+ * Modality and qualifications remain part of identity, so different scopes and
+ * conditions are not collapsed into one claim.
+ */
+export function getPropositionSemanticKey(proposition: Proposition): string {
+  const normalize = (value: string) => value.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU");
+  return [
+    proposition.sourceSpan.start, proposition.sourceSpan.end,
+    normalize(proposition.subject), normalize(proposition.predicate),
+    proposition.object ? normalize(proposition.object) : "",
+    proposition.polarity,
+    proposition.modality
+      ? [proposition.modality.kind, normalize(proposition.modality.value), normalize(proposition.modality.scope)].join(":")
+      : "",
+    proposition.qualifications.map((item) => [item.kind, normalize(item.value)].join(":")).sort().join(";"),
+  ].join("|");
 }
 
 /**
@@ -22,6 +42,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function validatePropositionExtraction(
   sourceText: string,
   input: unknown,
+  externalIds?: ReadonlySet<string>,
 ): PropositionExtractionValidation {
   const errors: string[] = [];
   if (!Array.isArray(input)) {
@@ -106,6 +127,11 @@ export function validatePropositionExtraction(
             (rawRelation.expression !== undefined && typeof rawRelation.expression !== "string")) {
           validRelations = false;
           errors.push(`Пропозиция ${id || "#" + (index + 1)}: некорректное логическое отношение #${relationIndex + 1}.`);
+        } else if (typeof rawRelation.expression === "string" &&
+                   rawRelation.expression.trim() &&
+                   !sourceText.includes(rawRelation.expression.trim())) {
+          validRelations = false;
+          errors.push(`Пропозиция ${id || "#" + (index + 1)}: expression логического отношения отсутствует в исходном тексте.`);
         }
       });
     } else {
@@ -131,21 +157,7 @@ export function validatePropositionExtraction(
       (item.object === undefined || (typeof item.object === "string" && Boolean(item.object.trim())))
     ) {
       const proposition = item as unknown as Proposition;
-      const semanticKey = [
-        proposition.sourceSpan.start,
-        proposition.sourceSpan.end,
-        proposition.subject.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU"),
-        proposition.predicate.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU"),
-        proposition.object?.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU") ?? "",
-        proposition.polarity,
-        proposition.modality
-          ? [proposition.modality.kind, proposition.modality.value.trim(), proposition.modality.scope.trim()].join(":")
-          : "",
-        proposition.qualifications
-          .map((item) => [item.kind, item.value.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU")].join(":"))
-          .sort()
-          .join(";"),
-      ].join("|");
+      const semanticKey = getPropositionSemanticKey(proposition);
       if (semanticKeys.has(semanticKey)) {
         errors.push(`Пропозиция ${id}: точный смысловой дубль уже присутствует для того же фрагмента исходника.`);
       } else {
@@ -155,10 +167,11 @@ export function validatePropositionExtraction(
     }
   });
 
-  // Relations must refer to proposition IDs in this same source inventory.
+  // External IDs are trusted only when explicitly supplied by the caller.
+  const knownIds = externalIds ? new Set([...ids, ...externalIds]) : ids;
   for (const proposition of result) {
     for (const relation of proposition.relations) {
-      if (!ids.has(relation.from) || !ids.has(relation.to)) {
+      if (!knownIds.has(relation.from) || !knownIds.has(relation.to)) {
         errors.push(`Пропозиция ${proposition.id}: отношение ссылается на неизвестную пропозицию.`);
       } else if (relation.from === relation.to) {
         errors.push(`Пропозиция ${proposition.id}: логическое отношение не может ссылаться на саму себя.`);
