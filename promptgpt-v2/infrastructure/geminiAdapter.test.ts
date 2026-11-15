@@ -10,17 +10,10 @@ export async function runGeminiAdapterSelfTests(): Promise<{ passed: number; nam
   const names: string[] = [];
   let captured: Record<string, unknown> | undefined;
   let response: Record<string, unknown> = { text: "  generated text  " };
-  let abortDuringResponse = false;
-  let activeSignal: AbortSignal | undefined;
   const fakeClient = {
     models: {
       async generateContent(args: Record<string, unknown>) {
         captured = args;
-        const config = args.config as Record<string, unknown>;
-        activeSignal = config.abortSignal as AbortSignal;
-        if (abortDuringResponse && activeSignal instanceof AbortSignal) {
-          (activeSignal as unknown as { throwIfAborted?: () => void }).throwIfAborted?.();
-        }
         return response;
       },
     },
