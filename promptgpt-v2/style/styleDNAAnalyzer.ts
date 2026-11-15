@@ -134,7 +134,6 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
     ? sentenceLengths.reduce((sum, n) => sum + Math.pow(n - stats.meanWordsPerSentence, 2), 0) / sentenceLengths.length : 0;
   features.push(feature("rhythm.mean-sentence-length","rhythm","Средняя длина предложения",stats.meanWordsPerSentence,sentences.length,"mean",corpusConfidence,sentences.length,[], "Среднее число слов в предложении."));
   features.push(feature("rhythm.sentence-length-variance","rhythm","Разброс длины предложений",variance,sentences.length,"mean",corpusConfidence,sentences.length,[], "Дисперсия длины предложений; большее значение означает более неоднородный ритм."));
-  features.push(feature("rhythm.long-sentence-share","rhythm","Доля длинных предложений",stats.sentenceLengthDistribution.long.count+stats.sentenceLengthDistribution.veryLong.count,nSent,"share",corpusConfidence,sentences.length,[], "Доля предложений длиннее 20 слов.",1));
   features.push(feature("rhythm.median-sentence-length","rhythm","Медианная длина предложения",stats.medianWordsPerSentence,sentences.length,"mean",corpusConfidence,sentences.length,[], "Медиана числа слов в предложении."));
   for (const [bucket, label, item] of [
     ["short","Короткие (до 8 слов)",stats.sentenceLengthDistribution.short],
