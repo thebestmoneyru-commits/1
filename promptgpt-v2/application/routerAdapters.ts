@@ -57,13 +57,13 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
 } {
   return {
     candidateGenerator: {
-      generate: ({ prompt }) => invoke(router, routes, "candidate-generation", prompt),
+      generate: ({ prompt, signal }) => invoke(router, routes, "candidate-generation", prompt, signal),
     },
     critic: {
-      review: (prompt) => invoke(router, routes, "style-critique", prompt),
+      review: (prompt, signal) => invoke(router, routes, "style-critique", prompt, signal),
     },
     repair: {
-      repair: (prompt) => invoke(router, routes, "surgical-repair", prompt),
+      repair: (prompt, signal) => invoke(router, routes, "surgical-repair", prompt, signal),
     },
     semanticVerifier: {
       async assess({ sourceText, candidateText, propositions, signal }) {
