@@ -7,8 +7,8 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const source = "Святитель пришёл в город. Он помог людям.";
 const validExtraction = [
-  { id: "p1", summary: "Святитель пришёл в город", sourceSpan: { start: 0, end: 29, text: source.slice(0, 29) }, subject: "Святитель", predicate: "пришёл", object: "в город", polarity: "positive", qualifications: [], relations: [], mandatory: true },
-  { id: "p2", summary: "Он помог людям", sourceSpan: { start: 30, end: source.length, text: source.slice(30) }, subject: "Он", predicate: "помог", object: "людям", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+  { id: "p1", summary: "Святитель пришёл в город", sourceSpan: { start: 0, end: 25, text: source.slice(0, 25) }, subject: "Святитель", predicate: "пришёл", object: "в город", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+  { id: "p2", summary: "Он помог людям", sourceSpan: { start: 26, end: source.length, text: source.slice(26) }, subject: "Он", predicate: "помог", object: "людям", polarity: "positive", qualifications: [], relations: [], mandatory: true },
 ];
 
 function fakeRouter(output: unknown): ModelRouter {
