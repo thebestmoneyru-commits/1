@@ -1,4 +1,4 @@
-import type { FactInventory, Proposition } from "../types";
+import type { FactInventory } from "../types";
 import { buildSemanticInventory } from "../semantic/buildInventory";
 import { validatePropositionExtraction } from "../semantic/propositionSchema";
 import { createDonorStyleBaseline } from "../style/donorBaseline";
