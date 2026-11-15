@@ -165,6 +165,68 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
   }
 
   {
+    const { sourceText, request } = fixture();
+    const firstSentenceEnd = sourceText.indexOf(".") + 1;
+    const candidateText = sourceText.replaceAll("В этот день ", "");
+    const inventory = buildSemanticInventory(sourceText, [{
+      id: "p-time-qualification",
+      summary: "Священник пришёл к людям в этот день.",
+      sourceSpan: { start: 0, end: firstSentenceEnd, text: sourceText.slice(0, firstSentenceEnd) },
+      subject: "священник",
+      predicate: "пришёл",
+      object: "к людям",
+      polarity: "positive",
+      qualifications: [{ kind: "time", value: "В этот день" }],
+      relations: [],
+      mandatory: true,
+    }]);
+    assert(inventory.valid && inventory.inventory, "semantic restoration fixture inventory must be valid");
+
+    let generationCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate({ prompt }) {
+          generationCalls++;
+          return prompt.includes("ЗАДАЧА: восстанови") ? sourceText : candidateText;
+        },
+      },
+      critic: { async review() { throw new Error("critic must not run for a restored accepted candidate"); } },
+      repair: { async repair() { throw new Error("style repair must not run for a restored accepted candidate"); } },
+      semanticVerifier: {
+        async assess({ candidateText: checkedText }) {
+          const preserved = checkedText === sourceText;
+          return [{
+            propositionId: "p-time-qualification",
+            status: preserved ? "preserved" as const : "changed" as const,
+            outputEvidence: [checkedText.slice(0, checkedText.indexOf(".") + 1)],
+            rationale: preserved ? "Временное уточнение сохранено." : "Утрачено временное уточнение «В этот день».",
+            confidence: 0.99,
+          }];
+        },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({ ...request, inventory: inventory.inventory });
+    assert(result.status === "accepted", "candidate should be accepted after verified semantic restoration");
+    assert(result.selectedText === sourceText, "restoration should recover the exact missing source detail");
+    assert(generationCalls === 2, "semantic restoration should make exactly one additional generation call");
+    assert(result.candidates[0]?.initial.semanticReport.passed === false,
+      "initial evaluation must retain the original semantic failure");
+    assert(result.candidates[0]?.finalEvaluation.semanticReport.passed === true,
+      "restored candidate must pass an independent semantic re-check");
+    assert(result.candidates[0]?.repaired === true && result.candidates[0]?.repairPassed === true,
+      "successful semantic restoration must be recorded as a completed repair");
+    assert(result.trace.some((event) => event.stage === "semantic-repair"),
+      "semantic restoration must appear in the execution trace");
+    names.push("restore missing semantic qualification and independently re-verify");
+  }
+
+  {
     const { request } = fixture();
     let generationCalls = 0;
     const mismatched = {
