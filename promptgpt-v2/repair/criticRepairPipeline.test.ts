@@ -62,5 +62,61 @@ export async function runCriticRepairPipelineSelfTests(): Promise<{ passed: numb
   assert(result.verification.passed, "final verification is mandatory for pipeline completion");
   names.push("critic-to-verification orchestration");
 
+  const strictInventory = {
+    ...buildFactInventory(sourceText),
+    propositions: [{
+      id: "p1",
+      summary: "Содержание исходного текста сохранено.",
+      sourceSpan: { start: 0, end: 10, text: sourceText.slice(0, 10) },
+      subject: "текст",
+      predicate: "содержит",
+      object: "утверждение",
+      polarity: "positive" as const,
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    }],
+  };
+  const strictResult = await runCriticRepairPipeline({
+    candidateId: "pipeline-strict-policy",
+    sourceText,
+    candidateText: sourceText,
+    inventory: strictInventory,
+    donorBaseline: baseline,
+    criticAdapter: {
+      async review() {
+        return JSON.stringify({ styleFidelityScore: 100, naturalnessScore: 100, issues: [] });
+      },
+    },
+    repairAdapter: { async repair() { throw new Error("repair must not run"); } },
+    semanticVerifier: {
+      async assess() {
+        return [{
+          propositionId: "p1",
+          status: "preserved" as const,
+          outputEvidence: [sourceText.slice(0, 10)],
+          rationale: "Exact source span remains present.",
+          confidence: 0.87,
+        }];
+      },
+    },
+    styleProfiler: {
+      analyze(text) {
+        return analyzeStyleDNA(text, {
+          minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+        });
+      },
+    },
+    semanticPolicy: {
+      minimumAssessmentConfidence: 0.9,
+      requireEvidenceForPreservedPropositions: true,
+      rejectAmbiguousRequiredAnchors: true,
+      requireAllMandatoryPropositions: true,
+    },
+  });
+  assert(!strictResult.completed, "repair verification must enforce the request-specific semantic confidence threshold");
+  assert(!strictResult.verification.after.semanticReport.passed, "custom semantic policy must reach final verification");
+  names.push("semantic policy preserved through repair verification");
+
   return { passed: names.length, names };
 }
