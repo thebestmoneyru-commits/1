@@ -14,6 +14,7 @@ import { runRemoteEndpointPolicySelfTests } from "./infrastructure/remoteEndpoin
 import { runSafeRemoteFetchSelfTests } from "./infrastructure/safeRemoteFetch.test";
 import { runApplicationSelfTests } from "./application/modelCatalog.test";
 import { runStyleTransferServiceSelfTests } from "./application/styleTransferService.test";
+import { runStyleTransferApiSelfTests } from "./api/styleTransferRouter.test";
 
 export interface SelfTestGroupResult {
   group: string;
@@ -44,6 +45,7 @@ export async function runV2SelfTestSuite(): Promise<SelfTestSuiteResult> {
     { group: "safe-remote-fetch", run: runSafeRemoteFetchSelfTests },
     { group: "application-model-catalog", run: runApplicationSelfTests },
     { group: "application-style-transfer-service", run: runStyleTransferServiceSelfTests },
+    { group: "api-style-transfer-router", run: runStyleTransferApiSelfTests },
   ];
   const results: SelfTestGroupResult[] = [];
   for (const item of groups) {
