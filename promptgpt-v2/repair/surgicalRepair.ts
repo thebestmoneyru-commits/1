@@ -10,7 +10,7 @@ export interface RepairPatch {
   replacement: string;
 }
 export interface SurgicalRepairAdapter {
-  repair(prompt: string): Promise<string>;
+  repair(prompt: string, signal?: AbortSignal): Promise<string>;
 }
 export interface SurgicalRepairOptions {
   maxPatches: number;
@@ -107,6 +107,7 @@ export async function repairCandidateSurgically(input: {
   donorBaseline: DonorStyleBaseline;
   adapter: SurgicalRepairAdapter;
   options?: Partial<SurgicalRepairOptions>;
+  signal?: AbortSignal;
 }): Promise<SurgicalRepairResult> {
   const options = normalizeOptions(input.options ?? {});
   const originalFingerprint = fingerprintSource(input.candidateText);
@@ -162,6 +163,7 @@ export async function repairCandidateSurgically(input: {
     };
   }
 
+  if (input.signal?.aborted) throw new Error("Surgical repair was cancelled.");
   const raw = await input.adapter.repair(buildRepairPrompt({
     sourceText: input.sourceText,
     candidateText: input.candidateText,
@@ -169,7 +171,7 @@ export async function repairCandidateSurgically(input: {
     donorBaseline: input.donorBaseline,
     maxPatches: options.maxPatches,
     allowInfoIssues: options.allowInfoIssues,
-  }));
+  }), input.signal);
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new Error("Repair model returned invalid JSON."); }
   if (!Array.isArray(parsed) || parsed.length > options.maxPatches) {
