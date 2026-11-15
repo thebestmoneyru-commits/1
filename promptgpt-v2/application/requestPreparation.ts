@@ -1013,7 +1013,7 @@ export function createStyleTransferRequestPreparer(
             propositions: issue.propositionIds.map((id) => completePropositions.find((item) => item.id === id)),
             relation: completePropositions.flatMap((item) => item.relations).find((relation) => getLogicalRelationAuditKey(relation) === issue.relationKey),
           }))),
-        ].join("\\n");
+        ].join("\n");
         const inversionResponse = await router.generate({
           task: "semantic-extraction",
           preferredModel: structureRoute.preferredModel,
@@ -1084,8 +1084,9 @@ export function createStyleTransferRequestPreparer(
         }
         validateRelationExpressionAnchors(sourceText, repairedStructure.propositions);
         completePropositions = repairedStructure.propositions;
-        confirmedStructureIssues = confirmedStructureIssues.filter((issue, index) =>
-          issue.kind !== "relation-inversion" || decisionByIndex.get(index) === "genuine-mismatch",
+        confirmedStructureIssues = confirmedStructureIssues.filter((issue) =>
+          issue.kind !== "relation-inversion" ||
+          decisionByIndex.get(structure.audit.issues.indexOf(issue)) === "genuine-mismatch",
         );
       }
 
@@ -1133,9 +1134,9 @@ export function createStyleTransferRequestPreparer(
           decisionByIndex.set(item.issueIndex as number, item.classification as string);
         }
         if (decisionByIndex.size !== expectedIndexes.size) throw new Error("Relation-omission adjudication did not decide every candidate; preparation stopped safely.");
-        confirmedStructureIssues = structure.audit.issues.filter((issue, index) =>
-          issue.kind !== "relation-type" &&
-          (issue.kind !== "relation-omission" || decisionByIndex.get(index) === "genuine-missing"),
+        confirmedStructureIssues = confirmedStructureIssues.filter((issue) =>
+          issue.kind !== "relation-omission" ||
+          decisionByIndex.get(structure.audit.issues.indexOf(issue)) === "genuine-missing",
         );
       }
       if (confirmedStructureIssues.length) {
