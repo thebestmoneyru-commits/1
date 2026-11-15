@@ -384,6 +384,39 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
 
   {
     const { sourceText, request } = fixture();
+    let generationCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate({ candidateIndex }) {
+          generationCalls++;
+          return candidateIndex === 0 ? sourceText : "этот вариант не должен запрашиваться";
+        },
+      },
+      critic: { async review() { throw new Error("critic must not run for an accepted candidate"); } },
+      repair: { async repair() { throw new Error("repair must not run for an accepted candidate"); } },
+      semanticVerifier: {
+        async assess() { return []; },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({
+      ...request,
+      generation: { ...request.generation, candidateCount: 3, adaptive: true },
+    });
+    assert(result.status === "accepted", "first valid candidate should be accepted");
+    assert(generationCalls === 1, "adaptive generation must not request candidates after the first accepted result");
+    assert(result.generation.requested === 1 && result.generation.generated === 1,
+      "generation metrics must report only candidates actually requested");
+    names.push("adaptive generation stops after first fully accepted candidate");
+  }
+
+  {
+    const { sourceText, request } = fixture();
     let combinedCalls = 0;
     let legacyCalls = 0;
     const service = new StyleTransferService({
