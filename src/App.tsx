@@ -1153,6 +1153,7 @@ export default function App() {
   const [dnaResultText, setDnaResultText] = useState('');
   const [v2AccessKey, setV2AccessKey] = useState('');
   const [v2Status, setV2Status] = useState('');
+  const [v2Diagnostics, setV2Diagnostics] = useState<any>(null);
   const [isGeneratingDna, setIsGeneratingDna] = useState(false);
   const [showPromptDetails, setShowPromptDetails] = useState(false);
   const [showActivePromptSummary, setShowActivePromptSummary] = useState(false);
@@ -1554,6 +1555,7 @@ export default function App() {
     setIsGeneratingDna(true);
     setError(null);
     setV2Status('');
+    setV2Diagnostics(null);
     setDnaResultText('');
 
     try {
@@ -1564,6 +1566,7 @@ export default function App() {
         { 'X-PromptGPT-V2-Key': v2AccessKey.trim() }
       );
 
+      setV2Diagnostics(data);
       setV2Status(`PROMPTGPT v2: ${data.status || 'неизвестный статус'}; создано вариантов: ${data.generation?.generated ?? 0}.`);
 
       if (data.status !== 'accepted' || typeof data.selectedText !== 'string' || !data.selectedText.trim()) {
@@ -2125,6 +2128,117 @@ export default function App() {
                 {isGeneratingDna ? 'PROMPTGPT v2 выполняет проверки...' : '🧬 Запустить новый PROMPTGPT v2 (семантическая защита + Style DNA)'}
               </button>
             </div>
+
+            {v2Diagnostics && (
+              <div className="rounded-2xl border border-cyan-800/60 bg-slate-900/90 p-5 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h3 className="text-base font-bold text-cyan-300">Диагностика PROMPTGPT v2</h3>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
+                    v2Diagnostics.status === 'accepted'
+                      ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
+                      : v2Diagnostics.status === 'needs-review'
+                        ? 'bg-amber-950 text-amber-300 border-amber-700'
+                        : 'bg-red-950 text-red-300 border-red-700'
+                  }`}>
+                    {v2Diagnostics.status || 'Неизвестный статус'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    ['Создано вариантов', v2Diagnostics.generation?.generated],
+                    ['Не удалось создать', v2Diagnostics.generation?.failed],
+                    ['Проверено кандидатов', v2Diagnostics.candidates?.length],
+                    ['Этапов обработки', v2Diagnostics.trace?.length]
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className="rounded-xl bg-slate-950 p-3 border border-slate-800">
+                      <div className="text-xs text-slate-400">{label}</div>
+                      <div className="text-xl font-bold text-white">{value ?? 0}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {v2Diagnostics.error?.message && (
+                  <div className="rounded-xl border border-red-800 bg-red-950/40 p-3">
+                    <div className="text-sm font-bold text-red-300">Ошибка обработки</div>
+                    <p className="text-sm text-red-200 mt-1">{v2Diagnostics.error.message}</p>
+                  </div>
+                )}
+
+                {Array.isArray(v2Diagnostics.candidates) && v2Diagnostics.candidates.map((candidate: any, index: number) => {
+                  const evaluation = candidate.finalEvaluation || candidate.initial;
+                  const semantic = evaluation?.semanticReport;
+                  const style = evaluation?.styleReport;
+                  return (
+                    <div key={candidate.candidateId || index} className="rounded-xl border border-slate-700 bg-slate-950/80 p-4 space-y-3">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="font-semibold text-white">Кандидат {index + 1}</div>
+                        <span className="text-xs text-cyan-300">{evaluation?.disposition || 'Статус неизвестен'}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <div className="text-xs text-slate-400">Стилевое сходство</div>
+                          <div className="font-bold text-white">{style?.score != null ? `${style.score} / 100` : 'Нет оценки'}</div>
+                        </div>
+                        <div className="rounded-lg bg-slate-900 p-2">
+                          <div className="text-xs text-slate-400">Сохранение смысла</div>
+                          <div className={semantic?.passed ? 'font-bold text-emerald-300' : 'font-bold text-red-300'}>
+                            {semantic?.passed == null ? 'Нет данных' : semantic.passed ? 'Пройдено' : 'Не пройдено'}
+                          </div>
+                        </div>
+                      </div>
+                      {Array.isArray(evaluation?.rejectionReasons) && evaluation.rejectionReasons.length > 0 && (
+                        <div>
+                          <div className="text-xs font-bold text-red-300 mb-2">Причины отклонения</div>
+                          <ul className="list-disc pl-5 space-y-1 text-xs text-red-200">
+                            {evaluation.rejectionReasons.map((reason: string, i: number) => <li key={i}>{reason}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      {Array.isArray(evaluation?.warnings) && evaluation.warnings.length > 0 && (
+                        <div>
+                          <div className="text-xs font-bold text-amber-300 mb-2">Предупреждения</div>
+                          <ul className="list-disc pl-5 space-y-1 text-xs text-amber-200">
+                            {evaluation.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      {Array.isArray(candidate.warnings) && candidate.warnings.length > 0 && (
+                        <ul className="list-disc pl-5 space-y-1 text-xs text-amber-200">
+                          {candidate.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {Array.isArray(v2Diagnostics.warnings) && v2Diagnostics.warnings.length > 0 && (
+                  <div className="rounded-xl border border-amber-800/60 bg-amber-950/20 p-3">
+                    <div className="font-bold text-sm text-amber-300 mb-2">Общие предупреждения системы</div>
+                    <ul className="list-disc pl-5 space-y-1 text-xs text-amber-200">
+                      {v2Diagnostics.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
+                    </ul>
+                  </div>
+                )}
+
+                {Array.isArray(v2Diagnostics.trace) && v2Diagnostics.trace.length > 0 && (
+                  <details className="rounded-xl border border-slate-700 p-3">
+                    <summary className="cursor-pointer text-sm font-semibold text-cyan-300">
+                      Журнал этапов обработки ({v2Diagnostics.trace.length})
+                    </summary>
+                    <div className="mt-3 space-y-2">
+                      {v2Diagnostics.trace.map((event: any, i: number) => (
+                        <div key={i} className="border-l-2 border-cyan-800 pl-3 py-1">
+                          <div className="text-xs font-bold text-slate-200">{event.stage}</div>
+                          <div className="text-xs text-slate-400">{event.message}</div>
+                          {event.candidateId && <div className="text-[10px] text-slate-500">{event.candidateId}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
 
             {/* Detectors */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
