@@ -10,6 +10,7 @@ This directory is an isolated modernization track. Existing production files are
 - Source-span, schema-enum, relation-reference, self-link and exact duplicate-claim validation for extracted propositions in `semantic/propositionSchema.ts`.
 - Canonical source inventory assembly in `semantic/buildInventory.ts`.
 - Structured proposition assessment validation in `semantic/propositionIntegrity.ts`.
+- Conservative contradiction screening in `semantic/propositionConsistency.ts`: flags exact lexical claim matches with opposite explicit polarity while respecting differences in time, attribution, modality and other qualifications; warnings are retained in the canonical inventory and require review rather than automatic rejection.
 - Combined semantic gate in `semantic/semanticPreservation.ts`.
 
 ### Style DNA Analyzer
@@ -79,7 +80,7 @@ The offline regression checks can be invoked from the repository root with a Typ
 
 ## Not yet implemented
 
-- Natural-language proposition extraction and independent model-backed semantic verification.
+- More reliable natural-language proposition extraction and fully independent model-backed semantic verification; current extraction is model-backed, but its semantic accuracy still requires corpus-based evaluation and independent verifier integration.
 - Full author-style parsing, including reliable Russian morphology and clause structure.
 - Deployment-specific API mounting, authentication and distributed rate-limit implementation, plus end-to-end provider verification.
 - Integration of the new safe remote transport into the existing production route (the current production server is intentionally untouched).
