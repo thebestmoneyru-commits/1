@@ -1,0 +1,38 @@
+import { GoogleGenAI } from "@google/genai";
+import { GeminiModelAdapter } from "../infrastructure/geminiAdapter";
+import { ModelRouter, type ModelRouterOptions } from "../infrastructure/modelRouter";
+import { validateModelCatalog, type ModelCatalogConfig } from "./modelCatalog";
+import { createRouterAdapters } from "./routerAdapters";
+import { StyleTransferService, type StyleTransferServiceDependencies } from "./styleTransferService";
+
+export interface GeminiStyleTransferServiceConfig {
+  apiKey: string;
+  catalog: ModelCatalogConfig;
+  router?: Omit<ModelRouterOptions, "models" | "adapter">;
+  styleProfiler: StyleTransferServiceDependencies["styleProfiler"];
+}
+
+/**
+ * Composition root. Call once during server startup and reuse the returned
+ * service; this creates exactly one GoogleGenAI client for the service instance.
+ */
+export function createGeminiStyleTransferService(config: GeminiStyleTransferServiceConfig): {
+  service: StyleTransferService;
+  router: ModelRouter;
+} {
+  if (!config.apiKey.trim()) throw new Error("A Gemini API key is required to construct the v2 service.");
+  const catalog = validateModelCatalog(config.catalog);
+  const client = new GoogleGenAI({ apiKey: config.apiKey });
+  const adapter = new GeminiModelAdapter(client);
+  const router = new ModelRouter({
+    ...config.router,
+    models: catalog.models,
+    adapter,
+  });
+  const routed = createRouterAdapters(router, catalog.routes);
+  const service = new StyleTransferService({
+    ...routed,
+    styleProfiler: config.styleProfiler,
+  });
+  return { service, router };
+}
