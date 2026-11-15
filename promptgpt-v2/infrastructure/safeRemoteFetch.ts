@@ -134,14 +134,32 @@ export async function safePostJsonToRemote(
   const validated = validateRemoteEndpoint(options.remoteOrigin, { allowedOrigins: options.allowedOrigins });
   const url = new URL(validated.endpoint);
   const startedAt = Date.now();
-  const pinned = await resolvePinnedPublicAddress(url.hostname, timeoutMs);
+  const hostname = url.hostname.replace(/^\\[|\\]$/g, "");
+  let abortListener: (() => void) | undefined;
+  let pinned: { address: string; family: 4 | 6 };
+  try {
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (options.signal?.aborted) reject(new Error("Remote request was cancelled during DNS resolution."));
+      else if (options.signal) {
+        abortListener = () => reject(new Error("Remote request was cancelled during DNS resolution."));
+        options.signal.addEventListener("abort", abortListener, { once: true });
+      }
+    });
+    pinned = await Promise.race([
+      resolvePinnedPublicAddress(hostname, timeoutMs),
+      abortPromise,
+    ]);
+  } finally {
+    if (abortListener) options.signal?.removeEventListener("abort", abortListener);
+  }
+  if (options.signal?.aborted) throw new Error("Remote request was cancelled during DNS resolution.");
   const remainingMs = timeoutMs - (Date.now() - startedAt);
   if (remainingMs <= 0) throw new Error("Remote request timed out during DNS resolution.");
 
   const pinnedLookup = ((_: string, lookupOptions: { all?: boolean }, callback: (...args: unknown[]) => void) => {
     if (lookupOptions?.all) callback(null, [{ address: pinned.address, family: pinned.family }]);
     else callback(null, pinned.address, pinned.family);
-  }) as RequestOptions["lookup"];
+  }) as unknown as RequestOptions["lookup"];
 
   return new Promise<SafeRemotePostResult>((resolve, reject) => {
     let settled = false;
@@ -161,7 +179,7 @@ export async function safePostJsonToRemote(
         "content-length": Buffer.byteLength(options.jsonBody, "utf8"),
       },
       lookup: pinnedLookup,
-      servername: isIP(url.hostname) ? undefined : url.hostname,
+      servername: isIP(hostname) ? undefined : hostname,
       rejectUnauthorized: true,
     }, (response) => {
       const statusCode = response.statusCode ?? 0;
