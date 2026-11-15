@@ -436,6 +436,93 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(inventedRepairRejected, "span repair must not allow invented or paraphrased evidence");
   names.push("reject repaired spans that are not literal substrings of the source");
 
+  const inversionSource = "Дождь пошёл, поэтому путники укрылись.";
+  const inversionExtraction = [
+    {
+      id: "p1", summary: "Дождь пошёл",
+      sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" },
+      subject: "Дождь", predicate: "пошёл", polarity: "positive",
+      qualifications: [], relations: [{ kind: "cause", from: "p2", to: "p1", expression: "поэтому" }], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Путники укрылись",
+      sourceSpan: { start: inversionSource.indexOf("путники"), end: inversionSource.length, text: "путники укрылись." },
+      subject: "путники", predicate: "укрылись", polarity: "positive",
+      qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const invertedRelationKey = JSON.stringify(["cause", "p2", "p1", "поэтому"]);
+  const inversionIssue = {
+    kind: "relation-inversion",
+    propositionIds: ["p1", "p2"],
+    relationKey: invertedRelationKey,
+    evidenceSpan: {
+      start: inversionSource.indexOf("поэтому"),
+      end: inversionSource.indexOf("поэтому") + "поэтому".length,
+      text: "поэтому",
+    },
+    explanation: "Причина и следствие указаны в обратном направлении.",
+  };
+  const inversionAudit = {
+    checkedPropositionIds: ["p1", "p2"],
+    checkedRelationKeys: [invertedRelationKey],
+    issues: [inversionIssue],
+  };
+  const correctedDirection = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      inversionExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      inversionAudit,
+      { decisions: [{ issueIndex: 0, action: "reverse", explanation: "Дождь является причиной укрытия путников." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "relation-inversion-reverse", sourceText: inversionSource, donorText: donor });
+  assert(
+    correctedDirection.inventory.propositions[0].relations.some((relation) =>
+      relation.kind === "cause" && relation.from === "p1" && relation.to === "p2" && relation.expression === "поэтому"),
+    "a confirmed relation inversion must reverse only the identified relation endpoints",
+  );
+  names.push("reverse an independently confirmed relation direction without changing its kind or evidence");
+
+  const dismissedInversion = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      inversionExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      inversionAudit,
+      { decisions: [{ issueIndex: 0, action: "already-correct", explanation: "Направление соответствует исходному смыслу." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "relation-inversion-false-positive", sourceText: inversionSource, donorText: donor });
+  assert(
+    dismissedInversion.inventory.propositions[0].relations[0].from === "p2" &&
+    dismissedInversion.inventory.propositions[0].relations[0].to === "p1",
+    "an independently dismissed inversion finding must leave the existing relation unchanged",
+  );
+  names.push("dismiss a false-positive relation-inversion finding without mutating the relation");
+
+  let genuineInversionRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        inversionExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1", "p2"]),
+        inversionAudit,
+        { decisions: [{ issueIndex: 0, action: "genuine-mismatch", explanation: "Направление нельзя подтвердить." }] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "relation-inversion-unresolved", sourceText: inversionSource, donorText: donor });
+  } catch (error) {
+    genuineInversionRejected = String(error).includes("confirmed structural issue");
+  }
+  assert(genuineInversionRejected, "an unresolved genuine inversion must remain blocking");
+  names.push("retain fail-closed behavior for unresolved relation inversions");
+
   const falsePositiveRelation = {
     kind: "relation-omission", propositionIds: ["p1", "p2"],
     evidenceSpan: { start: 0, end: source.length, text: source },
