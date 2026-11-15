@@ -82,5 +82,14 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
     "self-referential logical relations must be rejected");
   names.push("reject self-referential logical relations");
 
+  const detachedRelation = validatePropositionExtraction(source, [
+    { ...base, relations: [{ kind: "cause", from: "p2", to: "p3" }] },
+    { ...base, id: "p2", subject: "Брат" },
+    { ...base, id: "p3", subject: "Настоятель" },
+  ]);
+  assert(!detachedRelation.valid && detachedRelation.errors.some((error) => error.includes("не связано с текущей пропозицией")),
+    "a relation stored on a proposition must reference that proposition as one endpoint");
+  names.push("reject logical relations detached from their owning proposition");
+
   return { passed: names.length, names };
 }
