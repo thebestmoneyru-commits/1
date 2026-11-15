@@ -77,6 +77,33 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
       repair: (prompt, signal) => invoke(router, routes, "surgical-repair", prompt, signal),
     },
     semanticVerifier: {
+      async assessCombined({ sourceText, candidateText, propositions, signal }) {
+        const relations = new Map<string, unknown>();
+        for (const proposition of propositions) {
+          for (const relation of proposition.relations) relations.set(getLogicalRelationAuditKey(relation), relation);
+        }
+        const prompt = [
+          "Выполни две отдельные проверки сохранения смысла кандидата относительно оригинала. Это два самостоятельных отчёта в одном JSON-ответе; не смешивай их элементы.",
+          "ОТЧЁТ 1 — propositionAssessments: проверь каждую исходную пропозицию отдельно: субъект, предикат, объект, отрицание, модальность, условия, оговорки, причинность, последовательность и атрибуцию. Верни ровно одну оценку на каждый propositionId. Статусы: preserved, changed, omitted, uncertain. outputEvidence — точные непустые фрагменты кандидата; при сомнении используй uncertain.",
+          "ОТЧЁТ 2 — relationAssessments: проверь каждую исходную логическую связь отдельно. Наличие обоих фактов не доказывает сохранение связи. Проверь направление, тип, причинность, временной порядок, условия, уступки, цель, противопоставление, сравнение и атрибуцию. Для каждой relationKey верни ровно одну оценку со статусом preserved, changed, omitted или uncertain и точными outputEvidence. Не выдумывай цитаты.",
+          "Не пропускай элементы. Не добавляй неизвестные ID или ключи. Если исходных связей нет, верни relationAssessments: []. При любой неопределённости укажи uncertain.",
+          "Верни только JSON-объект: {propositionAssessments:[{propositionId,status,outputEvidence,rationale,confidence}],relationAssessments:[{relationKey,status,outputEvidence,rationale,confidence}]}. confidence — число от 0 до 1.",
+          "", "ORIGINAL SOURCE JSON:", JSON.stringify(sourceText),
+          "", "CANDIDATE JSON:", JSON.stringify(candidateText),
+          "", "SOURCE PROPOSITIONS JSON:", JSON.stringify(propositions),
+          "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
+        ].join("\n");
+        const raw = await invoke(router, routes, "semantic-verification", prompt, signal);
+        const parsed = parseJsonUnknown(raw);
+        if (!isRecord(parsed) || !validateAssessments(parsed.propositionAssessments) ||
+            !validateRelationAssessments(parsed.relationAssessments)) {
+          throw new Error("Combined semantic verifier returned invalid proposition or relation assessments.");
+        }
+        return {
+          propositionAssessments: parsed.propositionAssessments,
+          relationAssessments: parsed.relationAssessments,
+        };
+      },
       async assess({ sourceText, candidateText, propositions, signal }) {
         const prompt = [
           "Проведи независимую проверку сохранения содержания преобразованного текста относительно неизменного оригинала.",
