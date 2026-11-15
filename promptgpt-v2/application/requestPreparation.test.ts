@@ -317,5 +317,61 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   } catch (error) { incompleteAdjudicationRejected = String(error).includes("did not decide every candidate"); }
   assert(incompleteAdjudicationRejected, "an incomplete adjudication must fail closed");
   names.push("fail closed when the second-pass relation adjudication is incomplete");
+  const relationSource = "Дождь пошёл, поэтому путники укрылись.";
+  const relationExtraction = [
+    { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" }, subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+    { id: "p2", summary: "Путники укрылись", sourceSpan: { start: relationSource.indexOf("путники"), end: relationSource.length, text: "путники укрылись." }, subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+  ];
+  const causeKey = JSON.stringify(["cause", "p1", "p2", "поэтому"]);
+  const recovered = await createStyleTransferRequestPreparer(
+    fakeRouter(relationExtraction,
+      { missingPropositions: [], missingRelations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }] },
+      interpretationAudit(["p1", "p2"]),
+      { checkedPropositionIds: ["p1", "p2"], checkedRelationKeys: [causeKey], issues: [] }),
+    routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "recover-missing-relation", sourceText: relationSource, donorText: donor });
+  assert(recovered.inventory.propositions.find((item) => item.id === "p1")?.relations.some(
+    (relation) => relation.kind === "cause" && relation.from === "p1" && relation.to === "p2" && relation.expression === "поэтому"),
+    "the audit must restore a source-grounded relation between existing propositions");
+  names.push("recover missing cross-proposition relations between existing propositions");
+
+  let fabricatedMarkerRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(relationExtraction, { missingPropositions: [], missingRelations: [{ kind: "cause", from: "p1", to: "p2", expression: "выдуманный маркер" }] }),
+      routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "fabricated-marker", sourceText: relationSource, donorText: donor });
+  } catch (error) { fabricatedMarkerRejected = String(error).includes("expression отсутствует в исходном тексте"); }
+  assert(fabricatedMarkerRejected, "invented relation evidence must be rejected");
+  names.push("reject fabricated evidence for recovered relations");
+
+  let conflictingMarkerRejected = false;
+  try {
+    const conflictSource = "Дождь пошёл, поэтому путники укрылись, потому что стало холодно.";
+    const conflictExtraction = [
+      { ...relationExtraction[0], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }] },
+      { ...relationExtraction[1], sourceSpan: { start: conflictSource.indexOf("путники"), end: conflictSource.indexOf(", потому что"), text: "путники укрылись" }, relations: [{ kind: "cause", from: "p2", to: "p3", expression: "потому что" }] },
+      { id: "p3", summary: "Стало холодно", sourceSpan: { start: conflictSource.indexOf("стало"), end: conflictSource.length, text: "стало холодно." }, subject: "неопределённое", predicate: "стало холодно", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+    ];
+    await createStyleTransferRequestPreparer(
+      fakeRouter(conflictExtraction, { missingPropositions: [], missingRelations: [{ kind: "cause", from: "p1", to: "p2", expression: "потому что" }] }),
+      routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "conflicting-marker", sourceText: conflictSource, donorText: donor });
+  } catch (error) { conflictingMarkerRejected = String(error).includes("conflicting evidence for relation"); }
+  assert(conflictingMarkerRejected, "conflicting non-empty evidence for the same directed edge must not be duplicated");
+  names.push("reject conflicting evidence for an existing directed relation");
+
+  const idempotent = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      relationExtraction.map((item, index) => index === 0 ? { ...item, relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }] } : item),
+      { missingPropositions: [], missingRelations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }] },
+      interpretationAudit(["p1", "p2"]),
+      { checkedPropositionIds: ["p1", "p2"], checkedRelationKeys: [causeKey], issues: [] }),
+    routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "idempotent-relation", sourceText: relationSource, donorText: donor });
+  assert(idempotent.inventory.propositions.find((item) => item.id === "p1")?.relations.length === 1,
+    "reprocessing an existing relation must not append a duplicate");
+  names.push("make repeated relation recovery idempotent");
+
   return { passed: names.length, names };
 }
