@@ -9,7 +9,7 @@ import { createStyleTransferApiRouter } from "./styleTransferRouter";
 export interface PreparedStyleTransferApiOptions {
   service: StyleTransferService;
   modelRouter: ModelRouter;
-  routes: Pick<ApplicationModelRoutes, "semanticExtraction">;
+  routes: Pick<ApplicationModelRoutes, "semanticExtraction" | "semanticAudit">;
   authenticate: RequestHandler;
   rateLimit: RequestHandler;
   preparation?: RequestPreparationOptions;
