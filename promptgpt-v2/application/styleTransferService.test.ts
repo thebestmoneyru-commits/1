@@ -382,5 +382,34 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     names.push("reject repaired candidate when post-repair outputEvidence does not match repairedText");
   }
 
+  {
+    const { sourceText, request } = fixture();
+    let combinedCalls = 0;
+    let legacyCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: { async generate() { return sourceText; } },
+      critic: { async review() { throw new Error("critic must not run for an accepted candidate"); } },
+      repair: { async repair() { throw new Error("repair must not run for an accepted candidate"); } },
+      semanticVerifier: {
+        async assess() { legacyCalls++; throw new Error("legacy proposition verifier must not run"); },
+        async assessRelations() { legacyCalls++; throw new Error("legacy relation verifier must not run"); },
+        async assessCombined() {
+          combinedCalls++;
+          return { propositionAssessments: [], relationAssessments: [] };
+        },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute(request);
+    assert(result.status === "accepted", "combined semantic verification should preserve the normal acceptance path");
+    assert(combinedCalls === 1, "combined semantic verifier should be invoked exactly once per candidate");
+    assert(legacyCalls === 0, "combined verification must replace, not supplement, the two legacy calls");
+    names.push("use one combined semantic-verification call per candidate");
+  }
+
   return { passed: names.length, names };
 }
