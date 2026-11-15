@@ -42,9 +42,6 @@ function fingerprint(text: string): string {
 }
 function clamp01(n: number): number { return Math.max(0, Math.min(1, n)); }
 function span(text: string, start: number, end: number): TextSpan { return { start, end, text: text.slice(start, end) }; }
-function evidence(text: string, s: Sentence, max: number): StyleEvidence[] {
-  return [{ span: { start: s.start, end: s.end, text: s.text }, excerpt: s.text.slice(0, 260) }].slice(0, max);
-}
 function rate(count: number, denominator: number, scale: number): number {
   return denominator ? (count / denominator) * scale : 0;
 }
@@ -147,7 +144,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
     ["gerund-like","Предложения с деепричастными формами",gerundSentences,"Приближённая суффиксальная эвристика, требует морфологической проверки."],
     ["parentheticals","Предложения с вводными маркерами",parentheticalSentences,"Наличие слов из ограниченного списка вводных маркеров."],
   ] as Array<[string,string,Sentence[],string]>) {
-    features.push(feature(`syntax.${id}`,"syntax",label,list.length,nSent,"share",corpusConfidence,list.length,evidenceFor(text,list,config.maxEvidencePerFeature),description,1));
+    features.push(feature(`syntax.${id}`,"syntax",label,list.length,nSent,"share",corpusConfidence,list.length,evidenceFor(list,config.maxEvidencePerFeature),description,1));
   }
 
   for (const [group, phrases] of Object.entries(CONNECTORS)) {
@@ -166,7 +163,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
     const list = openingMap.get(key) ?? []; list.push(s); openingMap.set(key,list);
   }
   for (const [key, list] of [...openingMap.entries()].filter(([,v])=>v.length>=2).sort((a,b)=>b[1].length-a[1].length).slice(0,12)) {
-    features.push(feature(`openers.${key.replace(/\s+/gu,"-")}`,"openers",`Повторяющееся начало: «${key}»`,list.length,nSent,"per-100-sentences",corpusConfidence,list.length,evidenceFor(text,list,config.maxEvidencePerFeature),"Два первых содержательных слова предложения; частотный сигнал, не готовый стилевой маркер.",100));
+    features.push(feature(`openers.${key.replace(/\s+/gu,"-")}`,"openers",`Повторяющееся начало: «${key}»`,list.length,nSent,"per-100-sentences",corpusConfidence,list.length,evidenceFor(list,config.maxEvidencePerFeature),"Первые два слова предложения с сохранением служебных слов; частотный сигнал, не готовый стилевой маркер.",100));
   }
 
   const closingMap = new Map<string, Sentence[]>();
@@ -206,6 +203,6 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   };
 }
 
-function evidenceFor(text: string, sentences: Sentence[], max: number): StyleEvidence[] {
+function evidenceFor(sentences: Sentence[], max: number): StyleEvidence[] {
   return sentences.slice(0,max).map((s)=>({span:{start:s.start,end:s.end,text:s.text},excerpt:s.text.slice(0,260)}));
 }
