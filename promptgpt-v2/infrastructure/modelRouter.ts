@@ -18,7 +18,8 @@ export type ModelErrorKind =
   | "unsupported-model"
   | "safety-block"
   | "empty-response"
-  | "unknown";
+  | "unknown"
+  | "cancelled";
 
 export interface ModelDefinition {
   id: string;
@@ -37,7 +38,8 @@ export interface ModelInvocation {
   prompt: string;
   systemInstruction?: string;
   responseSchema?: unknown;
-  parameters?: Readonly<Record<string, unknown>>;
+  thinking?: "low" | "medium" | "high";
+  sampling?: Readonly<Record<string, unknown>>;
   signal: AbortSignal;
 }
 
@@ -52,7 +54,8 @@ export interface ModelRouterRequest {
   prompt: string;
   systemInstruction?: string;
   responseSchema?: unknown;
-  parameters?: Readonly<Record<string, unknown>>;
+  thinking?: "low" | "medium" | "high";
+  sampling?: Readonly<Record<string, unknown>>;
   timeoutMs?: number;
   maxAttemptsPerModel?: number;
   signal?: AbortSignal;
@@ -145,8 +148,9 @@ export function classifyModelError(error: unknown): ModelErrorKind {
 }
 
 function retryable(kind: ModelErrorKind): boolean {
-  return kind === "rate-limit" || kind === "quota-exhausted" || kind === "timeout" ||
-    kind === "unavailable" || kind === "network" || kind === "empty-response";
+  // Quota and 429 responses should move to a fallback immediately, not hammer
+  // the same provider/model again inside the current request.
+  return kind === "timeout" || kind === "unavailable" || kind === "network" || kind === "empty-response";
 }
 
 function createAbortSignal(parent: AbortSignal | undefined, timeoutMs: number): {
@@ -259,7 +263,8 @@ export class ModelRouter {
             modelId, task: request.task, prompt: request.prompt,
             systemInstruction: request.systemInstruction,
             responseSchema: model.supportsJsonSchema ? request.responseSchema : undefined,
-            parameters: model.supportsSampling ? request.parameters : undefined,
+            thinking: model.supportsThinking ? request.thinking : undefined,
+            sampling: model.supportsSampling ? request.sampling : undefined,
             signal: timer.signal,
           })).trim();
           if (!text) throw new ModelRouterError("Provider returned an empty response.", "empty-response", modelId);
