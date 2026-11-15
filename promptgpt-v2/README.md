@@ -87,7 +87,7 @@ The offline regression checks can be invoked from the repository root with a Typ
 - Full author-style parsing, including reliable Russian morphology and clause structure.
 - Deployment-specific API mounting, authentication and distributed rate-limit implementation, plus end-to-end provider verification.
 - Integration of the new safe remote transport into the existing production route (the current production server is intentionally untouched).
-- Full automated test suite and build configuration.
+- Automated CI workflow and a separately verified end-to-end production build/deployment pipeline.
 
 ## Important design boundaries
 
