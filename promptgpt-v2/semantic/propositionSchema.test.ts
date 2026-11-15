@@ -91,5 +91,12 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
     "a relation stored on a proposition must reference that proposition as one endpoint");
   names.push("reject logical relations detached from their owning proposition");
 
+  const attachedRelation = validatePropositionExtraction(source, [
+    { ...base, relations: [{ kind: "cause", from: "p1", to: "p2" }] },
+    { ...base, id: "p2", subject: "Брат" },
+  ]);
+  assert(attachedRelation.valid, "a relation connecting its owning proposition to another known proposition must pass");
+  names.push("accept correctly attached logical relations");
+
   return { passed: names.length, names };
 }
