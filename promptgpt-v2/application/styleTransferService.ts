@@ -1,6 +1,6 @@
 import { fingerprintSource } from "../semantic/factInventory";
 import { verifyDonorStyleBaseline } from "../style/donorBaseline";
-import { generateCandidates, type CandidateModelAdapter } from "../style/candidateGenerator";
+import { generateCandidates, resolveCandidateCount, type CandidateModelAdapter, type CandidateGenerationResult } from "../style/candidateGenerator";
 import { evaluateCandidate } from "../style/candidateEvaluator";
 import { validateLogicalRelationAssessments } from "../semantic/logicalRelationPreservation";
 import { runCriticRepairPipeline } from "../repair/criticRepairPipeline";
@@ -63,19 +63,39 @@ export class StyleTransferService {
         };
       }
 
-      mark("generating-candidates", "Создание независимых вариантов из одного исходника и одного baseline.");
-      const generation = await generateCandidates({
-        sourceText: request.sourceText,
-        inventory: request.inventory,
-        donorBaseline: request.donorBaseline,
-        adapter: this.deps.candidateGenerator,
-        options: request.generation,
-        signal: request.signal,
-      });
-      warnings.push(...generation.warnings);
+      mark("generating-candidates", "Последовательное создание независимых вариантов; дополнительные варианты запрашиваются только при необходимости.");
+      const generation: CandidateGenerationResult = {
+        sourceFingerprint, donorBaselineId: baselineId, requested: 0, generated: 0,
+        failed: 0, candidates: [], warnings: [],
+      };
       const outcomes: CandidateOutcome[] = [];
+      const adaptive = request.generation?.adaptive !== false;
+      const candidateLimit = resolveCandidateCount(request.generation);
+      const candidateBatches: Array<number | null> = adaptive
+        ? Array.from({ length: candidateLimit }, (_, index) => index)
+        : [null];
 
-      for (const candidate of generation.candidates) {
+      candidateLoop: for (const candidateIndex of candidateBatches) {
+        if (request.signal?.aborted) break;
+        const batch = await generateCandidates({
+          sourceText: request.sourceText,
+          inventory: request.inventory,
+          donorBaseline: request.donorBaseline,
+          adapter: this.deps.candidateGenerator,
+          options: adaptive
+            ? { ...request.generation, candidateCount: 1, concurrency: 1 }
+            : request.generation,
+          candidateStartIndex: candidateIndex ?? 0,
+          signal: request.signal,
+        });
+        generation.requested += batch.requested;
+        generation.generated += batch.generated;
+        generation.failed += batch.failed;
+        generation.candidates.push(...batch.candidates);
+        generation.warnings.push(...batch.warnings);
+        warnings.push(...batch.warnings);
+
+        for (const candidate of batch.candidates) {
         if (candidate.status !== "generated" || !candidate.text) continue;
         if (request.signal?.aborted) break;
         mark("evaluating-candidates", "Независимая семантическая и стилевая оценка.", candidate.candidateId);
@@ -152,6 +172,7 @@ export class StyleTransferService {
             candidateId: candidate.candidateId, initial, finalText: candidate.text,
             finalEvaluation: initial, repaired: false, warnings: [...initial.warnings],
           });
+          if (adaptive) break candidateLoop;
           continue;
         }
 
@@ -213,6 +234,9 @@ export class StyleTransferService {
             repairPassed: pipeline.completed,
             warnings: [...new Set([...initial.warnings, ...pipeline.warnings])],
           });
+          if (adaptive && pipeline.completed && finalEvaluation.disposition === "accepted") {
+            break candidateLoop;
+          }
         } catch (error) {
           outcomes.push({
             candidateId: candidate.candidateId, initial, finalText: candidate.text,
@@ -221,6 +245,7 @@ export class StyleTransferService {
           });
         }
       }
+      generation.warnings = [...new Set(generation.warnings)];
 
       if (request.signal?.aborted) {
         mark("cancelled", "Запрос отменён; уже полученные результаты сохранены.");
