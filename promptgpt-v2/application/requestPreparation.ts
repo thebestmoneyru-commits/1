@@ -28,6 +28,15 @@ const SPAN_SCHEMA = {
   required: ["start", "end", "text"],
 } as const;
 
+const RELATION_ITEM_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    kind: { type: Type.STRING, enum: ["cause", "effect", "contrast", "concession", "condition", "purpose", "sequence", "comparison", "attribution", "other"] },
+    from: { type: Type.STRING }, to: { type: Type.STRING }, expression: { type: Type.STRING },
+  },
+  required: ["kind", "from", "to"],
+} as const;
+
 const PROPOSITION_ITEM_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -69,15 +78,6 @@ const PROPOSITION_ITEM_SCHEMA = {
   },
   required: ["id", "summary", "sourceSpan", "subject", "predicate", "polarity", "qualifications", "relations", "mandatory"],
 };
-
-const RELATION_ITEM_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    kind: { type: Type.STRING, enum: ["cause", "effect", "contrast", "concession", "condition", "purpose", "sequence", "comparison", "attribution", "other"] },
-    from: { type: Type.STRING }, to: { type: Type.STRING }, expression: { type: Type.STRING },
-  },
-  required: ["kind", "from", "to"],
-} as const;
 
 const SPAN_REPAIR_RESPONSE_SCHEMA = {
   type: Type.ARRAY,
@@ -394,7 +394,7 @@ export function createStyleTransferRequestPreparer(
       const auditRoute = routes.semanticAudit ?? routes.semanticExtraction;
       const auditPrompt = [
         "Выполни независимый аудит полноты извлечения пропозиций и межпропозиционных связей из исходного текста.",
-        "Твоя задача — найти только самостоятельные смысловые утверждения, которые присутствуют в SOURCE TEXT, но отсутствуют в EXTRACTED PROPOSITIONS.",
+        "Твоя задача — найти (1) самостоятельные смысловые утверждения, отсутствующие в EXTRACTED PROPOSITIONS (missingPropositions), и (2) явные межпропозиционные связи из SOURCE TEXT, отсутствующие в relations (missingRelations).",
         "Проверь каждое предложение и каждую смысловую часть сложного предложения. Особое внимание удели отрицанию, субъектам, действиям, объектам, числам, датам, причинности, условиям, исключениям, атрибуции, модальности, последовательности и противопоставлениям.",
         "Не возвращай переформулировки или точные смысловые дубли уже учтённых утверждений для того же исходного фрагмента. Не добавляй выводы, фоновые знания или утверждения, которых буквально/смыслово нет в исходнике.",
         "Проверь отдельно однородные сказуемые, главные и придаточные части, условия и следствия, причинные и уступительные конструкции, временную последовательность, прямую/косвенную речь и атрибуцию мнений.",
