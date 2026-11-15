@@ -237,6 +237,46 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   );
   names.push("anchor verbatim spans and normalize LLM IDs/nulls during preparation");
 
+  const imperfectQuote = validExtraction.map((item, index) => index === 0
+    ? { ...item, sourceSpan: { start: 0, end: 25, text: "Святитель пришел в город" } }
+    : item);
+  const repairedSpans = validExtraction.map((item) => ({ id: item.id, sourceSpan: item.sourceSpan }));
+  const repairedPreparation = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      imperfectQuote,
+      repairedSpans,
+      { missingPropositions: [] },
+      interpretationAudit(["p1", "p2"]),
+      structureAudit(["p1", "p2"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "span-repair", sourceText: source, donorText: donor });
+  assert(
+    repairedPreparation.inventory.propositions.length === 2 &&
+    repairedPreparation.inventory.propositions[0].sourceSpan.text === source.slice(0, 25),
+    "a bounded repair pass must replace an inexact quote with a verbatim source span",
+  );
+  names.push("repair inexact model quotations using exact source text before strict validation");
+
+  let inventedRepairRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        imperfectQuote,
+        repairedSpans.map((item, index) => index === 0
+          ? { ...item, sourceSpan: { start: 0, end: 25, text: "выдуманная цитата" } }
+          : item),
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "span-repair-invalid", sourceText: source, donorText: donor });
+  } catch (error) {
+    inventedRepairRejected = String(error).includes("Semantic extraction failed source-bound validation");
+  }
+  assert(inventedRepairRejected, "span repair must not allow invented or paraphrased evidence");
+  names.push("reject repaired spans that are not literal substrings of the source");
+
   const falsePositiveRelation = {
     kind: "relation-omission", propositionIds: ["p1", "p2"],
     evidenceSpan: { start: 0, end: source.length, text: source },
