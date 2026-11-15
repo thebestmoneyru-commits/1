@@ -78,5 +78,5 @@ export interface ApplicationModelRoutes {
   candidateGeneration: { preferredModel: string; fallbackModels?: readonly string[] };
   styleCritique: { preferredModel: string; fallbackModels?: readonly string[] };
   surgicalRepair: { preferredModel: string; fallbackModels?: readonly string[] };
-  semanticVerification: { preferredModel: string; fallbackModels?: readonly string[] };
+  semanticVerification: { preferredModel: string; fallbackModels?: readonly string[] };\n  semanticExtraction: { preferredModel: string; fallbackModels?: readonly string[] };
 }
