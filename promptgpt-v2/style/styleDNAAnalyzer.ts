@@ -188,7 +188,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
     const list = closingMap.get(key) ?? []; list.push(s); closingMap.set(key,list);
   }
   for (const [key,list] of [...closingMap.entries()].filter(([,v])=>v.length>=2).sort((a,b)=>b[1].length-a[1].length).slice(0,8)) {
-    features.push(feature(`closings.${key.replace(/\s+/gu,"-")}`,"openers",`Повторяющееся окончание: «${key}»`,list.length,nSent,"per-100-sentences",corpusConfidence,list.length,evidenceFor(text,list,config.maxEvidencePerFeature),"Два последних слова предложения; частотный сигнал.",100));
+    features.push(feature(`closings.${key.replace(/\s+/gu,"-")}`,"openers",`Повторяющееся окончание: «${key}»`,list.length,nSent,"per-100-sentences",corpusConfidence,list.length,evidenceFor(list,config.maxEvidencePerFeature),"Два последних слова предложения; частотный сигнал.",100));
   }
 
   const freq = new Map<string, number>();
