@@ -5,16 +5,16 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-const source = "Поскольку пошёл дождь, путники укрылись в храме.";
+const source = "Вчера. Дождь пошёл, поэтому путники укрылись в храме.";
 const propositions: Proposition[] = [
   {
-    id: "p1", summary: "Пошёл дождь", sourceSpan: { start: 9, end: 20, text: "пошёл дождь" },
+    id: "p1", summary: "Дождь пошёл", sourceSpan: { start: source.indexOf("Дождь пошёл"), end: source.indexOf("Дождь пошёл") + "Дождь пошёл".length, text: "Дождь пошёл" },
     subject: "дождь", predicate: "пошёл", polarity: "positive",
     qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }], mandatory: true,
   },
   {
     id: "p2", summary: "Путники укрылись в храме",
-    sourceSpan: { start: 22, end: source.length - 1, text: "путники укрылись в храме" },
+    sourceSpan: { start: source.indexOf("путники укрылись в храме"), end: source.indexOf("путники укрылись в храме") + "путники укрылись в храме".length, text: "путники укрылись в храме" },
     subject: "путники", predicate: "укрылись", object: "в храме", polarity: "positive",
     qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }], mandatory: true,
   },
@@ -43,7 +43,7 @@ export function runSemanticStructureAuditSelfTests(): { passed: number; names: s
     ...cleanAudit,
     issues: [{
       kind: "relation-inversion", propositionIds: ["p1", "p2"], relationKey,
-      evidenceSpan: { start: 0, end: 9, text: "Поскольку " },
+      evidenceSpan: { start: source.indexOf("поэтому"), end: source.indexOf("поэтому") + "поэтому".length, text: "поэтому" },
       explanation: "Проверить направление причинной связи.",
     }],
   });
@@ -54,7 +54,7 @@ export function runSemanticStructureAuditSelfTests(): { passed: number; names: s
     ...cleanAudit,
     issues: [{
       kind: "relation-omission", propositionIds: ["p1", "p2"],
-      evidenceSpan: { start: 0, end: 9, text: "Потому что" },
+      evidenceSpan: { start: 0, end: 10, text: "не существует" },
       explanation: "Есть пропущенная связь.",
     }],
   });
@@ -65,7 +65,7 @@ export function runSemanticStructureAuditSelfTests(): { passed: number; names: s
     ...cleanAudit,
     issues: [{
       kind: "relation-omission", propositionIds: ["p1", "p2"],
-      evidenceSpan: { start: 0, end: 8, text: "Поскольку" },
+      evidenceSpan: { start: 0, end: 5, text: "Вчера" },
       explanation: "Связь утрачена.",
     }],
   });
