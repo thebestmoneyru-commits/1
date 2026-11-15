@@ -14,6 +14,10 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
   assert(classifyModelError({ status: 429, message: "too many requests" }) === "rate-limit", "429 maps to rate limit");
   assert(classifyModelError(new Error("API_KEY_INVALID")) === "invalid-auth", "invalid key is terminal auth error");
   assert(classifyModelError(new Error("RESOURCE_EXHAUSTED quota")) === "quota-exhausted", "quota is distinguished from transient rate limiting");
+  const sdkAbort = new Error("This operation was aborted");
+  sdkAbort.name = "AbortError";
+  assert(classifyModelError(sdkAbort) === "timeout", "SDK AbortError caused by the router timeout is classified as retryable timeout");
+  assert(classifyModelError(new Error("The operation was aborted")) === "timeout", "fetch abort message is classified as timeout");
   names.push("provider error classification");
 
   let active = 0, maxActive = 0;
