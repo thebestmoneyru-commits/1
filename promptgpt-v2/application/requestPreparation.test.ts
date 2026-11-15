@@ -172,6 +172,71 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(structuralIssueRejected, "a validated structural finding must stop preparation");
   names.push("stop preparation when independent audit finds a structural issue");
 
+  const relationTypeSource = "Святитель пришёл в город, однако он помог людям.";
+  const relationTypeKey = JSON.stringify(["concession", "p1", "p2", "однако"]);
+  const relationTypeExtraction = [
+    {
+      id: "p1", summary: "Святитель пришёл в город",
+      sourceSpan: { start: 0, end: relationTypeSource.indexOf(","), text: "Святитель пришёл в город" },
+      subject: "Святитель", predicate: "пришёл", object: "в город", polarity: "positive",
+      qualifications: [], relations: [{ kind: "concession", from: "p1", to: "p2", expression: "однако" }], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Он помог людям",
+      sourceSpan: { start: relationTypeSource.indexOf("он помог"), end: relationTypeSource.length, text: "он помог людям." },
+      subject: "он", predicate: "помог", object: "людям", polarity: "positive",
+      qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const relationTypeIssue = {
+    kind: "relation-type", propositionIds: ["p1", "p2"], relationKey: relationTypeKey,
+    evidenceSpan: {
+      start: relationTypeSource.indexOf("однако"),
+      end: relationTypeSource.indexOf("однако") + "однако".length,
+      text: "однако",
+    },
+    explanation: "Тип отношения определён неверно.",
+  };
+  const relationTypeAudit = {
+    checkedPropositionIds: ["p1", "p2"],
+    checkedRelationKeys: [relationTypeKey],
+    issues: [relationTypeIssue],
+  };
+  const removedRelation = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      relationTypeExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      relationTypeAudit,
+      { decisions: [{ issueIndex: 0, action: "remove", explanation: "Это выражение относится к внутренней конструкции одной пропозиции." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "relation-type-remove", sourceText: relationTypeSource, donorText: donor });
+  assert(
+    removedRelation.inventory.propositions.every((item) => item.relations.length === 0),
+    "a bounded relation-type repair must remove only the relation identified by the audit",
+  );
+  names.push("remove a falsely extracted cross-proposition relation after independent adjudication");
+
+  const correctedRelation = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      relationTypeExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      relationTypeAudit,
+      { decisions: [{ issueIndex: 0, action: "change-kind", correctedKind: "contrast", explanation: "Маркер однако выражает противопоставление." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "relation-type-change", sourceText: relationTypeSource, donorText: donor });
+  assert(
+    correctedRelation.inventory.propositions[0].relations.some((item) =>
+      item.kind === "contrast" && item.from === "p1" && item.to === "p2" && item.expression === "однако"),
+    "a bounded relation-type repair may change only the kind of the identified relation",
+  );
+  names.push("correct an audited relation kind without changing its endpoints or source evidence");
+
   let incompleteStructureRejected = false;
   try {
     await createStyleTransferRequestPreparer(
