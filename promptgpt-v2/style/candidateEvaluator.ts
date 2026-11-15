@@ -85,8 +85,8 @@ export function evaluateCandidate(
     rejectionReasons.push("Стилевой профиль построен не по точному тексту данного кандидата.");
   }
   if (styleReport.status !== "scored" || styleReport.score === null) {
+    warnings.push("Невозможно надёжно измерить стилевое сходство кандидата; требуется дополнительная проверка.");
     warnings.push(...styleReport.warnings);
-    rejectionReasons.push("Невозможно надёжно измерить стилевое сходство кандидата.");
   } else {
     if (styleReport.score < options.minimumStyleScore) {
       rejectionReasons.push(`Стилевое сходство ниже порога: ${styleReport.score} из 100 при минимуме ${options.minimumStyleScore}.`);
