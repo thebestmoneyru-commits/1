@@ -84,6 +84,7 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
   router.post(
     "/",
     options.authenticate,
+    options.rateLimit,
     express.json({ limit: "768kb", strict: true, type: "application/json" }),
     async (req: Request, res: Response) => {
       const parsed = readBody(req.body, { maxSourceCharacters, maxDonorCharacters });
