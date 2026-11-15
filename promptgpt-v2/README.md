@@ -40,7 +40,7 @@ This directory is an isolated modernization track. Existing production files are
 - End-to-end service orchestration in `application/styleTransferService.ts`: immutable source/baseline binding, bounded candidate generation, semantic-first admission, one critic/repair cycle, and final selection with trace metadata.
 - A Gemini composition root in `application/createGeminiService.ts` constructs one SDK client and one shared router for the lifetime of the service instance; initialize it at server startup, not per request.
 - Request cancellation is forwarded through candidate generation, semantic verification, style critique and surgical repair to the shared model router; a failed candidate-level semantic check is isolated so other candidates can still be evaluated.
-- The request-specific semantic policy is preserved through the post-repair verification gate; the same confidence/evidence requirements apply before and after repair.
+- The request-specific semantic policy is preserved through the post-repair verification gate; the same confidence/evidence requirements apply before and after repair. If the initial hard semantic gate fails, the service skips the style-only critic/repair stage and retains the rejected candidate unchanged.
 - Application contracts in `application/applicationTypes.ts`. The service receives a prebuilt, source-bound semantic inventory and frozen donor baseline; it does not invent or silently extract either one.
 - Mock-based orchestration regression tests in `application/styleTransferService.test.ts` cover successful admission, rejection of a source/inventory mismatch before model calls, and cancellation before generation.
 
