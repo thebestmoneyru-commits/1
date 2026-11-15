@@ -21,7 +21,7 @@ This directory is an isolated modernization track. Existing production files are
 - Semantic-first candidate admission in `style/candidateEvaluator.ts`.
 - Bounded parallel candidate generation from the immutable source and donor baseline in `style/candidateGenerator.ts`.
 - Public exports in `style/index.ts`.
-- Analyzer, scorer, baseline and candidate-gate regression checks in their corresponding `*.test.ts` files.
+- Analyzer, scorer, baseline, candidate-generation and candidate-gate regression checks in their corresponding `*.test.ts` files.
 
 ## Style analyzer limitations
 
@@ -31,7 +31,7 @@ Short samples are explicitly marked limited or insufficient. Their apparent freq
 
 The score is a heuristic similarity estimate, not a calibrated probability that a human reader will identify the author. The original donor profile is deep-cloned and recursively frozen before it becomes a baseline. An integrity checksum detects accidental profile substitution or mutation; it is not a cryptographic signature.
 
-Candidate generation uses an injected model adapter, creates independent variants from the same immutable source, limits concurrency, isolates per-candidate provider failures, and binds each result to source and donor-baseline fingerprints. Source text is embedded as a JSON string and explicitly treated as data rather than instructions.
+Candidate generation uses an injected model adapter, creates independent variants from the same immutable source, limits concurrency, isolates per-candidate provider failures, and binds each result to source and donor-baseline fingerprints. Source text, donor examples, anchors and extracted propositions are serialized as JSON data and explicitly treated as data rather than instructions.
 
 Candidate admission applies the semantic gate first. A style score cannot compensate for missing facts or failed proposition checks. Candidates with inadequate style evidence are marked for review, not silently admitted or assigned a fabricated numeric score. It compares sentence-length buckets, mean and median sentence length, punctuation rates, syntactic and connector rates, repeated openings/closings, lexical repetitions, and paragraph rhythm where the analyzer has enough evidence. Rare markers and lexical repeats have reduced weight. Corpus-wide features with zero observed occurrences remain part of the comparison, so the scorer can detect candidate overuse of traits absent from the donor sample.
 
