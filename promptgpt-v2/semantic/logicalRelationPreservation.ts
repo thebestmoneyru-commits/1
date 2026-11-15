@@ -1,5 +1,6 @@
 import type { LogicalRelation, Proposition } from "../types";
 import { getLogicalRelationAuditKey } from "./semanticStructureAudit";
+import { evidenceExistsInText } from "./textEvidence";
 
 export type LogicalRelationStatus = "preserved" | "changed" | "omitted" | "uncertain";
 
@@ -86,7 +87,7 @@ export function validateLogicalRelationAssessments(
     }
     const assessment = matches[0];
     const evidenceIsGrounded = assessment.outputEvidence.every((evidence) =>
-      evidence.length > 0 && candidateText.includes(evidence));
+      evidenceExistsInText(candidateText, evidence));
     if (!evidenceIsGrounded) {
       issues.push(`Связь ${relationKey}: доказательство отсутствует в точном тексте кандидата.`);
     }

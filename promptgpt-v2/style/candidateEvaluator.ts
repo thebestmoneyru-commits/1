@@ -88,18 +88,20 @@ export function evaluateCandidate(
     warnings.push("Невозможно надёжно измерить стилевое сходство кандидата; требуется дополнительная проверка.");
     warnings.push(...styleReport.warnings);
   } else {
-    if (styleReport.score < options.minimumStyleScore) {
-      rejectionReasons.push(`Стилевое сходство ниже порога: ${styleReport.score} из 100 при минимуме ${options.minimumStyleScore}.`);
-    }
     if (styleReport.confidence < options.minimumStyleConfidence) {
-      warnings.push(`Уверенность стилевой оценки низкая: ${styleReport.confidence}.`);
+      // A low-confidence numeric score is provisional and must not cause an automatic rejection.
+      warnings.push(`Уверенность стилевой оценки низкая: ${styleReport.confidence}; числовой балл предварительный и не используется как основание для автоматического отказа.`);
+    } else if (styleReport.score < options.minimumStyleScore) {
+      rejectionReasons.push(`Стилевое сходство ниже порога: ${styleReport.score} из 100 при минимуме ${options.minimumStyleScore}.`);
     }
     warnings.push(...styleReport.warnings);
   }
 
   const hardFailure = !semanticReport.passed || !baselineIntegrity.valid ||
     input.candidateProfile.sourceFingerprint !== fingerprintStyleSource(input.outputText) ||
-    (styleReport.status === "scored" && styleReport.score !== null && styleReport.score < options.minimumStyleScore);
+    (styleReport.status === "scored" && styleReport.score !== null &&
+      styleReport.confidence >= options.minimumStyleConfidence &&
+      styleReport.score < options.minimumStyleScore);
 
   const needsReview = styleReport.status !== "scored" ||
     styleReport.score === null ||

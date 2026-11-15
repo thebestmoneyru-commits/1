@@ -53,7 +53,7 @@ export interface StyleScorerOptions {
   penaltyExponent: number;
 }
 
-export const STYLE_SCORING_VERSION = "2.0.0";
+export const STYLE_SCORING_VERSION = "2.0.1";
 
 export const DEFAULT_STYLE_SCORER_OPTIONS: Readonly<StyleScorerOptions> = {
   familyWeights: {
@@ -142,6 +142,15 @@ function direction(donor: number, candidate: number): FeatureComparison["directi
   if (Math.abs(candidate - donor) < 1e-9) return "match";
   return candidate < donor ? "underuse" : "overuse";
 }
+/**
+ * Content-word recurrence and exact sentence endings are topic signals, not
+ * portable style traits. Comparing them across unrelated subjects rewards
+ * copying donor vocabulary and penalizes legitimate topic changes.
+ */
+function isPortableStyleFeature(id: string): boolean {
+  return !id.startsWith("lexical.repeat.") && !id.startsWith("closings.");
+}
+
 function featureMap(profile: StyleDNAProfile): Map<string, StyleFeature> {
   return new Map(profile.features.map((feature) => [feature.id, feature]));
 }
@@ -187,6 +196,7 @@ export function scoreStyleDNA(
   const comparisons: FeatureComparison[] = [];
 
   for (const [id, donorFeature] of donorFeatures) {
+    if (!isPortableStyleFeature(id)) continue;
     const isCorpusWideFeature =
       id.startsWith("rhythm.") || id.startsWith("syntax.") ||
       id.startsWith("punctuation.") || id.startsWith("connectors.");
@@ -211,6 +221,7 @@ export function scoreStyleDNA(
 
   // Candidate-only markers are potential stylistic overfitting or foreign style leakage.
   for (const [id, candidateFeature] of candidateFeatures) {
+    if (!isPortableStyleFeature(id)) continue;
     if (donorFeatures.has(id) || candidateFeature.observations < options.minimumDonorObservations) continue;
     const weight = (options.familyWeights[candidateFeature.family] ?? 0) * featureWeight(candidateFeature);
     const reliability = featureReliability(candidateFeature) * clamp(donor.confidence);

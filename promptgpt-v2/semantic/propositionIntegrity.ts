@@ -5,6 +5,7 @@ import type {
   SemanticPolicy,
 } from "../types";
 import { DEFAULT_SEMANTIC_POLICY } from "../types";
+import { evidenceExistsInText } from "./textEvidence";
 
 export interface PropositionVerificationResult {
   assessments: PropositionAssessment[];
@@ -96,7 +97,7 @@ export function verifyPropositionAssessments(
       );
     const allEvidenceGrounded =
       allEvidenceNonEmpty &&
-      assessment.outputEvidence.every((evidence) => candidateText.includes(evidence));
+      assessment.outputEvidence.every((evidence) => evidenceExistsInText(candidateText, evidence));
 
     if (!allEvidenceGrounded) {
       issues.push({

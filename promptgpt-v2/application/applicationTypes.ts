@@ -11,6 +11,7 @@ export type TransferStage =
   | "validating-input"
   | "generating-candidates"
   | "evaluating-candidates"
+  | "semantic-repair"
   | "critic-repair"
   | "completed"
   | "failed"

@@ -36,6 +36,12 @@ export function runStyleDNAScorerSelfTests(): { passed: number; names: string[] 
   assert(similar.status === "scored" && (similar.score ?? 0) >= 99, "equivalent corpus remains highly similar");
   names.push("stable repeatability");
 
+  const topicSignals = scoreStyleDNA(donor, profile(corpus("совершенно иная тематика", 20)));
+  assert(!topicSignals.comparisons.some((item) =>
+    item.featureId.startsWith("lexical.repeat.") || item.featureId.startsWith("closings.")),
+    "topic-specific repeated words and exact sentence endings must not be scored as portable style");
+  names.push("exclude non-portable topic vocabulary and exact closings");
+
   const short = scoreStyleDNA(donor, analyzeStyleDNA("Короткий текст.", {
     minWordsForReliableProfile: 500, minSentencesForReliableProfile: 25,
   }));

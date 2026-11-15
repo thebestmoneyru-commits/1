@@ -4,6 +4,7 @@ import { generateCandidates, resolveCandidateCount, type CandidateModelAdapter, 
 import { evaluateCandidate } from "../style/candidateEvaluator";
 import { validateLogicalRelationAssessments } from "../semantic/logicalRelationPreservation";
 import { runCriticRepairPipeline } from "../repair/criticRepairPipeline";
+import { buildSemanticRestorationPrompt } from "../repair/semanticRestoration";
 import type { StyleCriticAdapter } from "../critic/styleCritic";
 import type { SurgicalRepairAdapter } from "../repair/surgicalRepair";
 import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
@@ -167,22 +168,143 @@ export class StyleTransferService {
           initial.rejectionReasons.push("Кандидат не сохранил исходную логическую структуру.");
         }
 
-        if (initial.disposition === "accepted") {
+        let currentText = candidate.text;
+        let currentAssessments = assessments;
+        let currentRelationAssessments = relationAssessments;
+        let currentProfile = profile;
+        let currentEvaluation = initial;
+        let semanticRestorationApplied = false;
+        const restorationWarnings: string[] = [];
+        const hasRestorableDefects =
+          assessments.some((item) => item.status !== "preserved") ||
+          relationAssessments.some((item) => item.status !== "preserved") ||
+          initial.semanticReport.anchorChecks.some((item) => item.status === "missing");
+
+        // A single content-restoration pass is allowed before style-only repair.
+        // It is triggered only by concrete verifier findings, never by a missing report.
+        if (!initial.semanticReport.passed && hasRestorableDefects) {
+          mark("semantic-repair", "Одна ограниченная попытка восстановить пропущенные смысловые элементы с последующей независимой проверкой.", candidate.candidateId);
+          try {
+            const prompt = buildSemanticRestorationPrompt({
+              sourceText: request.sourceText,
+              candidateText: currentText,
+              inventory: request.inventory,
+              propositionAssessments: currentAssessments,
+              relationAssessments: currentRelationAssessments,
+              semanticReport: currentEvaluation.semanticReport,
+            });
+            const restoredText = (await this.deps.candidateGenerator.generate({
+              prompt,
+              candidateIndex: candidate.candidateIndex,
+              signal: request.signal,
+            })).trim();
+
+            if (!restoredText || restoredText === currentText) {
+              restorationWarnings.push("Восстановление содержания не изменило текст; исходный кандидат оставлен без изменений.");
+            } else {
+              let restoredAssessments: PropositionAssessment[];
+              let restoredRelations: LogicalRelationAssessment[];
+              if (this.deps.semanticVerifier.assessCombined) {
+                const restored = await this.deps.semanticVerifier.assessCombined({
+                  sourceText: request.sourceText,
+                  candidateText: restoredText,
+                  propositions: request.inventory.propositions,
+                  signal: request.signal,
+                });
+                restoredAssessments = restored.propositionAssessments;
+                restoredRelations = restored.relationAssessments;
+              } else {
+                const [propositionResult, relationResult] = await Promise.all([
+                  this.deps.semanticVerifier.assess({
+                    sourceText: request.sourceText,
+                    candidateText: restoredText,
+                    propositions: request.inventory.propositions,
+                    signal: request.signal,
+                  }),
+                  this.deps.semanticVerifier.assessRelations({
+                    sourceText: request.sourceText,
+                    candidateText: restoredText,
+                    propositions: request.inventory.propositions,
+                    signal: request.signal,
+                  }),
+                ]);
+                restoredAssessments = propositionResult;
+                restoredRelations = relationResult;
+              }
+
+              const restoredStructure = validateLogicalRelationAssessments(
+                restoredText, request.inventory.propositions, restoredRelations,
+                request.semanticPolicy?.minimumAssessmentConfidence ?? DEFAULT_SEMANTIC_POLICY.minimumAssessmentConfidence,
+              );
+              const restoredProfile = this.deps.styleProfiler.analyze(restoredText);
+              const restoredEvaluation = evaluateCandidate({
+                candidateId: candidate.candidateId,
+                sourceText: request.sourceText,
+                outputText: restoredText,
+                inventory: request.inventory,
+                propositionAssessments: restoredAssessments,
+                donorBaseline: request.donorBaseline,
+                candidateProfile: restoredProfile,
+              }, {
+                minimumStyleScore: request.minimumStyleScore,
+                minimumStyleConfidence: request.minimumStyleConfidence,
+                semanticPolicy: request.semanticPolicy,
+              });
+
+              if (!restoredStructure.passed) {
+                restoredEvaluation.semanticReport.passed = false;
+                restoredEvaluation.semanticReport.issues.push({
+                  code: "LOGICAL_RELATION_NOT_PRESERVED", severity: "error",
+                  message: restoredStructure.issues.join(" "),
+                });
+                restoredEvaluation.disposition = "rejected";
+                restoredEvaluation.admissible = false;
+                restoredEvaluation.rejectionReasons.push("После восстановления содержания логическая структура всё ещё не подтверждена.");
+              }
+
+              if (restoredEvaluation.semanticReport.passed) {
+                currentText = restoredText;
+                currentAssessments = restoredAssessments;
+                currentRelationAssessments = restoredRelations;
+                currentProfile = restoredProfile;
+                currentEvaluation = restoredEvaluation;
+                semanticRestorationApplied = true;
+              } else {
+                restorationWarnings.push("Попытка восстановления не прошла повторную проверку смысла; исходный кандидат не принят.");
+              }
+            }
+          } catch (error) {
+            restorationWarnings.push(`Не удалось восстановить содержание кандидата: ${error instanceof Error ? error.message : "неизвестная ошибка"}.`);
+          }
+        }
+
+        if (currentEvaluation.disposition === "accepted") {
           outcomes.push({
-            candidateId: candidate.candidateId, initial, finalText: candidate.text,
-            finalEvaluation: initial, repaired: false, warnings: [...initial.warnings],
+            candidateId: candidate.candidateId,
+            initial,
+            finalText: currentText,
+            finalEvaluation: currentEvaluation,
+            repaired: semanticRestorationApplied,
+            repairPassed: semanticRestorationApplied ? true : undefined,
+            warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...currentEvaluation.warnings])],
           });
           if (adaptive) break candidateLoop;
           continue;
         }
 
-        // The critic/repair stage is style-only. Do not spend additional model
-        // calls or risk changing text when the hard semantic gate has failed.
-        if (!initial.semanticReport.passed) {
+        // Style critique is only allowed after semantic preservation has passed.
+        if (!currentEvaluation.semanticReport.passed) {
           outcomes.push({
-            candidateId: candidate.candidateId, initial, finalText: candidate.text,
-            finalEvaluation: initial, repaired: false,
-            warnings: [...initial.warnings, "Стилистическая правка пропущена: кандидат не прошёл обязательную проверку сохранности смысла."],
+            candidateId: candidate.candidateId,
+            initial,
+            finalText: candidate.text,
+            finalEvaluation: initial,
+            repaired: false,
+            warnings: [...new Set([
+              ...initial.warnings,
+              ...restorationWarnings,
+              "Стилистическая правка пропущена: кандидат не прошёл обязательную проверку сохранности смысла.",
+            ])],
           });
           continue;
         }
@@ -192,7 +314,7 @@ export class StyleTransferService {
           const pipeline = await runCriticRepairPipeline({
             candidateId: candidate.candidateId,
             sourceText: request.sourceText,
-            candidateText: candidate.text,
+            candidateText: currentText,
             inventory: request.inventory,
             donorBaseline: request.donorBaseline,
             criticAdapter: this.deps.critic,
@@ -211,9 +333,9 @@ export class StyleTransferService {
             semanticPolicy: request.semanticPolicy,
             signal: request.signal,
             initialVerification: {
-              propositionAssessments: assessments,
-              relationAssessments,
-              styleProfile: profile,
+              propositionAssessments: currentAssessments,
+              relationAssessments: currentRelationAssessments,
+              styleProfile: currentProfile,
             },
           }, {
             critic: request.critic,
@@ -230,18 +352,19 @@ export class StyleTransferService {
             initial,
             finalText: pipeline.finalText,
             finalEvaluation,
-            repaired: pipeline.repairResult.applied,
+            repaired: semanticRestorationApplied || pipeline.repairResult.applied,
             repairPassed: pipeline.completed,
-            warnings: [...new Set([...initial.warnings, ...pipeline.warnings])],
+            warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...pipeline.warnings])],
           });
           if (adaptive && pipeline.completed && finalEvaluation.disposition === "accepted") {
             break candidateLoop;
           }
         } catch (error) {
           outcomes.push({
-            candidateId: candidate.candidateId, initial, finalText: candidate.text,
-            finalEvaluation: initial, repaired: false,
-            warnings: [error instanceof Error ? error.message : "Critic/repair stage failed."],
+            candidateId: candidate.candidateId, initial, finalText: currentText,
+            finalEvaluation: currentEvaluation, repaired: semanticRestorationApplied,
+            repairPassed: false,
+            warnings: [...restorationWarnings, error instanceof Error ? error.message : "Critic/repair stage failed."],
           });
         }
       }

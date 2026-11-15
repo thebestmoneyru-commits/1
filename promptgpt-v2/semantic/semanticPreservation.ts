@@ -4,21 +4,10 @@ import type {
 import { DEFAULT_SEMANTIC_POLICY } from "../types";
 import { fingerprintSource } from "./factInventory";
 import { verifyPropositionAssessments } from "./propositionIntegrity";
+import { countNormalizedWholePhrase } from "./textEvidence";
 
-export const SEMANTIC_VERIFICATION_VERSION = "2.0.1";
+export const SEMANTIC_VERIFICATION_VERSION = "2.0.2";
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-function countWholePhrase(text: string, phrase: string): number {
-  const value = phrase.trim();
-  if (!value) return 0;
-  const pattern = new RegExp(
-    `(?<![\\p{L}\\p{N}_])${escapeRegExp(value)}(?![\\p{L}\\p{N}_])`,
-    "giu",
-  );
-  return [...text.matchAll(pattern)].length;
-}
 export interface SemanticPreservationInput {
   sourceText: string;
   outputText: string;
@@ -42,7 +31,7 @@ export function evaluateSemanticPreservation(input: SemanticPreservationInput): 
   const anchorChecks: AnchorCheck[] = [];
 
   for (const anchor of inventory.anchors) {
-    const occurrences = countWholePhrase(outputText, anchor.value);
+    const occurrences = countNormalizedWholePhrase(outputText, anchor.value);
     const status = occurrences === 0 ? "missing" : occurrences === 1 ? "found" : "ambiguous";
     anchorChecks.push({ anchorId: anchor.id, status, matchedText: occurrences > 0 ? anchor.value : undefined, occurrences });
 
