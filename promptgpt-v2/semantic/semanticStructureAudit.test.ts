@@ -16,7 +16,7 @@ const propositions: Proposition[] = [
     id: "p2", summary: "Путники укрылись в храме",
     sourceSpan: { start: source.indexOf("путники укрылись в храме"), end: source.indexOf("путники укрылись в храме") + "путники укрылись в храме".length, text: "путники укрылись в храме" },
     subject: "путники", predicate: "укрылись", object: "в храме", polarity: "positive",
-    qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }], mandatory: true,
+    qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }], mandatory: true,
   },
 ];
 const relationKey = getLogicalRelationAuditKey(propositions[0].relations[0]);
