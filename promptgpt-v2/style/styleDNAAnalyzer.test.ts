@@ -45,5 +45,12 @@ export function runStyleDNAAnalyzerSelfTests(): { passed: number; names: string[
   assert(profile.status === "insufficient", "short samples are not presented as reliable profiles");
   names.push("short-corpus confidence gate");
 
+  const buckets = profile.corpus.sentenceLengthDistribution;
+  const bucketTotal = buckets.short.share + buckets.medium.share + buckets.long.share + buckets.veryLong.share;
+  assert(Math.abs(bucketTotal - 1) < 1e-9, "sentence length distribution sums to one");
+  assert(profile.features.some((item) => item.id === "paragraphs.mean-sentences-per-paragraph"),
+    "paragraph rhythm is represented as a measurable feature");
+  names.push("sentence and paragraph distributions");
+
   return { passed: names.length, names };
 }
