@@ -42,6 +42,7 @@ export async function runCriticRepairPipelineSelfTests(): Promise<{ passed: numb
       },
     },
     semanticVerifier: {
+      async assessRelations() { return []; },
       async assess() {
         semanticCalls++;
         return [];
@@ -90,6 +91,7 @@ export async function runCriticRepairPipelineSelfTests(): Promise<{ passed: numb
     },
     repairAdapter: { async repair() { throw new Error("repair must not run"); } },
     semanticVerifier: {
+      async assessRelations() { return []; },
       async assess() {
         return [{
           propositionId: "p1",
