@@ -282,6 +282,8 @@ export class ModelRouter {
             state.cooldownUntil = Math.max(state.cooldownUntil, this.now() + (this.cooldowns[kind] ?? 0));
           }
           if (!retryable(kind) || attempt === maxAttempts) break;
+          // Small bounded exponential backoff prevents immediate retry bursts.
+          await new Promise((resolve) => setTimeout(resolve, Math.min(1200, 200 * (2 ** (attempt - 1)))));
         } finally {
           release?.();
           timer.dispose();
