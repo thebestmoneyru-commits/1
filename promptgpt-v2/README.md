@@ -42,6 +42,7 @@ This directory is an isolated modernization track. Existing production files are
 - Request cancellation is forwarded through candidate generation, semantic verification, style critique and surgical repair to the shared model router; a failed candidate-level semantic check is isolated so other candidates can still be evaluated.
 - The request-specific semantic policy is preserved through the post-repair verification gate; the same confidence/evidence requirements apply before and after repair.
 - Application contracts in `application/applicationTypes.ts`. The service receives a prebuilt, source-bound semantic inventory and frozen donor baseline; it does not invent or silently extract either one.
+- Mock-based orchestration regression tests in `application/styleTransferService.test.ts` cover successful admission, rejection of a source/inventory mismatch before model calls, and cancellation before generation.
 
 ## Running the v2 regression checks
 
@@ -51,7 +52,7 @@ The complete offline regression suite (it does not call the live Gemini API) is 
 npx tsx promptgpt-v2/runSelfTests.cli.ts
 ```
 
-The runner executes each group sequentially and stops on the first thrown assertion. A successful run returns the total number of passed checks and the per-module results. This command has been documented but has not yet been executed in the current development session.
+The runner executes each group sequentially and stops on the first thrown assertion. A successful run returns the total number of passed checks and the per-module results. The application service tests use injected mocks and do not call Gemini. The complete suite has not yet been executed in this development session.
 
 ## Style analyzer limitations
 
