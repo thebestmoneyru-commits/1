@@ -13,6 +13,7 @@ This directory is an isolated modernization track. Existing production files are
 - Conservative contradiction screening in `semantic/propositionConsistency.ts`: flags exact lexical claim matches with opposite explicit polarity while respecting differences in time, attribution, modality and other qualifications; warnings are retained in the canonical inventory and require review rather than automatic rejection.
 - Evidence-bound interpretation audit in `semantic/propositionInterpretationAudit.ts`: validates an independent pass that accounts for every extracted proposition and reports source-grounded mismatches in subject, predicate, object, negation, modality, attribution, scope and logical relations. It cannot silently rewrite extracted fields.
 - Evidence-bound cross-proposition structure audit in `semantic/semanticStructureAudit.ts`: requires explicit audit coverage of every proposition and extracted relation, validates exact connective evidence, and flags causal/temporal direction, conditional and concessive scope, attribution, pronoun antecedents, omitted or inverted relations. Findings stop preparation for review; the audit never mutates the inventory.
+- Output-side logical relation preservation in `semantic/logicalRelationPreservation.ts`: compares every source relation with the generated candidate, requires a verbatim candidate evidence fragment and confidence threshold, and rejects changed, omitted, uncertain, duplicated or unassessed relations. This closes the gap where individual facts survive but the logical connection between them changes.
 - Combined semantic gate in `semantic/semanticPreservation.ts`.
 
 ### Style DNA Analyzer
@@ -35,7 +36,7 @@ This directory is an isolated modernization track. Existing production files are
 - DNS-pinned HTTPS POST transport with IPv4/IPv6 special-range filtering, no redirects, request timeouts and streaming response-size limits in `infrastructure/safeRemoteFetch.ts`.
 - Public module entry points in `index.ts`, `critic/index.ts`, `repair/index.ts` and `infrastructure/index.ts`.
 - Public exports in `style/index.ts`.
-- Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification, orchestration, model-router, Gemini-adapter, cache, JSON-validation, remote-endpoint-policy, safe-remote-fetch, proposition-coverage, proposition-schema, proposition-consistency, proposition-interpretation and semantic-structure audit regression checks in their corresponding `*.test.ts` files.
+- Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification, orchestration, model-router, Gemini-adapter, cache, JSON-validation, remote-endpoint-policy, safe-remote-fetch, proposition-coverage, proposition-schema, proposition-consistency, proposition-interpretation, semantic-structure and output logical-relation preservation regression checks in their corresponding `*.test.ts` files.
 
 ### Application Orchestration
 - Explicit deployment-supplied model allowlist and task-route validation in `application/modelCatalog.ts`; no default model IDs are assumed.
