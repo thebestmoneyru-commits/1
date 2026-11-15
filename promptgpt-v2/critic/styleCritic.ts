@@ -39,7 +39,7 @@ export interface StyleCriticReport {
 }
 
 export interface StyleCriticAdapter {
-  review(prompt: string): Promise<string>;
+  review(prompt: string, signal?: AbortSignal): Promise<string>;
 }
 
 export interface StyleCriticOptions {
@@ -153,6 +153,7 @@ export interface RunStyleCriticInput {
   donorBaseline: DonorStyleBaseline;
   adapter: StyleCriticAdapter;
   options?: Partial<StyleCriticOptions>;
+  signal?: AbortSignal;
 }
 
 export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleCriticReport> {
@@ -164,7 +165,8 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
     throw new Error("Fact inventory does not belong to the exact supplied source text.");
   }
 
-  const raw = await input.adapter.review(buildStyleCriticPrompt({ ...input, options }));
+  if (input.signal?.aborted) throw new Error("Style critique was cancelled.");
+  const raw = await input.adapter.review(buildStyleCriticPrompt({ ...input, options }), input.signal);
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
