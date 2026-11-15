@@ -79,6 +79,7 @@ export class StyleTransferService {
         if (request.signal?.aborted) break;
         mark("evaluating-candidates", "Независимая семантическая и стилевая оценка.", candidate.candidateId);
         let assessments: PropositionAssessment[];
+        let structureReport: ReturnType<typeof validateLogicalRelationAssessments>;
         let profile: StyleDNAProfile;
         try {
           const [propositionAssessments, relationAssessments] = await Promise.all([
@@ -96,7 +97,7 @@ export class StyleTransferService {
             }),
           ]);
           assessments = propositionAssessments;
-          const structureReport = validateLogicalRelationAssessments(
+          structureReport = validateLogicalRelationAssessments(
             candidate.text, request.inventory.propositions, relationAssessments,
           );
           if (request.signal?.aborted) break;
