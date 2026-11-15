@@ -30,6 +30,7 @@ export function validatePropositionExtraction(
 
   const result: Proposition[] = [];
   const ids = new Set<string>();
+  const semanticKeys = new Set<string>();
 
   input.forEach((raw, index) => {
     if (!isRecord(raw)) {
@@ -74,6 +75,8 @@ export function validatePropositionExtraction(
 
     if (!validSpan) {
       errors.push(`Пропозиция ${id || "#" + (index + 1)}: sourceSpan не совпадает с исходным текстом.`);
+    } else if (!/[\p{L}\p{N}]/u.test(spanText as string)) {
+      errors.push(`Пропозиция ${id || "#" + (index + 1)}: sourceSpan не содержит слов или чисел.`);
     }
 
     let validQualifications = Array.isArray(item.qualifications);
@@ -127,7 +130,28 @@ export function validatePropositionExtraction(
       validQualifications && validRelations && validModality &&
       (item.object === undefined || (typeof item.object === "string" && Boolean(item.object.trim())))
     ) {
-      result.push(item as unknown as Proposition);
+      const proposition = item as unknown as Proposition;
+      const semanticKey = [
+        proposition.sourceSpan.start,
+        proposition.sourceSpan.end,
+        proposition.subject.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU"),
+        proposition.predicate.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU"),
+        proposition.object?.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU") ?? "",
+        proposition.polarity,
+        proposition.modality
+          ? [proposition.modality.kind, proposition.modality.value.trim(), proposition.modality.scope.trim()].join(":")
+          : "",
+        proposition.qualifications
+          .map((item) => [item.kind, item.value.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU")].join(":"))
+          .sort()
+          .join(";"),
+      ].join("|");
+      if (semanticKeys.has(semanticKey)) {
+        errors.push(`Пропозиция ${id}: точный смысловой дубль уже присутствует для того же фрагмента исходника.`);
+      } else {
+        semanticKeys.add(semanticKey);
+      }
+      result.push(proposition);
     }
   });
 
@@ -136,6 +160,8 @@ export function validatePropositionExtraction(
     for (const relation of proposition.relations) {
       if (!ids.has(relation.from) || !ids.has(relation.to)) {
         errors.push(`Пропозиция ${proposition.id}: отношение ссылается на неизвестную пропозицию.`);
+      } else if (relation.from === relation.to) {
+        errors.push(`Пропозиция ${proposition.id}: логическое отношение не может ссылаться на саму себя.`);
       }
     }
   }
