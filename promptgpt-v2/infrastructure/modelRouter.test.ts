@@ -4,8 +4,8 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Model router self-test failed: ${message}`);
 }
 const models: ModelDefinition[] = [
-  { id: "primary", tasks: ["candidate-generation", "general"], enabled: true, maxConcurrency: 1, supportsJsonSchema: true, supportsThinking: true, supportsSampling: true, priority: 1 },
-  { id: "fallback", tasks: ["candidate-generation", "general"], enabled: true, maxConcurrency: 2, supportsJsonSchema: false, supportsThinking: false, supportsSampling: false, priority: 2 },
+  { id: "primary", tasks: ["candidate-generation", "general"], enabled: true, maxConcurrency: 1, supportsJsonSchema: true, supportsThinking: true, supportsSampling: true },
+  { id: "fallback", tasks: ["candidate-generation", "general"], enabled: true, maxConcurrency: 2, supportsJsonSchema: false, supportsThinking: false, supportsSampling: false },
 ];
 
 export async function runModelRouterSelfTests(): Promise<{ passed: number; names: string[] }> {
@@ -31,7 +31,7 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
   ));
   assert(maxActive === 1, "per-model concurrency limit is enforced under parallel calls");
   assert(results.length === 4 && results.every((item) => item.usedModel === "primary"), "queued calls all complete");
-  names.push("global per-model concurrency cap");
+  names.push("router-wide per-model concurrency cap");
 
   const fallbackRouter = new ModelRouter({
     models,
