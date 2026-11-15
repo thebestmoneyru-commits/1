@@ -1151,6 +1151,8 @@ export default function App() {
   const [donorText, setDonorText] = useState(SAMPLE_DONOR_TEXT);
   const [contentText, setContentText] = useState(SAMPLE_CONTENT_TEXT);
   const [dnaResultText, setDnaResultText] = useState('');
+  const [v2AccessKey, setV2AccessKey] = useState('');
+  const [v2Status, setV2Status] = useState('');
   const [isGeneratingDna, setIsGeneratingDna] = useState(false);
   const [showPromptDetails, setShowPromptDetails] = useState(false);
   const [showActivePromptSummary, setShowActivePromptSummary] = useState(false);
@@ -1315,12 +1317,12 @@ export default function App() {
 
   // Повторяем ТОЛЬКО когда сервер прогревается (502/503 или «Starting Server...»).
   // Любая другая ошибка (429, 400, парсинг) выбрасывается сразу и не тратит квоту.
-  const safePost = async (url: string, body: any, maxRetries = 3): Promise<any> => {
+  const safePost = async (url: string, body: any, maxRetries = 3, extraHeaders: Record<string, string> = {}): Promise<any> => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...extraHeaders },
           body: JSON.stringify(body),
         });
 
@@ -1534,6 +1536,57 @@ export default function App() {
       );
     } catch (err: any) {
       setError(err.message || 'Ошибка переноса стилевой ДНК');
+    } finally {
+      setIsGeneratingDna(false);
+    }
+  };
+
+  const handleRunDnaTransferV2 = async () => {
+    if (!donorText.trim() || !contentText.trim()) {
+      setError('Пожалуйста, заполните оба поля: Текст 1 (образец стиля) и Текст 2 (содержание).');
+      return;
+    }
+    if (!v2AccessKey.trim()) {
+      setError('Введите ключ PROMPTGPT_V2_ACCESS_KEY, заданный в настройках сервера.');
+      return;
+    }
+
+    setIsGeneratingDna(true);
+    setError(null);
+    setV2Status('');
+    setDnaResultText('');
+
+    try {
+      const data = await safePost(
+        '/api/v2/style-transfer',
+        { donorText, sourceText: contentText },
+        3,
+        { 'X-PromptGPT-V2-Key': v2AccessKey.trim() }
+      );
+
+      setV2Status(`PROMPTGPT v2: ${data.status || 'неизвестный статус'}; создано вариантов: ${data.generation?.generated ?? 0}.`);
+
+      if (data.status !== 'accepted' || typeof data.selectedText !== 'string' || !data.selectedText.trim()) {
+        const detail =
+          data.error?.message ||
+          data.warnings?.[0] ||
+          data.candidates?.[0]?.warnings?.[0] ||
+          'Ни один вариант не прошёл обязательные проверки смысла и стиля.';
+        throw new Error(`PROMPTGPT v2 завершил работу со статусом «${data.status || 'unknown'}». ${detail}`);
+      }
+
+      setDnaResultText(data.selectedText);
+      setDnaRefinementMeta(null);
+      setAuditTargetSource('result');
+      handleRunDetectorAudit(data.selectedText);
+      saveToHistory(
+        data.selectedText,
+        100,
+        `[PROMPTGPT v2 | ${selectedModelName}] Т1: ${donorText.slice(0, 35)}... | Т2: ${contentText.slice(0, 35)}...`,
+        'style-dna'
+      );
+    } catch (err: any) {
+      setError(err.message || 'Ошибка PROMPTGPT v2');
     } finally {
       setIsGeneratingDna(false);
     }
@@ -2014,6 +2067,25 @@ export default function App() {
               />
             </div>
 
+            <div className="rounded-xl border border-cyan-800/60 bg-cyan-950/20 p-4 space-y-2">
+              <label htmlFor="promptgpt-v2-access-key" className="block text-xs font-semibold text-cyan-200">
+                Ключ доступа к новому движку PROMPTGPT v2
+              </label>
+              <input
+                id="promptgpt-v2-access-key"
+                type="password"
+                autoComplete="off"
+                value={v2AccessKey}
+                onChange={(event) => setV2AccessKey(event.target.value)}
+                placeholder="Введите значение PROMPTGPT_V2_ACCESS_KEY из настроек сервера"
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
+              />
+              <p className="text-[11px] text-slate-400">
+                Ключ не сохраняется в истории и передаётся только серверу в заголовке запроса. Для работы v2 администратор должен задать такой же ключ в переменных окружения.
+              </p>
+              {v2Status && <p className="text-xs text-cyan-200">{v2Status}</p>}
+            </div>
+
             {tabError && <div className="p-4 rounded-xl bg-red-950/50 border border-red-800 text-red-300 text-xs">{tabError}</div>}
 
             <div className="flex justify-center">
@@ -2040,6 +2112,17 @@ export default function App() {
                     </span>
                   </>
                 )}
+              </button>
+            </div>
+
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={handleRunDnaTransferV2}
+                disabled={isGeneratingDna || !donorText.trim() || !contentText.trim() || !v2AccessKey.trim()}
+                className="w-full max-w-lg rounded-2xl border border-cyan-500/60 bg-cyan-950/50 px-5 py-3 font-bold text-sm text-cyan-100 shadow-lg shadow-cyan-950/30 transition-colors hover:bg-cyan-900/70 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isGeneratingDna ? 'PROMPTGPT v2 выполняет проверки...' : '🧬 Запустить новый PROMPTGPT v2 (семантическая защита + Style DNA)'}
               </button>
             </div>
 
