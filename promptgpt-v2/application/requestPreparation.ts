@@ -1,6 +1,7 @@
 import type { FactInventory } from "../types";
 import { buildSemanticInventory } from "../semantic/buildInventory";
 import { validatePropositionExtraction } from "../semantic/propositionSchema";
+import { checkPropositionSourceCoverage } from "../semantic/propositionCoverage";
 import { createDonorStyleBaseline } from "../style/donorBaseline";
 import { parseJsonUnknown } from "../infrastructure/jsonValidation";
 import { analyzeStyleDNA } from "../style/styleDNAAnalyzer";
@@ -161,6 +162,16 @@ export function createStyleTransferRequestPreparer(
         }
         completePropositions = combined.propositions;
       }
+    }
+
+    const coverage = checkPropositionSourceCoverage(sourceText, completePropositions);
+    if (!coverage.covered) {
+      const gapSummary = coverage.gaps.slice(0, 8).map((gap) =>
+        `предложение ${gap.sentenceIndex}, фрагмент ${gap.segmentIndex}: «${gap.sourceSpan.text}»`,
+      ).join("; ");
+      throw new Error(
+        `Semantic extraction left ${coverage.gaps.length} source segment(s) without any proposition coverage: ${gapSummary}`,
+      );
     }
 
     const built = buildSemanticInventory(sourceText, completePropositions);
