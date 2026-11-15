@@ -24,10 +24,13 @@ export async function runSurgicalRepairSelfTests(): Promise<{ passed: number; na
   const sourceText = "В 1912 году автор описал событие.";
   const candidateText = "Автор описал событие в 1912 году.";
   const inventory = buildFactInventory(sourceText);
+  const donorFeature = baseline.profile.features.find((item) => item.evidence.length > 0);
+  assert(!!donorFeature, "donor evidence fixture exists");
+  const donorEvidence = donorFeature!.evidence[0].excerpt;
   const issue = {
     id: "issue-1", type: "syntax-mismatch" as const, severity: "warning" as const,
     outputSpan: { start: 0, end: 6, text: "Автор " },
-    donorFeatureId: "synthetic-feature", donorEvidenceExcerpt: "дословный образец",
+    donorFeatureId: donorFeature!.id, donorEvidenceExcerpt: donorEvidence,
     rationale: "Требуется точечная перестройка.", suggestedChange: "Изменить только начало.",
     affectedPropositionIds: [],
   };
