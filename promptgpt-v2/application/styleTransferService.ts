@@ -84,22 +84,33 @@ export class StyleTransferService {
         let structureReport: ReturnType<typeof validateLogicalRelationAssessments>;
         let profile: StyleDNAProfile;
         try {
-          const [propositionAssessments, checkedRelationAssessments] = await Promise.all([
-            this.deps.semanticVerifier.assess({
+          if (this.deps.semanticVerifier.assessCombined) {
+            const combined = await this.deps.semanticVerifier.assessCombined({
               sourceText: request.sourceText,
               candidateText: candidate.text,
               propositions: request.inventory.propositions,
               signal: request.signal,
-            }),
-            this.deps.semanticVerifier.assessRelations({
-              sourceText: request.sourceText,
-              candidateText: candidate.text,
-              propositions: request.inventory.propositions,
-              signal: request.signal,
-            }),
-          ]);
-          assessments = propositionAssessments;
-          relationAssessments = checkedRelationAssessments;
+            });
+            assessments = combined.propositionAssessments;
+            relationAssessments = combined.relationAssessments;
+          } else {
+            const [propositionAssessments, checkedRelationAssessments] = await Promise.all([
+              this.deps.semanticVerifier.assess({
+                sourceText: request.sourceText,
+                candidateText: candidate.text,
+                propositions: request.inventory.propositions,
+                signal: request.signal,
+              }),
+              this.deps.semanticVerifier.assessRelations({
+                sourceText: request.sourceText,
+                candidateText: candidate.text,
+                propositions: request.inventory.propositions,
+                signal: request.signal,
+              }),
+            ]);
+            assessments = propositionAssessments;
+            relationAssessments = checkedRelationAssessments;
+          }
           structureReport = validateLogicalRelationAssessments(
             candidate.text, request.inventory.propositions, relationAssessments,
             request.semanticPolicy?.minimumAssessmentConfidence ?? DEFAULT_SEMANTIC_POLICY.minimumAssessmentConfidence,
@@ -166,6 +177,10 @@ export class StyleTransferService {
             criticAdapter: this.deps.critic,
             repairAdapter: this.deps.repair,
             semanticVerifier: {
+              ...(this.deps.semanticVerifier.assessCombined ? {
+                assessCombined: ({ sourceText, candidateText, propositions }) =>
+                  this.deps.semanticVerifier.assessCombined!({ sourceText, candidateText, propositions, signal: request.signal }),
+              } : {}),
               assess: ({ sourceText, candidateText, propositions }) =>
                 this.deps.semanticVerifier.assess({ sourceText, candidateText, propositions, signal: request.signal }),
               assessRelations: ({ sourceText, candidateText, propositions }) =>
