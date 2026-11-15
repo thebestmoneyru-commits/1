@@ -164,10 +164,16 @@ export async function safePostJsonToRemote(
   return new Promise<SafeRemotePostResult>((resolve, reject) => {
     let settled = false;
     let receivedBytes = 0;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const chunks: Buffer[] = [];
+    const cleanup = () => {
+      if (timeout) clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
     const finishError = (error: Error) => {
       if (settled) return;
       settled = true;
+      cleanup();
       reject(error);
     };
     const request = httpsRequest(url, {
@@ -210,9 +216,11 @@ export async function safePostJsonToRemote(
         chunks.push(buffer);
       });
       response.on("error", (error) => finishError(error));
+      response.on("aborted", () => finishError(new Error("Remote response was aborted before completion.")));
       response.on("end", () => {
         if (settled) return;
         settled = true;
+        cleanup();
         resolve({
           statusCode,
           headers: response.headers,
@@ -222,13 +230,12 @@ export async function safePostJsonToRemote(
       });
     });
 
-    const timeout = setTimeout(() => request.destroy(new Error("Remote HTTP request timed out.")), remainingMs);
     const onAbort = () => request.destroy(new Error("Remote HTTP request was cancelled."));
+    timeout = setTimeout(() => request.destroy(new Error("Remote HTTP request timed out.")), remainingMs);
     options.signal?.addEventListener("abort", onAbort, { once: true });
     request.on("error", (error) => finishError(error));
     request.on("close", () => {
-      clearTimeout(timeout);
-      options.signal?.removeEventListener("abort", onAbort);
+      if (settled) options.signal?.removeEventListener("abort", onAbort);
     });
     request.end(options.jsonBody);
   });
