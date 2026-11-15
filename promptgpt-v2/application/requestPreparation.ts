@@ -211,12 +211,12 @@ export interface RequestPreparationOptions {
 
 function getSentenceBounds(sourceText: string, position: number): { start: number; end: number } {
   const safePosition = Math.max(0, Math.min(position, sourceText.length));
-  const previousBoundary = /[.!?…][)"'»”’\\]]*\\s+/gu;
+  const previousBoundary = /[.!?…][)"'»”’]*\s+/gu;
   let start = 0;
   for (const match of sourceText.slice(0, safePosition).matchAll(previousBoundary)) {
     start = (match.index ?? 0) + match[0].length;
   }
-  const nextBoundary = /[.!?…][)"'»”’\\]]*(?=\\s|$)/u.exec(sourceText.slice(safePosition));
+  const nextBoundary = /[.!?…][)"'»”’]*(?=\s|$)/u.exec(sourceText.slice(safePosition));
   const end = nextBoundary ? safePosition + nextBoundary.index + nextBoundary[0].length : sourceText.length;
   return { start, end };
 }
