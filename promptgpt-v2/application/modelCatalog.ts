@@ -10,7 +10,8 @@ const ROUTE_TASKS: ReadonlyArray<[keyof ApplicationModelRoutes, ModelTask]> = [
   ["candidateGeneration", "candidate-generation"],
   ["styleCritique", "style-critique"],
   ["surgicalRepair", "surgical-repair"],
-  ["semanticVerification", "semantic-verification"],\n  ["semanticExtraction", "semantic-extraction"],
+  ["semanticVerification", "semantic-verification"],
+  ["semanticExtraction", "semantic-extraction"],
 ];
 
 /**
