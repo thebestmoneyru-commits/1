@@ -83,6 +83,16 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     assert(malformed.status === 400, "malformed JSON must return a structured 400 response");
     names.push("normalize malformed JSON errors");
 
+    const valid = await fetch(base, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-auth": "allowed" },
+      body: JSON.stringify({ requestId: "rate-limited-test", sourceText: "Исходный текст", donorText: "Текст автора" }),
+    });
+    assert(valid.status === 200, "valid authenticated request must reach the service");
+    assert(rateLimitCalls === 1, "authenticated requests must pass through the host rate limiter");
+    assert(prepareCalls === 1 && executeCalls === 1, "valid request must be prepared and executed exactly once");
+    names.push("apply host rate limiting before preparation and execution");
+
     return { passed: names.length, names };
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
