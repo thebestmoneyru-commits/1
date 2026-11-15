@@ -779,15 +779,17 @@ export function createStyleTransferRequestPreparer(
           message.startsWith("Аудит не подтвердил проверку пропозиции ") ||
           message === "Аудит содержит неизвестный или некорректный checkedPropositionId." ||
           message.startsWith("Аудит повторно проверяет пропозицию ") ||
-          /^Замечание аудита #\\d+ не содержит точного фрагмента исходника\\.$/u.test(message) ||
-          /^Замечание аудита #\\d+ указывает на фрагмент вне исходного свидетельства пропозиции .+\\.$/u.test(message),
+          /^Замечание аудита #\d+ не содержит точного фрагмента исходника\.$/u.test(message) ||
+          /^Замечание аудита #\d+ указывает на фрагмент вне исходного свидетельства пропозиции .+\.$/u.test(message),
         );
         const originalAudit = interpretationParsed && typeof interpretationParsed === "object" &&
           !Array.isArray(interpretationParsed)
           ? interpretationParsed as Record<string, unknown>
           : undefined;
-        const originalIssues = originalAudit?.issues;
-        const issueIdentitiesAreValid = Array.isArray(originalIssues) && originalIssues.every((raw) => {
+        const originalIssues = originalAudit && Array.isArray(originalAudit.issues)
+          ? originalAudit.issues
+          : undefined;
+        const issueIdentitiesAreValid = originalIssues !== undefined && originalIssues.every((raw) => {
           if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
           const item = raw as Record<string, unknown>;
           return typeof item.propositionId === "string" &&
@@ -809,7 +811,7 @@ export function createStyleTransferRequestPreparer(
             "PROPOSITIONS:", JSON.stringify(completePropositions),
             "VALIDATION ERRORS:", JSON.stringify(interpretation.errors),
             "ORIGINAL AUDIT (issue identities and order are immutable):", JSON.stringify(interpretationParsed),
-          ].join("\\n");
+          ].join("\n");
           const interpretationRepairResponse = await router.generate({
             task: "semantic-extraction",
             preferredModel: interpretationRoute.preferredModel,
@@ -833,12 +835,12 @@ export function createStyleTransferRequestPreparer(
           if (!interpretationRepairParsed || typeof interpretationRepairParsed !== "object" ||
               Array.isArray(interpretationRepairParsed) ||
               !Array.isArray((interpretationRepairParsed as Record<string, unknown>).issues) ||
-              (interpretationRepairParsed as { issues: unknown[] }).issues.length !== originalIssues.length) {
+              (interpretationRepairParsed as { issues: unknown[] }).issues.length !== (originalIssues as unknown[]).length) {
             throw new Error("Semantic interpretation audit repair changed the issue count or returned an invalid report.");
           }
           const repairedIssues = (interpretationRepairParsed as { issues: unknown[] }).issues;
-          for (let index = 0; index < originalIssues.length; index++) {
-            const original = originalIssues[index] as Record<string, unknown>;
+          for (let index = 0; index < (originalIssues as unknown[]).length; index++) {
+            const original = (originalIssues as unknown[])[index] as Record<string, unknown>;
             const repaired = repairedIssues[index];
             if (!repaired || typeof repaired !== "object" || Array.isArray(repaired)) {
               throw new Error("Semantic interpretation audit repair returned a malformed issue.");
