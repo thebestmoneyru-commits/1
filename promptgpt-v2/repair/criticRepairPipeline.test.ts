@@ -59,7 +59,7 @@ export async function runCriticRepairPipelineSelfTests(): Promise<{ passed: numb
 
   assert(result.completed && result.finalText === sourceText, "approved candidate completes without text mutation");
   assert(!result.repairResult.applied && repairCalls === 0, "critic-approved candidate bypasses repair model");
-  assert(semanticCalls === 2, "semantic verifier independently checks before and after states");
+  assert(semanticCalls === 1, "unchanged text reuses its already completed semantic verification");
   assert(result.verification.passed, "final verification is mandatory for pipeline completion");
   names.push("critic-to-verification orchestration");
 
