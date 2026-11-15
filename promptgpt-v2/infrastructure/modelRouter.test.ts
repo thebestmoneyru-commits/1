@@ -74,5 +74,34 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
   assert(taskGuard, "model not approved for task is never called");
   names.push("task capability guard");
 
+  let primaryCalls = 0;
+  const unsupportedRouter = new ModelRouter({
+    models, maxAttemptsPerModel: 3,
+    adapter: { async invoke(request) {
+      if (request.modelId === "primary") { primaryCalls++; throw { status: 404, message: "model not found" }; }
+      return "fallback-after-404";
+    } },
+  });
+  const unsupportedFallback = await unsupportedRouter.generate({
+    task: "candidate-generation", preferredModel: "primary", fallbackModels: ["fallback"], prompt: "test",
+  });
+  assert(primaryCalls === 1 && unsupportedFallback.usedModel === "fallback",
+    "unsupported model skips repeated retries and moves to fallback");
+  names.push("unsupported model fallback without retry storm");
+
+  let observedCapabilities: ModelInvocation | undefined;
+  const capabilityRouter = new ModelRouter({
+    models: [{ ...models[1], supportsJsonSchema: false, supportsThinking: false, supportsSampling: false }],
+    adapter: { async invoke(request) { observedCapabilities = request; return "ok"; } },
+  });
+  await capabilityRouter.generate({
+    task: "candidate-generation", preferredModel: "fallback", prompt: "test",
+    responseSchema: { type: "object" }, thinking: "high", sampling: { temperature: 0.8 },
+  });
+  assert(observedCapabilities?.responseSchema === undefined &&
+    observedCapabilities?.thinking === undefined && observedCapabilities?.sampling === undefined,
+    "unsupported model capabilities are stripped before provider call");
+  names.push("model capability filtering");
+
   return { passed: names.length, names };
 }
