@@ -236,6 +236,7 @@ export async function safePostJsonToRemote(
     request.on("error", (error) => finishError(error));
     request.on("close", () => {
       if (settled) options.signal?.removeEventListener("abort", onAbort);
+      else finishError(new Error("Remote request closed before the response was fully received."));
     });
     request.end(options.jsonBody);
   });
