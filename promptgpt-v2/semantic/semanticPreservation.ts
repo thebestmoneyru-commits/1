@@ -46,17 +46,17 @@ export function evaluateSemanticPreservation(input: SemanticPreservationInput): 
     const status = occurrences === 0 ? "missing" : occurrences === 1 ? "found" : "ambiguous";
     anchorChecks.push({ anchorId: anchor.id, status, matchedText: occurrences > 0 ? anchor.value : undefined, occurrences });
 
-    if (anchor.required && occurrences === 0) {
+    if (anchor.required && occurrences < anchor.requiredOccurrences) {
       issues.push({
         code: "MISSING_REQUIRED_ANCHOR", severity: "error", anchorId: anchor.id,
-        message: `Не сохранён обязательный элемент исходника: «${anchor.value}».`,
+        message: `Элемент «${anchor.value}» должен встречаться не менее ${anchor.requiredOccurrences} раз(а), обнаружено: ${occurrences}.`,
       });
-    } else if (anchor.required && occurrences > 1 && policy.rejectAmbiguousRequiredAnchors) {
+    } else if (anchor.required && occurrences > anchor.requiredOccurrences && policy.rejectAmbiguousRequiredAnchors) {
       issues.push({
         code: "AMBIGUOUS_ANCHOR",
         severity: "error",
         anchorId: anchor.id,
-        message: `Обязательный элемент «${anchor.value}» встречается несколько раз; требуется контекстная проверка.`,
+        message: `Элемент «${anchor.value}» встречается чаще, чем в исходнике (${occurrences} вместо ${anchor.requiredOccurrences}); требуется контекстная проверка.`,
       });
     }
   }
@@ -77,7 +77,7 @@ export function evaluateSemanticPreservation(input: SemanticPreservationInput): 
   const requiredAnchors = inventory.anchors.filter((anchor) => anchor.required);
   const requiredAnchorsFound = anchorChecks.filter((check) => {
     const anchor = inventory.anchors.find((item) => item.id === check.anchorId);
-    return anchor?.required && check.status === "found";
+    return anchor?.required && check.occurrences >= anchor.requiredOccurrences;
   }).length;
 
   return {
