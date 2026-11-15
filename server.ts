@@ -242,7 +242,7 @@ if (process.env.GEMINI_API_KEY?.trim()) {
     apiKey: process.env.GEMINI_API_KEY.trim(),
     catalog: v2Catalog,
     styleProfiler: { analyze: (text) => analyzeStyleDNA(text) },
-    router: { defaultTimeoutMs: 60_000, maxAttemptsPerModel: 2 },
+    router: { defaultTimeoutMs: 60_000, queueTimeoutMs: 120_000, maxAttemptsPerModel: 3 },
   });
 
   app.use('/api/v2/style-transfer', createPreparedStyleTransferApiRouter({

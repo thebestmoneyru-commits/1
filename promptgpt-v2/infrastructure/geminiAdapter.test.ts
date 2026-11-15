@@ -5,14 +5,16 @@ import type { GoogleGenAI } from "@google/genai";
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Gemini adapter self-test failed: ${message}`);
 }
+
 export async function runGeminiAdapterSelfTests(): Promise<{ passed: number; names: string[] }> {
   const names: string[] = [];
   let captured: Record<string, unknown> | undefined;
+  let response: Record<string, unknown> = { text: "  generated text  " };
   const fakeClient = {
     models: {
       async generateContent(args: Record<string, unknown>) {
         captured = args;
-        return { text: "  generated text  " };
+        return response;
       },
     },
   } as unknown as GoogleGenAI;
@@ -28,6 +30,7 @@ export async function runGeminiAdapterSelfTests(): Promise<{ passed: number; nam
     sampling: { temperature: 0.7, topP: 0.9, topK: 32 },
     signal: controller.signal,
   };
+
   const text = await adapter.invoke(request);
   assert(text === "generated text", "adapter trims and returns provider text");
   assert(captured?.model === "test-model" && captured?.contents === "write", "adapter forwards model and prompt");
@@ -45,11 +48,37 @@ export async function runGeminiAdapterSelfTests(): Promise<{ passed: number; nam
   assert(badSampling, "out-of-range sampling values are rejected before provider call");
   names.push("sampling range validation");
 
+  response = { text: "", candidates: [{ finishReason: "MAX_TOKENS" }] };
+  const truncated = await adapter.invoke(request).then(() => false).catch((error) => error?.kind === "truncated");
+  assert(truncated, "MAX_TOKENS is surfaced as a typed truncated response rather than an empty response");
+  names.push("provider truncation classification");
+
+  response = { text: "", promptFeedback: { blockReason: "SAFETY" } };
+  const blocked = await adapter.invoke(request).then(() => false).catch((error) => error?.kind === "safety-block");
+  assert(blocked, "prompt-level safety block is surfaced as a typed safety error");
+  names.push("provider safety-block classification");
+
   const aborted = new AbortController();
   aborted.abort();
-  const cancelled = await adapter.invoke({ ...request, signal: aborted.signal }).then(() => false).catch(() => true);
-  assert(cancelled, "pre-aborted requests are not dispatched");
+  const cancelled = await adapter.invoke({ ...request, signal: aborted.signal }).then(() => false).catch((error) => error?.name === "AbortError");
+  assert(cancelled, "pre-aborted requests are not dispatched and preserve AbortError classification");
   names.push("pre-dispatch cancellation");
+
+  const lateAbort = new AbortController();
+  const lateAbortClient = {
+    models: {
+      async generateContent() {
+        lateAbort.abort();
+        return { text: "late response" };
+      },
+    },
+  } as unknown as GoogleGenAI;
+  const lateAdapter = new GeminiModelAdapter(lateAbortClient);
+  const lateRejected = await lateAdapter.invoke({ ...request, signal: lateAbort.signal })
+    .then(() => false)
+    .catch((error) => error?.name === "AbortError");
+  assert(lateRejected, "a provider response arriving after cancellation is not accepted");
+  names.push("late response cancellation guard");
 
   return { passed: names.length, names };
 }
