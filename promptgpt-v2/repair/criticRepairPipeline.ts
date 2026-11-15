@@ -1,4 +1,4 @@
-import type { FactInventory, PropositionAssessment, Proposition, SemanticPolicy } from "../types";
+import { DEFAULT_SEMANTIC_POLICY, type FactInventory, type PropositionAssessment, type Proposition, type SemanticPolicy } from "../types";
 import { runStyleCritic, type StyleCriticAdapter, type StyleCriticReport, type StyleCriticOptions } from "../critic/styleCritic";
 import { repairCandidateSurgically, type SurgicalRepairAdapter, type SurgicalRepairOptions, type SurgicalRepairResult } from "./surgicalRepair";
 import { verifyRepairedCandidate, type RepairVerificationOptions, type RepairVerificationReport } from "./repairVerification";
@@ -140,9 +140,11 @@ export async function runCriticRepairPipeline(
 
   const beforeStructure = validateLogicalRelationAssessments(
     input.candidateText, input.inventory.propositions, beforeRelationAssessments,
+    input.semanticPolicy?.minimumAssessmentConfidence ?? DEFAULT_SEMANTIC_POLICY.minimumAssessmentConfidence,
   );
   const afterStructure = validateLogicalRelationAssessments(
     finalText, input.inventory.propositions, repairedRelationAssessments,
+    input.semanticPolicy?.minimumAssessmentConfidence ?? DEFAULT_SEMANTIC_POLICY.minimumAssessmentConfidence,
   );
   if (!afterStructure.passed) {
     verification.after.semanticReport.passed = false;
