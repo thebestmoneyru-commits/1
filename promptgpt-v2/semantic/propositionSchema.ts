@@ -135,7 +135,7 @@ export function validatePropositionExtraction(
                     !rawRelation.expression.trim() ||
                     !sourceText.includes(rawRelation.expression))) {
           validRelations = false;
-          errors.push(`Пропозиция ${id || "#" + (index + 1)}: expression логического отношения должен быть непустой дословной подстрокой исходного текста.`);
+          errors.push(`Пропозиция ${id || "#" + (index + 1)}: expression логического отношения отсутствует в исходном тексте или не является непустой дословной подстрокой.`);
         }
       });
     } else {
