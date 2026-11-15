@@ -35,6 +35,12 @@ export interface CriticRepairPipelineInput {
   styleProfiler: IndependentStyleProfiler;
   semanticPolicy?: SemanticPolicy;
   signal?: AbortSignal;
+  /** Reuse the service's already completed initial gate to avoid duplicate model calls. */
+  initialVerification?: {
+    propositionAssessments: PropositionAssessment[];
+    relationAssessments: LogicalRelationAssessment[];
+    styleProfile: StyleDNAProfile;
+  };
 }
 export interface CriticRepairPipelineOptions {
   critic?: Partial<StyleCriticOptions>;
@@ -69,19 +75,25 @@ export async function runCriticRepairPipeline(
       options: options.critic,
       signal: input.signal,
     }),
-    input.semanticVerifier.assess({
-      sourceText: input.sourceText,
-      candidateText: input.candidateText,
-      propositions: input.inventory.propositions,
-      signal: input.signal,
-    }),
-    input.semanticVerifier.assessRelations({
-      sourceText: input.sourceText,
-      candidateText: input.candidateText,
-      propositions: input.inventory.propositions,
-      signal: input.signal,
-    }),
-    input.styleProfiler.analyze(input.candidateText),
+    input.initialVerification
+      ? Promise.resolve(input.initialVerification.propositionAssessments)
+      : input.semanticVerifier.assess({
+          sourceText: input.sourceText,
+          candidateText: input.candidateText,
+          propositions: input.inventory.propositions,
+          signal: input.signal,
+        }),
+    input.initialVerification
+      ? Promise.resolve(input.initialVerification.relationAssessments)
+      : input.semanticVerifier.assessRelations({
+          sourceText: input.sourceText,
+          candidateText: input.candidateText,
+          propositions: input.inventory.propositions,
+          signal: input.signal,
+        }),
+    input.initialVerification
+      ? Promise.resolve(input.initialVerification.styleProfile)
+      : input.styleProfiler.analyze(input.candidateText),
   ]);
 
   const repairResult = await repairCandidateSurgically({
