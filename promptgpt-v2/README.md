@@ -37,6 +37,7 @@ This directory is an isolated modernization track. Existing production files are
 ### Application Orchestration
 - Explicit deployment-supplied model allowlist and task-route validation in `application/modelCatalog.ts`; no default model IDs are assumed.
 - Shared-router adapters for candidate generation, style critique, surgical repair and independent proposition verification in `application/routerAdapters.ts`.
+- Server-side preparation in `application/requestPreparation.ts`: model-backed proposition extraction through the dedicated `semantic-extraction` route, strict source-span/ID validation, canonical inventory construction and frozen donor baseline creation. The default policy rejects donor samples below the analyzer's sufficient-corpus threshold (500 words and 25 sentences); thresholds can be configured explicitly for evaluation.
 - End-to-end service orchestration in `application/styleTransferService.ts`: immutable source/baseline binding, bounded candidate generation, semantic-first admission, one critic/repair cycle, and final selection with trace metadata.
 - A Gemini composition root in `application/createGeminiService.ts` constructs one SDK client and one shared router for the lifetime of the service instance; initialize it at server startup, not per request.
 - Request cancellation is forwarded through candidate generation, semantic verification, style critique and surgical repair to the shared model router; a failed candidate-level semantic check is isolated so other candidates can still be evaluated.
@@ -46,8 +47,9 @@ This directory is an isolated modernization track. Existing production files are
 
 ### Isolated Express API Adapter
 - `api/styleTransferRouter.ts` exposes an Express 4 router factory for a separately mounted `/api/v2/style-transfer` endpoint. It does not import or modify the legacy `server.ts`.
+- `api/preparedStyleTransferRouter.ts` wires the trusted request preparer to the API and the shared model router. Host authentication and rate-limit middleware are both mandatory. Multi-instance deployments must use a distributed rate-limit store; the library deliberately does not create an unbounded in-memory limiter.
 - Host authentication middleware is mandatory and must be supplied by the embedding application; the adapter does not invent an authentication scheme or silently expose a public endpoint.
-- The API accepts only source text and donor text. It deliberately does not trust client-supplied semantic inventories or donor baselines; a server-side `prepareRequest` callback must extract/validate propositions and build the frozen donor baseline before the service runs.
+- The API accepts only source text and donor text. It deliberately does not trust client-supplied semantic inventories or donor baselines; the prepared-router factory extracts/validates propositions and builds the frozen donor baseline before the service runs.
 - Request JSON size and per-field character limits are bounded. Invalid JSON, missing text, oversized fields and client disconnects are handled explicitly.
 - `api/styleTransferRouter.test.ts` exercises authentication ordering, payload validation, field limits and malformed JSON using an ephemeral local Express server.
 
@@ -79,7 +81,7 @@ The offline regression checks can be invoked from the repository root with a Typ
 
 - Natural-language proposition extraction and independent model-backed semantic verification.
 - Full author-style parsing, including reliable Russian morphology and clause structure.
-- Deployment-specific API mounting, authentication implementation, server-side proposition extraction/preparation callback and end-to-end provider verification.
+- Deployment-specific API mounting, authentication and distributed rate-limit implementation, plus end-to-end provider verification.
 - Integration of the new safe remote transport into the existing production route (the current production server is intentionally untouched).
 - Full automated test suite and build configuration.
 
