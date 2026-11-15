@@ -2,6 +2,7 @@ import type { FactInventory } from "../types";
 import { buildSemanticInventory } from "../semantic/buildInventory";
 import { validatePropositionExtraction } from "../semantic/propositionSchema";
 import { createDonorStyleBaseline } from "../style/donorBaseline";
+import { parseJsonUnknown } from "../infrastructure/jsonValidation";
 import { analyzeStyleDNA } from "../style/styleDNAAnalyzer";
 import type { StyleAnalyzerOptions } from "../style/styleTypes";
 import type { ModelRouter } from "../infrastructure/modelRouter";
@@ -72,8 +73,7 @@ export function createStyleTransferRequestPreparer(
 
     let parsed: unknown;
     try {
-      const cleaned = response.text.trim().replace(/^\uFEFF/, "").replace(/^\x60{3}(?:json)?\s*/i, "").replace(/\s*\x60{3}$/, "").trim();
-      parsed = JSON.parse(cleaned) as unknown;
+      parsed = parseJsonUnknown(response.text);
     } catch (error) {
       throw new Error(`Semantic extraction returned invalid JSON: ${error instanceof Error ? error.message : "unknown parse error"}`);
     }
