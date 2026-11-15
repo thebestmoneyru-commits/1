@@ -34,6 +34,8 @@ export interface LogicalRelation {
 export interface Proposition {
   id: string;
   summary: string;
+  /** Exact supporting span in the immutable source text. */
+  sourceSpan: TextSpan;
   subject: string;
   predicate: string;
   object?: string;
@@ -103,4 +105,10 @@ export interface CandidateEvaluation {
   admissible: boolean;
   semanticReport: SemanticReport;
   rejectionReasons: string[];
+}
+
+export interface PropositionExtractionValidation {
+  valid: boolean;
+  propositions: Proposition[];
+  errors: string[];
 }
