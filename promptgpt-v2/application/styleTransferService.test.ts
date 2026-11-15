@@ -100,7 +100,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
         },
       },
       repair: { async repair() { throw new Error("style repair must not run after semantic failure"); } },
-      semanticVerifier: { async assess() { return []; } },
+      semanticVerifier: { async assess() { return []; }, async assessRelations() { return []; } },
       styleProfiler: {
         analyze(text) {
           return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
