@@ -162,6 +162,8 @@ export function validatePropositionExtraction(
         errors.push(`Пропозиция ${proposition.id}: отношение ссылается на неизвестную пропозицию.`);
       } else if (relation.from === relation.to) {
         errors.push(`Пропозиция ${proposition.id}: логическое отношение не может ссылаться на саму себя.`);
+      } else if (relation.from !== proposition.id && relation.to !== proposition.id) {
+        errors.push(`Пропозиция ${proposition.id}: отношение не связано с текущей пропозицией.`);
       }
     }
   }
