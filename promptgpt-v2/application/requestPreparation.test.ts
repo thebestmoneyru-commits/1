@@ -266,7 +266,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     subject: "Это", predicate: "неизбежно происходит", polarity: "positive",
     qualifications: [], relations: [], mandatory: true,
   }];
-  const parallelModalityIssue = {
+  const modalityIssue = {
     propositionId: "p1", field: "modality",
     evidenceSpan: { start: modalitySource.indexOf("неизбежно"), end: modalitySource.indexOf("неизбежно") + "неизбежно".length, text: "неизбежно" },
     explanation: "Не отражена модальность необходимости.",
@@ -887,7 +887,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
       polarity: "positive", qualifications: [], relations: [], mandatory: true,
     },
   ];
-  const modalityIssue = {
+  const parallelModalityIssue = {
     propositionId: "p1", field: "modality",
     evidenceSpan: { start: concurrentSource.indexOf("Возможно"), end: concurrentSource.indexOf("Возможно") + "Возможно".length, text: "Возможно" },
     explanation: "Проверить сохранение значения возможности.",
