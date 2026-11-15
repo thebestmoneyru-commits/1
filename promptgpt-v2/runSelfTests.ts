@@ -8,6 +8,7 @@ import { runSurgicalRepairSelfTests } from "./repair/surgicalRepair.test";
 import { runRepairVerificationSelfTests } from "./repair/repairVerification.test";
 import { runCriticRepairPipelineSelfTests } from "./repair/criticRepairPipeline.test";
 import { runModelRouterSelfTests } from "./infrastructure/modelRouter.test";
+import { runGeminiAdapterSelfTests } from "./infrastructure/geminiAdapter.test";
 import { runInfrastructureSelfTests } from "./infrastructure/infrastructure.test";
 import { runRemoteEndpointPolicySelfTests } from "./infrastructure/remoteEndpointPolicy.test";
 
@@ -34,6 +35,7 @@ export async function runV2SelfTestSuite(): Promise<SelfTestSuiteResult> {
     { group: "repair-verification", run: runRepairVerificationSelfTests },
     { group: "critic-repair-pipeline", run: runCriticRepairPipelineSelfTests },
     { group: "model-router", run: runModelRouterSelfTests },
+    { group: "gemini-adapter", run: runGeminiAdapterSelfTests },
     { group: "infrastructure", run: runInfrastructureSelfTests },
     { group: "remote-endpoint-policy", run: runRemoteEndpointPolicySelfTests },
   ];
