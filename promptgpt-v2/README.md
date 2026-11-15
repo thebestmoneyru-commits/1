@@ -35,7 +35,7 @@ This directory is an isolated modernization track. Existing production files are
 - DNS-pinned HTTPS POST transport with IPv4/IPv6 special-range filtering, no redirects, request timeouts and streaming response-size limits in `infrastructure/safeRemoteFetch.ts`.
 - Public module entry points in `index.ts`, `critic/index.ts`, `repair/index.ts` and `infrastructure/index.ts`.
 - Public exports in `style/index.ts`.
-- Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification, orchestration, model-router, Gemini-adapter, cache, JSON-validation, remote-endpoint-policy and safe-remote-fetch regression checks in their corresponding `*.test.ts` files.
+- Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification, orchestration, model-router, Gemini-adapter, cache, JSON-validation, remote-endpoint-policy, safe-remote-fetch, proposition-coverage, proposition-schema, proposition-consistency, proposition-interpretation and semantic-structure audit regression checks in their corresponding `*.test.ts` files.
 
 ### Application Orchestration
 - Explicit deployment-supplied model allowlist and task-route validation in `application/modelCatalog.ts`; no default model IDs are assumed.
@@ -82,7 +82,7 @@ The offline regression checks can be invoked from the repository root with a Typ
 
 ## Not yet implemented
 
-- More reliable natural-language proposition extraction and calibrated independent semantic verification; the interpretation-audit pass is implemented, but its detection quality still requires adversarial corpus evaluation, and the current default may reuse the extraction model unless a distinct `semanticAudit` route is configured.
+- More reliable natural-language proposition extraction and calibrated independent semantic verification; both interpretation and cross-proposition structure audits are implemented, but their detection quality still requires adversarial corpus evaluation, and the current default may reuse the extraction model unless a distinct `semanticAudit` route is configured.
 - Full author-style parsing, including reliable Russian morphology and clause structure.
 - Deployment-specific API mounting, authentication and distributed rate-limit implementation, plus end-to-end provider verification.
 - Integration of the new safe remote transport into the existing production route (the current production server is intentionally untouched).
