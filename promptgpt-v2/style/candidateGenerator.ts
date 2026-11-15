@@ -17,6 +17,8 @@ export interface CandidateGenerationOptions {
   styleIntensity: 1 | 2 | 3 | 4 | 5;
   maxDonorExamples: number;
   customInstructions?: string;
+  /** Stop after the first fully accepted candidate; enabled by default in the service. */
+  adaptive?: boolean;
 }
 export interface GeneratedCandidate {
   candidateId: string;
@@ -44,6 +46,10 @@ const DEFAULT_OPTIONS: CandidateGenerationOptions = {
   maxDonorExamples: 12,
 };
 
+export function resolveCandidateCount(options: Partial<CandidateGenerationOptions> = {}): number {
+  return normalizeOptions(options).candidateCount;
+}
+
 function normalizeOptions(options: Partial<CandidateGenerationOptions>): CandidateGenerationOptions {
   const intensity = Number.isFinite(options.styleIntensity) ? Math.max(1, Math.min(5, Math.round(options.styleIntensity!))) : 4;
   return {
@@ -56,6 +62,7 @@ function normalizeOptions(options: Partial<CandidateGenerationOptions>): Candida
       ? Math.max(0, Math.min(20, Math.floor(options.maxDonorExamples!))) : DEFAULT_OPTIONS.maxDonorExamples,
     customInstructions: typeof options.customInstructions === "string"
       ? options.customInstructions.slice(0, 4000) : undefined,
+    adaptive: options.adaptive !== false,
   };
 }
 
@@ -200,6 +207,8 @@ export async function generateCandidates(input: {
   donorBaseline: DonorStyleBaseline;
   adapter: CandidateModelAdapter;
   options?: Partial<CandidateGenerationOptions>;
+  /** Zero-based offset used when the service requests candidates incrementally. */
+  candidateStartIndex?: number;
   signal?: AbortSignal;
 }): Promise<CandidateGenerationResult> {
   const options = normalizeOptions(input.options ?? {});
@@ -218,7 +227,9 @@ export async function generateCandidates(input: {
     warnings.push("Донорский профиль ограничен; генерация может недостаточно точно передавать индивидуальный стиль.");
   }
 
-  const indexes = Array.from({ length: options.candidateCount }, (_, index) => index);
+  const startIndex = Number.isSafeInteger(input.candidateStartIndex) && (input.candidateStartIndex ?? 0) >= 0
+    ? input.candidateStartIndex ?? 0 : 0;
+  const indexes = Array.from({ length: options.candidateCount }, (_, index) => startIndex + index);
   const candidates = await runWithConcurrency(indexes, options.concurrency, async (candidateIndex) => {
     const prompt = buildCandidatePrompt({
       sourceText: input.sourceText,
