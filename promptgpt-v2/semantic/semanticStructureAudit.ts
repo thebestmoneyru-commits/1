@@ -76,12 +76,13 @@ export function validateSemanticStructureAudit(
 
   const propositionById = new Map(propositions.map((item) => [item.id, item]));
   const expectedPropositionIds = new Set(propositionById.keys());
-  const expectedRelationKeys = new Set<string>();
+  const relationByKey = new Map<string, LogicalRelation>();
   for (const proposition of propositions) {
     for (const relation of proposition.relations) {
-      expectedRelationKeys.add(getLogicalRelationAuditKey(relation));
+      relationByKey.set(getLogicalRelationAuditKey(relation), relation);
     }
   }
+  const expectedRelationKeys = new Set(relationByKey.keys());
 
   const checkedPropositionIds: string[] = [];
   const checkedPropositions = new Set<string>();
@@ -155,6 +156,12 @@ export function validateSemanticStructureAudit(
         continue;
       }
       relationKey = raw.relationKey;
+      const referencedRelation = relationByKey.get(relationKey)!;
+      if (ids.length !== 2 ||
+          !ids.includes(referencedRelation.from) || !ids.includes(referencedRelation.to)) {
+        errors.push(`Замечание структуры #${index + 1} ссылается на связь, не соединяющую указанные пропозиции.`);
+        continue;
+      }
     }
     if ((raw.kind === "relation-inversion" || raw.kind === "relation-type") && !relationKey) {
       errors.push(`Замечание структуры #${index + 1} должно ссылаться на существующую связь через relationKey.`);
