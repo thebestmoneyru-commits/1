@@ -24,7 +24,7 @@ This directory is an isolated modernization track. Existing production files are
 - Exact-span surgical repairs constrained by critic findings in `repair/surgicalRepair.ts`.
 - Mandatory post-repair semantic and style re-evaluation in `repair/repairVerification.ts`.
 - One-cycle critic → repair → independent verification orchestration in `repair/criticRepairPipeline.ts`.
-- Task-aware model routing with per-model concurrency limits, bounded retries, cooldowns and fallback policy in `infrastructure/modelRouter.ts`.
+- Task-aware model routing with per-model concurrency and queue limits, bounded retries, cooldowns and fallback policy in `infrastructure/modelRouter.ts`.
 - Google GenAI SDK adapter with per-model capability filtering, validated sampling ranges and SDK AbortSignal propagation in `infrastructure/geminiAdapter.ts`.
 - Version-aware bounded TTL/LRU caching in `infrastructure/versionedCache.ts`.
 - Runtime JSON parsing and schema-validator hooks in `infrastructure/jsonValidation.ts`.
