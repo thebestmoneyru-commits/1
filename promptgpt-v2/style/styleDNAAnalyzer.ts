@@ -133,7 +133,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   }
 
   const commaSentences = sentences.filter((s)=>s.text.includes(","));
-  const subordinate = sentences.filter((s)=>/(?<![\p{L}\p{N}_])(?:который|которая|которые|которое|поскольку|потому что|если|когда|хотя|чтобы|так как)(?<![\p{L}\p{N}_])/iu.test(s.text));
+  const subordinate = sentences.filter((s)=>/(?<![\p{L}\p{N}_])(?:который|которая|которые|которое|поскольку|потому что|если|когда|хотя|чтобы|так как)(?![\p{L}\p{N}_])/iu.test(s.text));
   const participleSentences = sentences.filter((s)=>s.words.some((w)=>PARTICIPLE_SUFFIX.test(w.normalized) && w.normalized.length > 5));
   const gerundSentences = sentences.filter((s)=>s.text.includes(",") && s.words.some((w)=>GERUND_SUFFIX.test(w.normalized) && w.normalized.length > 7));
   const parentheticalSentences = sentences.filter((s)=>s.words.some((w)=>PARENTHETICAL.has(w.normalized)));
