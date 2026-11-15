@@ -26,6 +26,7 @@ export interface ModelDefinition {
   tasks: readonly ModelTask[];
   enabled: boolean;
   maxConcurrency: number;
+  maxQueueLength?: number;
   supportsJsonSchema: boolean;
   supportsThinking: boolean;
   supportsSampling: boolean;
@@ -187,6 +188,7 @@ export class ModelRouter {
     for (const model of options.models) {
       if (!model.id.trim() || this.definitions.has(model.id)) throw new Error("Model IDs must be non-empty and unique.");
       if (!Number.isInteger(model.maxConcurrency) || model.maxConcurrency < 1) throw new Error(`Invalid concurrency limit for model ${model.id}.`);
+      if (model.maxQueueLength !== undefined && (!Number.isInteger(model.maxQueueLength) || model.maxQueueLength < 0)) throw new Error(`Invalid queue limit for model ${model.id}.`);
       this.definitions.set(model.id, { ...model, tasks: [...model.tasks] });
       this.states.set(model.id, { active: 0, queue: [], cooldownUntil: 0 });
     }
@@ -205,6 +207,9 @@ export class ModelRouter {
     if (state.active < model.maxConcurrency) {
       state.active++;
       return () => this.release(model.id);
+    }
+    if (state.queue.length >= (model.maxQueueLength ?? 20)) {
+      throw new ModelRouterError(`Model ${model.id} queue is full.`, "unavailable", model.id);
     }
     await new Promise<void>((resolve, reject) => {
       const wake = () => { signal.removeEventListener("abort", abort); resolve(); };
