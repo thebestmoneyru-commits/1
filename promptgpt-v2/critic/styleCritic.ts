@@ -164,7 +164,7 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
     throw new Error("Fact inventory does not belong to the exact supplied source text.");
   }
 
-  const raw = await input.adapter.review(buildStyleCriticPrompt(input));
+  const raw = await input.adapter.review(buildStyleCriticPrompt({ ...input, options }));
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
