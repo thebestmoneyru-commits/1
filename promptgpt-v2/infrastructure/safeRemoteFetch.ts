@@ -93,20 +93,13 @@ export function isPublicIpAddress(address: string): boolean {
   return false;
 }
 
-async function resolvePinnedPublicAddress(hostname: string, timeoutMs: number): Promise<{ address: string; family: 4 | 6 }> {
+async function resolvePinnedPublicAddress(hostname: string): Promise<{ address: string; family: 4 | 6 }> {
   if (isIP(hostname)) {
     const family = isIP(hostname) as 4 | 6;
     if (!isPublicIpAddress(hostname)) throw new Error("Remote endpoint resolves to a non-public IP address.");
     return { address: hostname, family };
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const answers = await Promise.race([
-    dnsLookup(hostname, { all: true, verbatim: true }),
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("DNS resolution timed out.")), timeoutMs);
-    }),
-  ]).finally(() => { if (timer) clearTimeout(timer); });
-
+  const answers = await dnsLookup(hostname, { all: true, verbatim: true });
   if (!answers.length) throw new Error("Remote endpoint has no DNS address records.");
   if (answers.some((answer) => !isPublicIpAddress(answer.address))) {
     throw new Error("Remote endpoint DNS returned a private, reserved or otherwise non-public address.");
@@ -137,6 +130,7 @@ export async function safePostJsonToRemote(
   const startedAt = Date.now();
   const hostname = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
   let abortListener: (() => void) | undefined;
+  let dnsTimer: ReturnType<typeof setTimeout> | undefined;
   let pinned: { address: string; family: 4 | 6 };
   try {
     const abortPromise = new Promise<never>((_, reject) => {
@@ -146,11 +140,16 @@ export async function safePostJsonToRemote(
         options.signal.addEventListener("abort", abortListener, { once: true });
       }
     });
+    const dnsTimeout = new Promise<never>((_, reject) => {
+      dnsTimer = setTimeout(() => reject(new Error("DNS resolution timed out.")), timeoutMs);
+    });
     pinned = await Promise.race([
-      resolvePinnedPublicAddress(hostname, timeoutMs),
+      resolvePinnedPublicAddress(hostname),
       abortPromise,
+      dnsTimeout,
     ]);
   } finally {
+    if (dnsTimer) clearTimeout(dnsTimer);
     if (abortListener) options.signal?.removeEventListener("abort", abortListener);
   }
   if (options.signal?.aborted) throw new Error("Remote request was cancelled during DNS resolution.");
