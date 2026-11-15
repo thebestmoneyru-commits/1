@@ -1003,6 +1003,40 @@ export function createStyleTransferRequestPreparer(
       // Keep the validated audit in a stable local reference so TypeScript can
       // preserve the non-undefined narrowing inside callbacks.
       const structureAudit = structure.audit;
+      // Keep a stable locator for every audited edge. relation-type repair changes
+      // the audit key (because kind is part of that key), but a later inversion
+      // decision must still be able to find the same edge.
+      const relationLocatorByAuditKey = new Map<string, {
+        ownerId: string;
+        from: string;
+        to: string;
+        expression: string;
+      }>();
+      for (const proposition of completePropositions) {
+        for (const relation of proposition.relations) {
+          relationLocatorByAuditKey.set(getLogicalRelationAuditKey(relation), {
+            ownerId: proposition.id,
+            from: relation.from,
+            to: relation.to,
+            expression: relation.expression ?? "",
+          });
+        }
+      }
+      const findRelationByLocator = (locator: {
+        ownerId: string;
+        from: string;
+        to: string;
+        expression: string;
+      }) => {
+        const matches = completePropositions
+          .filter((proposition) => proposition.id === locator.ownerId)
+          .flatMap((proposition) => proposition.relations.filter((relation) =>
+            relation.from === locator.from &&
+            relation.to === locator.to &&
+            (relation.expression ?? "") === locator.expression,
+          ));
+        return matches.length === 1 ? matches[0] : undefined;
+      };
       let confirmedStructureIssues = structureAudit.issues;
       const relationTypeCandidates = structureAudit.issues.map((issue, index) => ({ issue, index }))
         .filter(({ issue }) => issue.kind === "relation-type");
@@ -1026,7 +1060,10 @@ export function createStyleTransferRequestPreparer(
             evidenceSpan: issue.evidenceSpan,
             explanation: issue.explanation,
             propositions: issue.propositionIds.map((id) => completePropositions.find((item) => item.id === id)),
-            relation: completePropositions.flatMap((item) => item.relations).find((relation) => getLogicalRelationAuditKey(relation) === issue.relationKey),
+            relation: (() => {
+              const locator = relationLocatorByAuditKey.get(issue.relationKey!);
+              return locator ? findRelationByLocator(locator) : undefined;
+            })(),
           }))),
         ].join("\n");
         const relationTypeResponse = await router.generate({
@@ -1191,11 +1228,20 @@ export function createStyleTransferRequestPreparer(
         for (const [issueIndex, action] of decisionByIndex) {
           if (action !== "reverse") continue;
           const relationKey = relationKeyByIndex.get(issueIndex)!;
+          const locator = relationLocatorByAuditKey.get(relationKey);
+          if (!locator) {
+            throw new Error("Relation-inversion adjudication referenced a relation without a stable locator.");
+          }
           let matched = 0;
           completePropositions = completePropositions.map((proposition) => ({
             ...proposition,
             relations: proposition.relations.map((relation) => {
-              if (getLogicalRelationAuditKey(relation) !== relationKey) return relation;
+              if (
+                proposition.id !== locator.ownerId ||
+                relation.from !== locator.from ||
+                relation.to !== locator.to ||
+                (relation.expression ?? "") !== locator.expression
+              ) return relation;
               matched += 1;
               return { ...relation, from: relation.to, to: relation.from };
             }),

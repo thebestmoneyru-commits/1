@@ -710,6 +710,56 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   } catch (error) { incompleteAdjudicationRejected = String(error).includes("did not decide every candidate"); }
   assert(incompleteAdjudicationRejected, "an incomplete adjudication must fail closed");
   names.push("fail closed when the second-pass relation adjudication is incomplete");
+
+  const combinedAuditRelation = { ...inversionExtraction[0].relations[0], kind: "effect" as const };
+  const combinedAuditKey = JSON.stringify(["effect", "p2", "p1", "поэтому"]);
+  const combinedAudit = {
+    checkedPropositionIds: ["p1", "p2"],
+    checkedRelationKeys: [combinedAuditKey],
+    issues: [
+      {
+        kind: "relation-type",
+        propositionIds: ["p1", "p2"],
+        relationKey: combinedAuditKey,
+        evidenceSpan: {
+          start: inversionSource.indexOf("поэтому"),
+          end: inversionSource.indexOf("поэтому") + "поэтому".length,
+          text: "поэтому",
+        },
+        explanation: "Тип связи определён неверно.",
+      },
+      {
+        kind: "relation-inversion",
+        propositionIds: ["p1", "p2"],
+        relationKey: combinedAuditKey,
+        evidenceSpan: {
+          start: inversionSource.indexOf("поэтому"),
+          end: inversionSource.indexOf("поэтому") + "поэтому".length,
+          text: "поэтому",
+        },
+        explanation: "Направление связи указано наоборот.",
+      },
+    ],
+  };
+  const combinedRelationRepair = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      [{ ...inversionExtraction[0], relations: [combinedAuditRelation] }, inversionExtraction[1]],
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      combinedAudit,
+      { decisions: [{ issueIndex: 0, action: "change-kind", correctedKind: "cause", explanation: "Маркер указывает на причину и следствие." }] },
+      { decisions: [{ issueIndex: 1, action: "reverse", explanation: "Дождь является причиной укрытия путников." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "relation-type-and-inversion", sourceText: inversionSource, donorText: donor });
+  assert(
+    combinedRelationRepair.inventory.propositions[0].relations.some((relation) =>
+      relation.kind === "cause" && relation.from === "p1" && relation.to === "p2" && relation.expression === "поэтому"),
+    "a relation must remain addressable after its kind is corrected so its direction can also be repaired",
+  );
+  names.push("apply relation-type and relation-inversion repairs to the same edge");
+
   const relationSource = "Дождь пошёл, поэтому путники укрылись.";
   const relationExtraction = [
     { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" }, subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [], mandatory: true },
