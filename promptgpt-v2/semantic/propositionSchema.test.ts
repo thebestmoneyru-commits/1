@@ -56,5 +56,9 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
   assert(utf16.valid, "source offsets must use JavaScript UTF-16 indices");
   names.push("validate source offsets using UTF-16 indexing");
 
+  const paddedId = validatePropositionExtraction(source, [{ ...base, id: " p1 " }]);
+  assert(!paddedId.valid, "IDs with leading or trailing whitespace must be rejected");
+  names.push("reject non-canonical proposition IDs");
+
   return { passed: names.length, names };
 }
