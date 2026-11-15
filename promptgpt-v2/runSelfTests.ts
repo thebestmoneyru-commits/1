@@ -13,7 +13,7 @@ import { runInfrastructureSelfTests } from "./infrastructure/infrastructure.test
 import { runRemoteEndpointPolicySelfTests } from "./infrastructure/remoteEndpointPolicy.test";
 import { runSafeRemoteFetchSelfTests } from "./infrastructure/safeRemoteFetch.test";
 import { runApplicationSelfTests } from "./application/modelCatalog.test";
-import { runStyleTransferServiceSelfTests } from "./application/styleTransferService.test";
+import { runStyleTransferServiceSelfTests } from "./application/styleTransferService.test";\nimport { runRequestPreparationSelfTests } from "./application/requestPreparation.test";
 import { runStyleTransferApiSelfTests } from "./api/styleTransferRouter.test";
 
 export interface SelfTestGroupResult {
@@ -44,7 +44,7 @@ export async function runV2SelfTestSuite(): Promise<SelfTestSuiteResult> {
     { group: "remote-endpoint-policy", run: runRemoteEndpointPolicySelfTests },
     { group: "safe-remote-fetch", run: runSafeRemoteFetchSelfTests },
     { group: "application-model-catalog", run: runApplicationSelfTests },
-    { group: "application-style-transfer-service", run: runStyleTransferServiceSelfTests },
+    { group: "application-style-transfer-service", run: runStyleTransferServiceSelfTests },\n    { group: "application-request-preparation", run: runRequestPreparationSelfTests },
     { group: "api-style-transfer-router", run: runStyleTransferApiSelfTests },
   ];
   const results: SelfTestGroupResult[] = [];
