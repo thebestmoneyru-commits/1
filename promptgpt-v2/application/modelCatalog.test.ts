@@ -41,7 +41,7 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
   let taskMismatchRejected = false;
   try {
     validateModelCatalog({
-      models: [model("gen", tasks), model("backup", ["general"]), model("critic", tasks), model("repair", tasks), model("semantic", tasks), model("extractor", tasks)],
+      models: [model("gen", tasks), model("backup", ["general"]), model("critic", tasks), model("repair", tasks), model("semantic", tasks), model("extractor", tasks), model("auditor", ["semantic-extraction"])],
       routes,
     });
   } catch { taskMismatchRejected = true; }
