@@ -30,6 +30,6 @@ jobs:
       - name: Install dependencies
         run: npm install --no-package-lock --legacy-peer-deps
       - name: TypeScript type check
-        run: npx tsc --noEmit
+        run: npx tsc --noEmit --project promptgpt-v2/tsconfig.json
       - name: Run offline PROMPTGPT v2 regression suite
         run: npx tsx promptgpt-v2/runSelfTests.cli.ts
