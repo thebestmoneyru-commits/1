@@ -31,7 +31,12 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   assert(prompt.includes("не переноси факты") || prompt.includes("НЕ ПЕРЕНОСИ факты"),
     "prompt separates donor style from donor content");
   assert(prompt.includes("1912"), "required numeric anchor is supplied to the model");
-  names.push("prompt content and semantic constraints");
+  const secondPrompt = buildCandidatePrompt({
+    sourceText, inventory, donorBaseline: baseline, candidateIndex: 1,
+    styleIntensity: 5, maxDonorExamples: 3,
+  });
+  assert(prompt !== secondPrompt, "candidate indices produce deliberately distinct stylistic approaches");
+  names.push("prompt content, semantic constraints and candidate diversity");
 
   let active = 0;
   let maxActive = 0;
