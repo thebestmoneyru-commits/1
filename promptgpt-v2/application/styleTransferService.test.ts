@@ -54,6 +54,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       },
       semanticVerifier: {
         async assess() { return []; },
+        async assessRelations() { return []; },
       },
       styleProfiler: {
         analyze(text) {
