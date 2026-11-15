@@ -138,6 +138,53 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(interpretationIssueRejected, "an evidence-backed interpretation finding must stop preparation");
   names.push("stop preparation when independent interpretation audit finds a source mismatch");
 
+  const modalitySource = "Это неизбежно происходит.";
+  const modalityExtraction = [{
+    id: "p1", summary: "Это неизбежно происходит",
+    sourceSpan: { start: 0, end: modalitySource.length, text: modalitySource },
+    subject: "Это", predicate: "неизбежно происходит", polarity: "positive",
+    qualifications: [], relations: [], mandatory: true,
+  }];
+  const modalityIssue = {
+    propositionId: "p1", field: "modality",
+    evidenceSpan: { start: modalitySource.indexOf("неизбежно"), end: modalitySource.indexOf("неизбежно") + "неизбежно".length, text: "неизбежно" },
+    explanation: "Не отражена модальность необходимости.",
+  };
+  const alreadyPreservedModality = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      modalityExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1"], [modalityIssue]),
+      { decisions: [{ issueIndex: 0, classification: "already-preserved", explanation: "Слово неизбежно уже включено в predicate." }] },
+      { checkedPropositionIds: ["p1"], checkedRelationKeys: [], issues: [] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "modality-already-preserved", sourceText: modalitySource, donorText: donor });
+  assert(
+    alreadyPreservedModality.inventory.propositions[0].predicate === "неизбежно происходит",
+    "a modality marker already represented in predicate must not be rejected for lacking a duplicate modality object",
+  );
+  names.push("dismiss modality false positives when the complete modal meaning is already in predicate");
+
+  let genuineModalityMismatchRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        [{ ...modalityExtraction[0], predicate: "происходит" }],
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1"], [modalityIssue]),
+        { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "Предикат не сохраняет маркер необходимости." }] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "modality-genuine-mismatch", sourceText: modalitySource, donorText: donor });
+  } catch (error) {
+    genuineModalityMismatchRejected = String(error).includes("potential source-interpretation error");
+  }
+  assert(genuineModalityMismatchRejected, "a genuinely omitted modal meaning must remain blocking");
+  names.push("retain fail-closed behavior when a modality mismatch is independently confirmed");
+
   let incompleteInterpretationRejected = false;
   try {
     await createStyleTransferRequestPreparer(
