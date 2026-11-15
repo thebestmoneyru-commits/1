@@ -11,9 +11,12 @@ const validExtraction = [
   { id: "p2", summary: "Он помог людям", sourceSpan: { start: 26, end: source.length, text: source.slice(26) }, subject: "Он", predicate: "помог", object: "людям", polarity: "positive", qualifications: [], relations: [], mandatory: true },
 ];
 
-function fakeRouter(output: unknown): ModelRouter {
+function fakeRouter(...outputs: unknown[]): ModelRouter {
+  let call = 0;
   return {
     async generate() {
+      const output = outputs[Math.min(call, outputs.length - 1)];
+      call += 1;
       return { text: JSON.stringify(output), requestedModel: "test", usedModel: "test", fallbackOccurred: false, attempts: [], warnings: [] };
     },
   } as unknown as ModelRouter;
@@ -25,7 +28,7 @@ const donor = Array.from({ length: 40 }, (_, i) =>
 export async function runRequestPreparationSelfTests(): Promise<{ passed: number; names: string[] }> {
   const names: string[] = [];
   const routes = { semanticExtraction: { preferredModel: "extractor" } };
-  const prepare = createStyleTransferRequestPreparer(fakeRouter(validExtraction), routes, {
+  const prepare = createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [] }), routes, {
     analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
   });
   const result = await prepare({ requestId: "test", sourceText: source, donorText: donor });
@@ -33,6 +36,28 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(result.inventory.sourceLength === source.length, "inventory must bind to exact source length");
   assert(result.donorBaseline.profile.status === "sufficient", "sufficient donor sample must produce a frozen baseline");
   names.push("build source-bound inventory and donor baseline");
+
+  const omitted = {
+    id: "p3", summary: "Он основал обитель", sourceSpan: { start: 0, end: 25, text: source.slice(0, 25) },
+    subject: "Он", predicate: "основал", object: "обитель", polarity: "positive",
+    qualifications: [], relations: [], mandatory: true,
+  };
+  const audited = await createStyleTransferRequestPreparer(
+    fakeRouter(validExtraction, { missingPropositions: [omitted] }), routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "audit", sourceText: source, donorText: donor });
+  assert(audited.inventory.propositions.length === 3, "omission audit must add validated missing propositions");
+  assert(audited.inventory.propositions.some((item) => item.id === "p3"), "audited omission must be retained");
+  names.push("recover source-grounded omissions found by independent audit");
+
+  let malformedAuditRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, []), routes, {
+      analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
+    })({ requestId: "bad-audit", sourceText: source, donorText: donor });
+  } catch (error) { malformedAuditRejected = String(error).includes("invalid missingPropositions"); }
+  assert(malformedAuditRejected, "malformed completeness audit must fail closed");
+  names.push("reject malformed completeness audit responses");
 
   const invalid = validExtraction.map((item, index) => ({ ...item, id: index ? "p1" : item.id }));
   let duplicateRejected = false;
@@ -58,7 +83,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
 
   let donorRejected = false;
   try {
-    await createStyleTransferRequestPreparer(fakeRouter(validExtraction), routes)({
+    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [] }), routes)({
       requestId: "short-donor", sourceText: source, donorText: "Короткий образец.",
     });
   } catch (error) { donorRejected = String(error).includes("Donor corpus is insufficient"); }
