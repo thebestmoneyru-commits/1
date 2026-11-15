@@ -249,6 +249,6 @@ export function scoreStyleDNA(
   return {
     ...base, status: "scored", score: Math.round(score * 10) / 10,
     confidence: Math.round(confidence * 1000) / 1000,
-    familyScores, comparisons: comparisons.sort((a,b)=>b.weight*a.confidence-a.weight*b.confidence),
+    familyScores, comparisons: comparisons.sort((a,b)=>(b.weight*b.confidence)-(a.weight*a.confidence)),
   };
 }
