@@ -127,7 +127,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       },
       critic: { async review() { throw new Error("critic must not run"); } },
       repair: { async repair() { throw new Error("repair must not run"); } },
-      semanticVerifier: { async assess() { return []; } },
+      semanticVerifier: { async assess() { return []; }, async assessRelations() { return []; } },
       styleProfiler: {
         analyze(text) {
           return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
@@ -152,7 +152,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       },
       critic: { async review() { throw new Error("critic must not run"); } },
       repair: { async repair() { throw new Error("repair must not run"); } },
-      semanticVerifier: { async assess() { return []; } },
+      semanticVerifier: { async assess() { return []; }, async assessRelations() { return []; } },
       styleProfiler: {
         analyze(text) {
           return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
