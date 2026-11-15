@@ -108,21 +108,24 @@ export async function runCriticRepairPipeline(
   });
 
   const finalText = repairResult.repairedText;
-  const [repairedAssessments, repairedRelationAssessments, repairedProfile] = await Promise.all([
-    input.semanticVerifier.assess({
-      sourceText: input.sourceText,
-      candidateText: finalText,
-      propositions: input.inventory.propositions,
-      signal: input.signal,
-    }),
-    input.semanticVerifier.assessRelations({
-      sourceText: input.sourceText,
-      candidateText: finalText,
-      propositions: input.inventory.propositions,
-      signal: input.signal,
-    }),
-    input.styleProfiler.analyze(finalText),
-  ]);
+  const textChanged = finalText !== input.candidateText;
+  const [repairedAssessments, repairedRelationAssessments, repairedProfile] = textChanged
+    ? await Promise.all([
+        input.semanticVerifier.assess({
+          sourceText: input.sourceText,
+          candidateText: finalText,
+          propositions: input.inventory.propositions,
+          signal: input.signal,
+        }),
+        input.semanticVerifier.assessRelations({
+          sourceText: input.sourceText,
+          candidateText: finalText,
+          propositions: input.inventory.propositions,
+          signal: input.signal,
+        }),
+        input.styleProfiler.analyze(finalText),
+      ])
+    : [beforeAssessments, beforeRelationAssessments, beforeProfile];
 
   const verification = verifyRepairedCandidate({
     candidateId: input.candidateId,
