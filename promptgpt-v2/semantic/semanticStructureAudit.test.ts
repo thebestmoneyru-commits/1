@@ -19,7 +19,7 @@ const propositions: Proposition[] = [
     qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }], mandatory: true,
   },
 ];
-const relationKey = getLogicalRelationAuditKey(propositions[0].relations[0]);
+const relationKey = getLogicalRelationAuditKey(propositions[0].relations[0]!);
 const cleanAudit = {
   checkedPropositionIds: ["p1", "p2"],
   checkedRelationKeys: [relationKey],
@@ -82,6 +82,18 @@ export function runSemanticStructureAuditSelfTests(): { passed: number; names: s
   });
   assert(!unknownRelation.valid, "findings cannot reference invented relation keys");
   names.push("reject findings referencing unknown relation keys");
+
+
+  const mismatchedEndpoints = validateSemanticStructureAudit(source, propositions, {
+    ...cleanAudit,
+    issues: [{
+      kind: "relation-inversion", propositionIds: ["p1", "p2"], relationKey,
+      evidenceSpan: { start: source.indexOf("поэтому"), end: source.indexOf("поэтому") + "поэтому".length, text: "поэтому" },
+      explanation: "Связь якобы относится к другим пропозициям.",
+    }],
+  });
+  assert(mismatchedEndpoints.valid, "the referenced relation endpoints must match the issue proposition pair");
+  names.push("validate that structural findings reference the relation endpoints");
 
   return { passed: names.length, names };
 }
