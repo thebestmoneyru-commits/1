@@ -47,5 +47,14 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
   assert(!invalidObject.valid, "empty objects must be rejected when supplied");
   names.push("reject empty optional object values");
 
+  const emojiSource = "🙏 Он пришёл.";
+  const emojiStart = emojiSource.indexOf("Он");
+  const utf16 = validatePropositionExtraction(emojiSource, [{
+    ...base,
+    sourceSpan: { start: emojiStart, end: emojiStart + "Он пришёл.".length, text: "Он пришёл." },
+  }]);
+  assert(utf16.valid, "source offsets must use JavaScript UTF-16 indices");
+  names.push("validate source offsets using UTF-16 indexing");
+
   return { passed: names.length, names };
 }
