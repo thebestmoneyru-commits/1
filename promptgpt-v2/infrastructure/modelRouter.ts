@@ -450,7 +450,8 @@ export class ModelRouter {
           continue;
         }
 
-        if (lastKind && ["rate-limit", "quota-exhausted", "unavailable", "timeout", "network"].includes(lastKind)) {
+        const coolableKinds = new Set<ModelErrorKind>(["rate-limit", "quota-exhausted", "unavailable", "timeout", "network"]);
+        if (lastKind && coolableKinds.has(lastKind)) {
           const retryAfter = lastKind === "rate-limit" ? parseRetryDelayMs(lastError) : undefined;
           const cooldown = retryAfter ?? this.cooldowns[lastKind] ?? 0;
           state.cooldownUntil = Math.max(state.cooldownUntil, this.now() + cooldown);
