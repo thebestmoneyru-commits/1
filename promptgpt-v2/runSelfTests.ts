@@ -12,6 +12,7 @@ import { runGeminiAdapterSelfTests } from "./infrastructure/geminiAdapter.test";
 import { runInfrastructureSelfTests } from "./infrastructure/infrastructure.test";
 import { runRemoteEndpointPolicySelfTests } from "./infrastructure/remoteEndpointPolicy.test";
 import { runSafeRemoteFetchSelfTests } from "./infrastructure/safeRemoteFetch.test";
+import { runApplicationSelfTests } from "./application/modelCatalog.test";
 
 export interface SelfTestGroupResult {
   group: string;
@@ -40,6 +41,7 @@ export async function runV2SelfTestSuite(): Promise<SelfTestSuiteResult> {
     { group: "infrastructure", run: runInfrastructureSelfTests },
     { group: "remote-endpoint-policy", run: runRemoteEndpointPolicySelfTests },
     { group: "safe-remote-fetch", run: runSafeRemoteFetchSelfTests },
+    { group: "application-model-catalog", run: runApplicationSelfTests },
   ];
   const results: SelfTestGroupResult[] = [];
   for (const item of groups) {
