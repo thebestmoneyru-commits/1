@@ -15,6 +15,7 @@ import { runSafeRemoteFetchSelfTests } from "./infrastructure/safeRemoteFetch.te
 import { runApplicationSelfTests } from "./application/modelCatalog.test";
 import { runStyleTransferServiceSelfTests } from "./application/styleTransferService.test";
 import { runRequestPreparationSelfTests } from "./application/requestPreparation.test";
+import { runPropositionCoverageSelfTests } from "./semantic/propositionCoverage.test";
 import { runStyleTransferApiSelfTests } from "./api/styleTransferRouter.test";
 
 export interface SelfTestGroupResult {
@@ -47,6 +48,7 @@ export async function runV2SelfTestSuite(): Promise<SelfTestSuiteResult> {
     { group: "application-model-catalog", run: runApplicationSelfTests },
     { group: "application-style-transfer-service", run: runStyleTransferServiceSelfTests },
     { group: "application-request-preparation", run: runRequestPreparationSelfTests },
+    { group: "semantic-proposition-coverage", run: runPropositionCoverageSelfTests },
     { group: "api-style-transfer-router", run: runStyleTransferApiSelfTests },
   ];
   const results: SelfTestGroupResult[] = [];
