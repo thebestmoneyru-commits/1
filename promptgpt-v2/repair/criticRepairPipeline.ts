@@ -19,6 +19,12 @@ export interface IndependentSemanticVerifier {
     propositions: readonly Proposition[];
     signal?: AbortSignal;
   }): Promise<LogicalRelationAssessment[]>;
+  assessCombined?(input: {
+    sourceText: string;
+    candidateText: string;
+    propositions: readonly Proposition[];
+    signal?: AbortSignal;
+  }): Promise<{ propositionAssessments: PropositionAssessment[]; relationAssessments: LogicalRelationAssessment[] }>;
 }
 export interface IndependentStyleProfiler {
   analyze(text: string): Promise<StyleDNAProfile> | StyleDNAProfile;
@@ -65,6 +71,14 @@ export async function runCriticRepairPipeline(
   input: CriticRepairPipelineInput,
   options: CriticRepairPipelineOptions = {},
 ): Promise<CriticRepairPipelineResult> {
+  const combinedBefore = input.initialVerification || !input.semanticVerifier.assessCombined
+    ? undefined
+    : await input.semanticVerifier.assessCombined({
+        sourceText: input.sourceText,
+        candidateText: input.candidateText,
+        propositions: input.inventory.propositions,
+        signal: input.signal,
+      });
   const [criticReport, beforeAssessments, beforeRelationAssessments, beforeProfile] = await Promise.all([
     runStyleCritic({
       sourceText: input.sourceText,
@@ -77,20 +91,24 @@ export async function runCriticRepairPipeline(
     }),
     input.initialVerification
       ? Promise.resolve(input.initialVerification.propositionAssessments)
-      : input.semanticVerifier.assess({
-          sourceText: input.sourceText,
-          candidateText: input.candidateText,
-          propositions: input.inventory.propositions,
-          signal: input.signal,
-        }),
+      : combinedBefore
+        ? Promise.resolve(combinedBefore.propositionAssessments)
+        : input.semanticVerifier.assess({
+            sourceText: input.sourceText,
+            candidateText: input.candidateText,
+            propositions: input.inventory.propositions,
+            signal: input.signal,
+          }),
     input.initialVerification
       ? Promise.resolve(input.initialVerification.relationAssessments)
-      : input.semanticVerifier.assessRelations({
-          sourceText: input.sourceText,
-          candidateText: input.candidateText,
-          propositions: input.inventory.propositions,
-          signal: input.signal,
-        }),
+      : combinedBefore
+        ? Promise.resolve(combinedBefore.relationAssessments)
+        : input.semanticVerifier.assessRelations({
+            sourceText: input.sourceText,
+            candidateText: input.candidateText,
+            propositions: input.inventory.propositions,
+            signal: input.signal,
+          }),
     input.initialVerification
       ? Promise.resolve(input.initialVerification.styleProfile)
       : input.styleProfiler.analyze(input.candidateText),
@@ -116,21 +134,33 @@ export async function runCriticRepairPipeline(
     repairedRelationAssessments = beforeRelationAssessments;
     repairedProfile = beforeProfile;
   } else {
-    [repairedAssessments, repairedRelationAssessments, repairedProfile] = await Promise.all([
-      input.semanticVerifier.assess({
+    if (input.semanticVerifier.assessCombined) {
+      const combinedAfter = await input.semanticVerifier.assessCombined({
         sourceText: input.sourceText,
         candidateText: finalText,
         propositions: input.inventory.propositions,
         signal: input.signal,
-      }),
-      input.semanticVerifier.assessRelations({
-        sourceText: input.sourceText,
-        candidateText: finalText,
-        propositions: input.inventory.propositions,
-        signal: input.signal,
-      }),
-      input.styleProfiler.analyze(finalText),
-    ]);
+      });
+      repairedAssessments = combinedAfter.propositionAssessments;
+      repairedRelationAssessments = combinedAfter.relationAssessments;
+      repairedProfile = await input.styleProfiler.analyze(finalText);
+    } else {
+      [repairedAssessments, repairedRelationAssessments, repairedProfile] = await Promise.all([
+        input.semanticVerifier.assess({
+          sourceText: input.sourceText,
+          candidateText: finalText,
+          propositions: input.inventory.propositions,
+          signal: input.signal,
+        }),
+        input.semanticVerifier.assessRelations({
+          sourceText: input.sourceText,
+          candidateText: finalText,
+          propositions: input.inventory.propositions,
+          signal: input.signal,
+        }),
+        input.styleProfiler.analyze(finalText),
+      ]);
+    }
   }
 
   const verification = verifyRepairedCandidate({
