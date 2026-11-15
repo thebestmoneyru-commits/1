@@ -381,8 +381,14 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
       { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: rainStart, end: leadingSource.indexOf(","), text: leadingSource.slice(rainStart, leadingSource.indexOf(",")) }, subject: "дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [], mandatory: true },
       { id: "p2", summary: "Путники укрылись", sourceSpan: { start: travelersStart, end: leadingSource.length, text: leadingSource.slice(travelersStart) }, subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [], relations: [], mandatory: true },
     ];
+    const leadingRelationKey = JSON.stringify(["cause", "p1", "p2", "Поскольку"]);
     const leadingResult = await createStyleTransferRequestPreparer(
-      fakeRouter(leadingExtraction, { missingPropositions: [], missingRelations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }] }),
+      fakeRouter(
+        leadingExtraction,
+        { missingPropositions: [], missingRelations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }] },
+        interpretationAudit(["p1", "p2"]),
+        { checkedPropositionIds: ["p1", "p2"], checkedRelationKeys: [leadingRelationKey], issues: [] },
+      ),
       routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
     )({ requestId: "leading-marker", sourceText: leadingSource, donorText: donor });
     leadingMarkerAccepted = leadingResult.inventory.propositions.some((item) => item.relations.some((relation) => relation.expression === "Поскольку"));
