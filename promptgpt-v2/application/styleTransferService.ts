@@ -76,13 +76,22 @@ export class StyleTransferService {
         if (candidate.status !== "generated" || !candidate.text) continue;
         if (request.signal?.aborted) break;
         mark("evaluating-candidates", "Независимая семантическая и стилевая оценка.", candidate.candidateId);
-        const assessments = await this.deps.semanticVerifier.assess({
-          sourceText: request.sourceText,
-          candidateText: candidate.text,
-          propositions: request.inventory.propositions,
-          signal: request.signal,
-        });
-        const profile = this.deps.styleProfiler.analyze(candidate.text);
+        let assessments;
+        let profile;
+        try {
+          assessments = await this.deps.semanticVerifier.assess({
+            sourceText: request.sourceText,
+            candidateText: candidate.text,
+            propositions: request.inventory.propositions,
+            signal: request.signal,
+          });
+          if (request.signal?.aborted) break;
+          profile = this.deps.styleProfiler.analyze(candidate.text);
+        } catch (error) {
+          if (request.signal?.aborted) break;
+          warnings.push(`Кандидат ${candidate.candidateId} пропущен: ошибка независимой проверки — ${error instanceof Error ? error.message : "неизвестная ошибка"}.`);
+          continue;
+        }
         const initial = evaluateCandidate({
           candidateId: candidate.candidateId,
           sourceText: request.sourceText,
