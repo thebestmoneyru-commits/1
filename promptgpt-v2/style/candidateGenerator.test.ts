@@ -31,6 +31,10 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   assert(prompt.includes("не переноси факты") || prompt.includes("НЕ ПЕРЕНОСИ факты"),
     "prompt separates donor style from donor content");
   assert(prompt.includes("1912"), "required numeric anchor is supplied to the model");
+  assert(!prompt.includes("lexical.repeat.") && !prompt.includes("Повторяющееся окончание:"),
+    "topic-specific repeated words and exact donor endings are not presented as style instructions");
+  assert(prompt.includes("предложение за предложением") && prompt.includes("обратную сверку"),
+    "generation prompt explicitly requires source-by-source completeness review");
   const secondPrompt = buildCandidatePrompt({
     sourceText, inventory, donorBaseline: baseline, candidateIndex: 1,
     styleIntensity: 5, maxDonorExamples: 3,
