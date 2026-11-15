@@ -142,7 +142,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
     ["long","Длинные (21–35 слов)",stats.sentenceLengthDistribution.long],
     ["very-long","Очень длинные (более 35 слов)",stats.sentenceLengthDistribution.veryLong],
   ] as const) {
-    features.push(feature(`rhythm.length-distribution.${bucket}`,"rhythm",`Распределение длины: ${label}`,item.share,nSent,"share",corpusConfidence,item.count,[], "Доля предложений в соответствующем диапазоне длины.",1));
+    features.push(feature(`rhythm.length-distribution.${bucket}`,"rhythm",`Распределение длины: ${label}`,item.count,nSent,"share",corpusConfidence,item.count,[], "Доля предложений в соответствующем диапазоне длины.",1));
   }
   features.push(feature("paragraphs.mean-sentences-per-paragraph","paragraphs","Среднее число предложений в абзаце",stats.meanSentencesPerParagraph,paragraphs.length,"mean",corpusConfidence,paragraphs.length,[], "Среднее число предложений в одном абзаце."));
 
