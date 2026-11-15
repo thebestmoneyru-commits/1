@@ -245,6 +245,7 @@ export class StyleTransferService {
           });
         }
       }
+      }
       generation.warnings = [...new Set(generation.warnings)];
 
       if (request.signal?.aborted) {
