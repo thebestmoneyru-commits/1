@@ -10,7 +10,7 @@ const propositions: Proposition[] = [
   {
     id: "p1", summary: "Дождь пошёл", sourceSpan: { start: source.indexOf("Дождь пошёл"), end: source.indexOf("Дождь пошёл") + "Дождь пошёл".length, text: "Дождь пошёл" },
     subject: "дождь", predicate: "пошёл", polarity: "positive",
-    qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }], mandatory: true,
+    qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }], mandatory: true,
   },
   {
     id: "p2", summary: "Путники укрылись в храме",
@@ -76,7 +76,7 @@ export function runSemanticStructureAuditSelfTests(): { passed: number; names: s
     ...cleanAudit,
     issues: [{
       kind: "relation-inversion", propositionIds: ["p1", "p2"], relationKey: "unknown",
-      evidenceSpan: { start: 0, end: 9, text: "Поскольку " },
+      evidenceSpan: { start: source.indexOf("поэтому"), end: source.indexOf("поэтому") + "поэтому".length, text: "поэтому" },
       explanation: "Связь перевёрнута.",
     }],
   });
