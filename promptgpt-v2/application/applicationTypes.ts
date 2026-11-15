@@ -80,4 +80,6 @@ export interface ApplicationModelRoutes {
   surgicalRepair: { preferredModel: string; fallbackModels?: readonly string[] };
   semanticVerification: { preferredModel: string; fallbackModels?: readonly string[] };
   semanticExtraction: { preferredModel: string; fallbackModels?: readonly string[] };
+  /** Optional, preferably distinct model route for the independent extraction completeness audit. */
+  semanticAudit?: { preferredModel: string; fallbackModels?: readonly string[] };
 }
