@@ -34,6 +34,12 @@ This directory is an isolated modernization track. Existing production files are
 - Public exports in `style/index.ts`.
 - Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification, orchestration, model-router, Gemini-adapter, cache, JSON-validation, remote-endpoint-policy and safe-remote-fetch regression checks in their corresponding `*.test.ts` files.
 
+### Application Orchestration
+- Explicit deployment-supplied model allowlist and task-route validation in `application/modelCatalog.ts`; no default model IDs are assumed.
+- Shared-router adapters for candidate generation, style critique, surgical repair and independent proposition verification in `application/routerAdapters.ts`.
+- End-to-end service orchestration in `application/styleTransferService.ts`: immutable source/baseline binding, bounded candidate generation, semantic-first admission, one critic/repair cycle, and final selection with trace metadata.
+- Application contracts in `application/applicationTypes.ts`. The service receives a prebuilt, source-bound semantic inventory and frozen donor baseline; it does not invent or silently extract either one.
+
 ## Running the v2 regression checks
 
 The complete offline regression suite (it does not call the live Gemini API) is collected in `runSelfTests.ts`. From the repository root, run:
@@ -84,4 +90,4 @@ Do not connect this directory to the production API until:
 5. frontend response contracts are preserved;
 6. server and frontend builds are checked separately.
 
-The existing application remains untouched during this foundation phase.
+The existing application remains untouched during this foundation phase. The application service is an injectable library layer only; it is not yet mounted on Express or connected to the legacy route.
