@@ -122,6 +122,13 @@ export async function repairCandidateSurgically(input: {
     throw new Error("Fact inventory does not belong to the exact source text.");
   }
 
+  if (input.criticReport.passed) {
+    return {
+      applied: false, originalFingerprint, repairedText: input.candidateText,
+      patchesApplied: 0, patches: [], warnings: ["Критик не выявил оснований для исправления; текст оставлен без изменений."],
+    };
+  }
+
   const actionable = input.criticReport.issues.filter((issue) =>
     issue.severity !== "info" || options.allowInfoIssues
   );
