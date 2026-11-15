@@ -135,6 +135,16 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   features.push(feature("rhythm.mean-sentence-length","rhythm","Средняя длина предложения",stats.meanWordsPerSentence,sentences.length,"mean",corpusConfidence,sentences.length,[], "Среднее число слов в предложении."));
   features.push(feature("rhythm.sentence-length-variance","rhythm","Разброс длины предложений",variance,sentences.length,"mean",corpusConfidence,sentences.length,[], "Дисперсия длины предложений; большее значение означает более неоднородный ритм."));
   features.push(feature("rhythm.long-sentence-share","rhythm","Доля длинных предложений",stats.sentenceLengthDistribution.long.count+stats.sentenceLengthDistribution.veryLong.count,nSent,"share",corpusConfidence,sentences.length,[], "Доля предложений длиннее 20 слов.",1));
+  features.push(feature("rhythm.median-sentence-length","rhythm","Медианная длина предложения",stats.medianWordsPerSentence,sentences.length,"mean",corpusConfidence,sentences.length,[], "Медиана числа слов в предложении."));
+  for (const [bucket, label, item] of [
+    ["short","Короткие (до 8 слов)",stats.sentenceLengthDistribution.short],
+    ["medium","Средние (9–20 слов)",stats.sentenceLengthDistribution.medium],
+    ["long","Длинные (21–35 слов)",stats.sentenceLengthDistribution.long],
+    ["very-long","Очень длинные (более 35 слов)",stats.sentenceLengthDistribution.veryLong],
+  ] as const) {
+    features.push(feature(`rhythm.length-distribution.${bucket}`,"rhythm",`Распределение длины: ${label}`,item.share,nSent,"share",corpusConfidence,item.count,[], "Доля предложений в соответствующем диапазоне длины.",1));
+  }
+  features.push(feature("paragraphs.mean-sentences-per-paragraph","paragraphs","Среднее число предложений в абзаце",stats.meanSentencesPerParagraph,paragraphs.length,"mean",corpusConfidence,paragraphs.length,[], "Среднее число предложений в одном абзаце."));
 
   const punctuation: Array<[string,string,RegExp]> = [
     ["dash","Тире",/—|–/gu],["semicolon","Точка с запятой",/;/gu],
