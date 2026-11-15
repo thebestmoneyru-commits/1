@@ -60,7 +60,7 @@ export function createStyleTransferRequestPreparer(
       "Местоимения связывай с антецедентом только если он однозначно устанавливается из текста; сохраняй исходную формулировку субъекта и записывай разрешение местоимения в qualification.",
       "Не теряй отрицания, ограничители, приблизительность, числа, даты, последовательность событий, сравнения и противопоставления. Не повышай степень уверенности и не превращай возможность в факт.",
       "sourceSpan.start и sourceSpan.end — точные индексы UTF-16 в исходной строке; sourceSpan.text должен в точности равняться sourceText.slice(start,end).",
-      "ID должны быть уникальными. Все relations.from и relations.to должны ссылаться на существующие ID.",
+      "ID должны быть уникальными. Все relations.from и relations.to должны ссылаться на существующие ID. В каждой связи, помещённой в relations конкретной пропозиции, один из концов (from или to) обязан совпадать с ID этой пропозиции.",
       "Для каждого утверждения укажи qualifications и relations (даже если это пустые массивы), polarity (positive, negative или unknown) и mandatory (true для смыслово значимого утверждения).",
       "Допустимые qualifications.kind: condition, exception, restriction, approximation, attribution, time, place, degree, other. Допустимые relations.kind: cause, effect, contrast, concession, condition, purpose, sequence, comparison, attribution, other.",
       "Если указываешь modality, kind должен быть одним из certainty, possibility, necessity, obligation, permission, desire, reported-speech, other; value и scope — непустые строки. Не добавляй modality, если она не выражена в источнике.",
