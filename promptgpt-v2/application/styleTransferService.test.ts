@@ -417,6 +417,63 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
 
   {
     const { sourceText, request } = fixture();
+    const end = sourceText.indexOf(".") + 1;
+    const built = buildSemanticInventory(sourceText, [{
+      id: "adaptive-required",
+      summary: "Священник пришёл к людям.",
+      sourceSpan: { start: 0, end, text: sourceText.slice(0, end) },
+      subject: "священник",
+      predicate: "пришёл",
+      object: "к людям",
+      polarity: "positive",
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    }]);
+    assert(built.valid && built.inventory, "adaptive fallback inventory must be valid");
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate({ candidateIndex }) {
+          return candidateIndex === 0 ? "Семантически неполный вариант." : sourceText;
+        },
+      },
+      critic: { async review() { throw new Error("critic must not run for the accepted fallback candidate"); } },
+      repair: { async repair() { throw new Error("repair must not run for the accepted fallback candidate"); } },
+      semanticVerifier: {
+        async assess({ candidateText }) {
+          if (candidateText !== sourceText) return [];
+          return [{
+            propositionId: "adaptive-required",
+            status: "preserved" as const,
+            outputEvidence: [sourceText.slice(0, end)],
+            rationale: "Обязательная пропозиция сохранена.",
+            confidence: 0.99,
+          }];
+        },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({
+      ...request,
+      inventory: built.inventory,
+      generation: { ...request.generation, candidateCount: 3, adaptive: true },
+    });
+    assert(result.status === "accepted", "second candidate should be tried when the first fails semantic admission");
+    assert(result.selectedCandidateId === "candidate-2", "the second candidate should retain its global candidate identity");
+    assert(result.generation.requested === 2 && result.generation.failed === 0,
+      "generation metrics should include both attempted candidates");
+    assert(result.generation.candidates[1]?.candidateIndex === 1,
+      "incremental generation should preserve the candidate index offset");
+    names.push("adaptive generation requests next candidate only after first candidate fails the semantic gate");
+  }
+
+  {
+    const { sourceText, request } = fixture();
     let combinedCalls = 0;
     let legacyCalls = 0;
     const service = new StyleTransferService({
