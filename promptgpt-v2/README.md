@@ -20,8 +20,13 @@ This directory is an isolated modernization track. Existing production files are
 - Frozen donor baseline creation and integrity checks in `style/donorBaseline.ts`.
 - Semantic-first candidate admission in `style/candidateEvaluator.ts`.
 - Bounded parallel candidate generation from the immutable source and donor baseline in `style/candidateGenerator.ts`.
+- Evidence-grounded style criticism with exact candidate spans and donor-example validation in `critic/styleCritic.ts`.
+- Exact-span surgical repairs constrained by critic findings in `repair/surgicalRepair.ts`.
+- Mandatory post-repair semantic and style re-evaluation in `repair/repairVerification.ts`.
+- One-cycle critic → repair → independent verification orchestration in `repair/criticRepairPipeline.ts`.
+- Public module entry points in `index.ts`, `critic/index.ts` and `repair/index.ts`.
 - Public exports in `style/index.ts`.
-- Analyzer, scorer, baseline, candidate-generation and candidate-gate regression checks in their corresponding `*.test.ts` files.
+- Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification and orchestration regression checks in their corresponding `*.test.ts` files.
 
 ## Style analyzer limitations
 
@@ -33,15 +38,15 @@ The score is a heuristic similarity estimate, not a calibrated probability that 
 
 Candidate generation uses an injected model adapter, creates independent variants from the same immutable source, limits concurrency, isolates per-candidate provider failures, and binds each result to source and donor-baseline fingerprints. Source text, donor examples, anchors and extracted propositions are serialized as JSON data and explicitly treated as data rather than instructions.
 
-Candidate admission applies the semantic gate first. A style score cannot compensate for missing facts or failed proposition checks. Candidates with inadequate style evidence are marked for review, not silently admitted or assigned a fabricated numeric score. The initial style threshold (70/100) is an engineering default, not an empirically validated cutoff; it must be calibrated against a labeled evaluation corpus before production use. It compares sentence-length buckets, mean and median sentence length, punctuation rates, syntactic and connector rates, repeated openings/closings, lexical repetitions, and paragraph rhythm where the analyzer has enough evidence. Rare markers and lexical repeats have reduced weight. Corpus-wide features with zero observed occurrences remain part of the comparison, so the scorer can detect candidate overuse of traits absent from the donor sample.
+Candidate admission applies the semantic gate first. A style score cannot compensate for missing facts or failed proposition checks. Candidates with inadequate style evidence are marked for review, not silently admitted or assigned a fabricated numeric score. The initial style threshold (70/100) is an engineering default, not an empirically validated cutoff; it must be calibrated against a labeled evaluation corpus before production use. The critic requires every actionable finding to cite an exact candidate span and an excerpt present in the frozen donor evidence. The repair engine accepts only exact replacements for those spans, rejects stale or overlapping patches, and never applies an unverified full-text rewrite. A successful patch is not considered successful work until an independent semantic assessment and a fresh style profile pass the candidate gate. It compares sentence-length buckets, mean and median sentence length, punctuation rates, syntactic and connector rates, repeated openings/closings, lexical repetitions, and paragraph rhythm where the analyzer has enough evidence. Rare markers and lexical repeats have reduced weight. Corpus-wide features with zero observed occurrences remain part of the comparison, so the scorer can detect candidate overuse of traits absent from the donor sample.
 
-The dependency-free regression checks can be invoked from the repository root with a TypeScript runner by importing `runStyleDNAAnalyzerSelfTests` from `promptgpt-v2/style/styleDNAAnalyzer.test.ts` and `runStyleDNAScorerSelfTests` from `promptgpt-v2/style/styleDNAScorer.test.ts`. They have been added but have not yet been executed in this environment.
+The dependency-free regression checks can be invoked from the repository root with a TypeScript runner by importing the exported `run*SelfTests` functions from the corresponding `*.test.ts` files. They have been added but have not yet been executed in this environment.
 
 ## Not yet implemented
 
 - Natural-language proposition extraction and independent model-backed semantic verification.
 - Full author-style parsing, including reliable Russian morphology and clause structure.
-- Critic, repair and repair verification.
+- Full automated test suite and build configuration.
 - Hardened model routing and API integration.
 - Full automated test suite and build configuration.
 
