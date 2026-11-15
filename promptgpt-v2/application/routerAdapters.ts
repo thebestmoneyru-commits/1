@@ -116,7 +116,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "", "ORIGINAL SOURCE JSON:", JSON.stringify(sourceText),
           "", "CANDIDATE JSON:", JSON.stringify(candidateText),
           "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
-        ].join("\\n");
+        ].join("\n");
         const raw = await invoke(router, routes, "semantic-verification", prompt, signal);
         const parsed = parseJsonUnknown(raw);
         if (!validateRelationAssessments(parsed)) throw new Error("Semantic structure verifier returned an invalid relation assessment array.");
