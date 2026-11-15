@@ -100,7 +100,22 @@ function makeCorpusStats(text: string, sentences: Sentence[], paragraphs: Return
  * Russian suffix patterns are clues, not a substitute for a morphological parser.
  */
 export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyzerOptions> = {}): StyleDNAProfile {
-  const config = { ...DEFAULTS, ...options };
+  const config: StyleAnalyzerOptions = {
+    ...DEFAULTS,
+    ...options,
+    minWordsForReliableProfile:
+      Number.isFinite(options.minWordsForReliableProfile) && (options.minWordsForReliableProfile ?? 0) > 0
+        ? Math.max(1, Math.floor(options.minWordsForReliableProfile!))
+        : DEFAULTS.minWordsForReliableProfile,
+    minSentencesForReliableProfile:
+      Number.isFinite(options.minSentencesForReliableProfile) && (options.minSentencesForReliableProfile ?? 0) > 0
+        ? Math.max(1, Math.floor(options.minSentencesForReliableProfile!))
+        : DEFAULTS.minSentencesForReliableProfile,
+    maxEvidencePerFeature:
+      Number.isFinite(options.maxEvidencePerFeature)
+        ? Math.max(0, Math.min(20, Math.floor(options.maxEvidencePerFeature!)))
+        : DEFAULTS.maxEvidencePerFeature,
+  };
   const text = sourceText ?? "";
   const paragraphs = splitParagraphs(text);
   const sentences = paragraphs.flatMap((p) => p.sentences);
@@ -183,6 +198,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   }
 
   for (const phrase of options.trackedPhrases ?? []) {
+    if (!phrase.trim()) continue;
     const positions = phraseOccurrences(text.toLocaleLowerCase("ru-RU"),phrase.toLocaleLowerCase("ru-RU"));
     const examples = positions.slice(0,config.maxEvidencePerFeature).map((pos)=>({
       span:span(text,pos,pos+phrase.length), excerpt:text.slice(Math.max(0,pos-70),Math.min(text.length,pos+phrase.length+100)),
