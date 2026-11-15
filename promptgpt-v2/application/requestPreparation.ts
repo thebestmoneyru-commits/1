@@ -768,6 +768,7 @@ export function createStyleTransferRequestPreparer(
         sourceText,
         completePropositions,
         normalizedInterpretation,
+        { allowOutOfSpanSubjectPredicateEvidence: true },
       );
       if (!interpretation.valid || !interpretation.audit) {
         throw new Error(`Semantic interpretation audit failed validation: ${interpretation.errors.join(" ")}`);
@@ -854,7 +855,10 @@ export function createStyleTransferRequestPreparer(
           if (inSpan) return false;
           const sentenceBounds = getSentenceBounds(sourceText, proposition.sourceSpan.start);
           const sentenceText = sourceText.slice(sentenceBounds.start, sentenceBounds.end);
-          return normalizeEvidenceText(sentenceText).includes(normalizedValue);
+          const evidenceWithinSentence =
+            issue.evidenceSpan.start >= sentenceBounds.start &&
+            issue.evidenceSpan.end <= sentenceBounds.end;
+          return evidenceWithinSentence && normalizeEvidenceText(sentenceText).includes(normalizedValue);
         });
 
       if (sharedConstituentCandidates.length) {
