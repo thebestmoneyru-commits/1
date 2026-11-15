@@ -291,6 +291,77 @@ function getSentenceBounds(sourceText: string, position: number): { start: numbe
   return { start, end };
 }
 
+/**
+ * Some model extractions cite only the object phrase even though the predicate
+ * is explicitly present in the same source sentence. Widen that literal span
+ * to include the exact predicate wording before semantic audits run.
+ *
+ * This is a deterministic source-only repair: it never changes proposition
+ * fields and never invents text. The resulting span is copied directly from
+ * the immutable source string.
+ */
+function expandSpanToIncludeExplicitPredicate(sourceText: string, input: unknown): unknown {
+  if (!Array.isArray(input)) return input;
+
+  return input.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const item = entry as Record<string, unknown>;
+    const span = item.sourceSpan;
+    const predicate = typeof item.predicate === "string" ? item.predicate.trim() : "";
+
+    if (!predicate || !span || typeof span !== "object" || Array.isArray(span)) return entry;
+    const sourceSpan = span as Record<string, unknown>;
+    const start = sourceSpan.start;
+    const end = sourceSpan.end;
+    const spanText = sourceSpan.text;
+
+    if (!Number.isInteger(start) || !Number.isInteger(end) ||
+        (start as number) < 0 || (end as number) <= (start as number) ||
+        (end as number) > sourceText.length ||
+        typeof spanText !== "string" ||
+        sourceText.slice(start as number, end as number) !== spanText ||
+        spanText.includes(predicate)) {
+      return entry;
+    }
+
+    const sentence = getSentenceBounds(sourceText, start as number);
+    let searchFrom = sentence.start;
+    let bestStart = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    while (searchFrom <= sentence.end - predicate.length) {
+      const occurrence = sourceText.indexOf(predicate, searchFrom);
+      if (occurrence < 0 || occurrence + predicate.length > sentence.end) break;
+      const occurrenceEnd = occurrence + predicate.length;
+      if (occurrence < (end as number) && occurrenceEnd > (start as number)) {
+        searchFrom = occurrence + 1;
+        continue;
+      }
+      const distance = occurrenceEnd <= (start as number)
+        ? (start as number) - occurrenceEnd
+        : occurrence - (end as number);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestStart = occurrence;
+      }
+      searchFrom = occurrence + 1;
+    }
+
+    if (bestStart < 0) return entry;
+
+    const expandedStart = Math.min(start as number, bestStart);
+    const expandedEnd = Math.max(end as number, bestStart + predicate.length);
+    return {
+      ...item,
+      sourceSpan: {
+        start: expandedStart,
+        end: expandedEnd,
+        text: sourceText.slice(expandedStart, expandedEnd),
+      },
+    };
+  });
+}
+
 function hasVerbatimOccurrenceInEndpointSentences(sourceText: string, expression: string, fromStart: number, toStart: number): boolean {
   if (!expression) return false;
   const endpointSentences = [getSentenceBounds(sourceText, fromStart), getSentenceBounds(sourceText, toStart)];
@@ -387,6 +458,7 @@ export function createStyleTransferRequestPreparer(
       "Местоимения связывай с антецедентом только если он однозначно устанавливается из текста; сохраняй исходную формулировку субъекта и записывай разрешение местоимения в qualification.",
       "Не теряй отрицания, ограничители, приблизительность, числа, даты, последовательность событий, сравнения и противопоставления. Не повышай степень уверенности и не превращай возможность в факт.",
       "sourceSpan.text обязан быть дословной подстрокой SOURCE TEXT (копируй точно, без изменений); sourceSpan.start и sourceSpan.end — точные или ближайшие UTF-16 индексы начала и конца.",
+      "sourceSpan должен охватывать полный минимальный фрагмент, выражающий пропозицию: не указывай только объект или дополнение, если сказуемое находится рядом. Для конструкции с глаголом и объектом включай в sourceSpan и точное сказуемое, и объект; по возможности также подлежащее. Не обрезай смысловой фрагмент до одной именной группы.",
       "ID обязаны быть уникальными строками вида \"p1\", \"p2\", \"p3\" (не используй числа). Все relations.from и relations.to должны ссылаться на существующие строковые ID. В каждой связи, помещённой в relations конкретной пропозиции, один из концов (from или to) обязан совпадать с ID этой пропозиции.",
       "Для каждого утверждения укажи qualifications и relations (даже если это пустые массивы), polarity (positive, negative или unknown) и mandatory (true для смыслово значимого утверждения).",
       "Допустимые qualifications.kind: condition, exception, restriction, approximation, attribution, time, place, degree, other. Допустимые relations.kind: cause, effect, contrast, concession, condition, purpose, sequence, comparison, attribution, other.",
@@ -418,6 +490,7 @@ export function createStyleTransferRequestPreparer(
       throw new Error(`Semantic extraction returned invalid JSON: ${error instanceof Error ? error.message : "unknown parse error"}`);
     }
     let normalizedExtraction = normalizeModelExtractedPropositions(sourceText, parsed);
+    normalizedExtraction = expandSpanToIncludeExplicitPredicate(sourceText, normalizedExtraction);
     let validation = validatePropositionExtraction(sourceText, normalizedExtraction);
 
     // Repair only the relation arrays when the sole validation defect is a
@@ -506,6 +579,7 @@ export function createStyleTransferRequestPreparer(
         "Исправь ТОЛЬКО дословные цитаты sourceSpan в переданном массиве пропозиций.",
         "Не изменяй ID, summary, subject, predicate, object, polarity, modality, qualifications, relations или mandatory.",
         "Для каждого ID найди в SOURCE TEXT точный непрерывный фрагмент, который подтверждает именно эту пропозицию.",
+        "Фрагмент должен охватывать полную минимальную грамматическую конструкцию, включая сказуемое и его объект, если они выражены в исходнике; не возвращай только именную группу объекта.",
         "sourceSpan.text должен быть скопирован посимвольно из SOURCE TEXT, включая пунктуацию и пробелы. Не пересказывай, не исправляй орфографию и не дополняй цитату.",
         "Если точный подтверждающий фрагмент найти нельзя, верни исходный sourceSpan без выдумывания цитаты.",
         "Координаты start/end могут быть приблизительными: система самостоятельно проверит и уточнит их. Верни ровно по одной записи на каждый ID.",
