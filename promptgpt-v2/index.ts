@@ -2,6 +2,7 @@ export * from "./types";
 export * from "./semantic/factInventory";
 export * from "./semantic/buildInventory";
 export * from "./semantic/propositionSchema";
+export * from "./semantic/propositionCoverage";
 export * from "./semantic/propositionIntegrity";
 export * from "./semantic/semanticPreservation";
 export * from "./style";
