@@ -87,12 +87,12 @@ export function runSemanticStructureAuditSelfTests(): { passed: number; names: s
   const mismatchedEndpoints = validateSemanticStructureAudit(source, propositions, {
     ...cleanAudit,
     issues: [{
-      kind: "relation-inversion", propositionIds: ["p1", "p2"], relationKey,
+      kind: "relation-inversion", propositionIds: ["p1"], relationKey,
       evidenceSpan: { start: source.indexOf("поэтому"), end: source.indexOf("поэтому") + "поэтому".length, text: "поэтому" },
-      explanation: "Связь якобы относится к другим пропозициям.",
+      explanation: "Не указаны оба конца связи.",
     }],
   });
-  assert(mismatchedEndpoints.valid, "the referenced relation endpoints must match the issue proposition pair");
+  assert(!mismatchedEndpoints.valid, "a relation finding must reference both relation endpoints");
   names.push("validate that structural findings reference the relation endpoints");
 
   return { passed: names.length, names };
