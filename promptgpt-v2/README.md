@@ -29,9 +29,10 @@ This directory is an isolated modernization track. Existing production files are
 - Version-aware bounded TTL/LRU caching in `infrastructure/versionedCache.ts`.
 - Runtime JSON parsing and schema-validator hooks in `infrastructure/jsonValidation.ts`.
 - HTTPS origin allowlisting for remote service endpoints in `infrastructure/remoteEndpointPolicy.ts`.
+- DNS-pinned HTTPS POST transport with IPv4/IPv6 special-range filtering, no redirects, request timeouts and streaming response-size limits in `infrastructure/safeRemoteFetch.ts`.
 - Public module entry points in `index.ts`, `critic/index.ts`, `repair/index.ts` and `infrastructure/index.ts`.
 - Public exports in `style/index.ts`.
-- Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification, orchestration, model-router, Gemini-adapter, cache, JSON-validation and remote-endpoint-policy regression checks in their corresponding `*.test.ts` files.
+- Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification, orchestration, model-router, Gemini-adapter, cache, JSON-validation, remote-endpoint-policy and safe-remote-fetch regression checks in their corresponding `*.test.ts` files.
 
 ## Running the v2 regression checks
 
@@ -55,15 +56,14 @@ Candidate generation uses an injected model adapter, creates independent variant
 
 Candidate admission applies the semantic gate first. A style score cannot compensate for missing facts or failed proposition checks. Candidates with inadequate style evidence are marked for review, not silently admitted or assigned a fabricated numeric score. The initial style threshold (70/100) is an engineering default, not an empirically validated cutoff; it must be calibrated against a labeled evaluation corpus before production use. The critic requires every actionable finding to cite an exact candidate span and an excerpt present in the frozen donor evidence. The repair engine accepts only exact replacements for those spans, rejects stale or overlapping patches, and never applies an unverified full-text rewrite. A successful patch is not considered successful work until an independent semantic assessment and a fresh style profile pass the candidate gate. It compares sentence-length buckets, mean and median sentence length, punctuation rates, syntactic and connector rates, repeated openings/closings, lexical repetitions, and paragraph rhythm where the analyzer has enough evidence. Rare markers and lexical repeats have reduced weight. Corpus-wide features with zero observed occurrences remain part of the comparison, so the scorer can detect candidate overuse of traits absent from the donor sample.
 
-The dependency-free regression checks can be invoked from the repository root with a TypeScript runner by importing the exported `run*SelfTests` functions from the corresponding `*.test.ts` files. They have been added but have not yet been executed in this environment. The Gemini adapter maps the router contract to the installed SDK. It forwards AbortSignal to the SDK; the SDK documentation describes this as client-side cancellation, not a guarantee that server-side generation or billing stops immediately. The remote endpoint policy is an allowlist layer only; it does not itself pin DNS answers, control redirects, or impose streaming body limits.
+The dependency-free regression checks can be invoked from the repository root with a TypeScript runner by importing the exported `run*SelfTests` functions from the corresponding `*.test.ts` files. They have been added but have not yet been executed in this environment. The Gemini adapter maps the router contract to the installed SDK. It forwards AbortSignal to the SDK; the SDK documentation describes this as client-side cancellation, not a guarantee that server-side generation or billing stops immediately. The safe remote transport pins the socket to a previously validated public DNS answer, rejects the request if any DNS answer is private/reserved, refuses redirects and compressed responses, and caps request/response bytes. It is not yet wired into the legacy production route; that route remains unchanged until a separately reviewed integration.
 
 ## Not yet implemented
 
 - Natural-language proposition extraction and independent model-backed semantic verification.
 - Full author-style parsing, including reliable Russian morphology and clause structure.
 - Production API integration and end-to-end provider verification.
-- DNS resolution pinning, redirect-safe egress and bounded streaming response handling for remote HTTP calls.
-- Integration of the remote endpoint allowlist into the existing production route (the current production server is intentionally untouched).
+- Integration of the new safe remote transport into the existing production route (the current production server is intentionally untouched).
 - Full automated test suite and build configuration.
 
 ## Important design boundaries
