@@ -9,6 +9,7 @@ export interface IndependentSemanticVerifier {
     sourceText: string;
     candidateText: string;
     propositions: readonly Proposition[];
+    signal?: AbortSignal;
   }): Promise<PropositionAssessment[]>;
 }
 export interface IndependentStyleProfiler {
@@ -25,6 +26,7 @@ export interface CriticRepairPipelineInput {
   semanticVerifier: IndependentSemanticVerifier;
   styleProfiler: IndependentStyleProfiler;
   semanticPolicy?: SemanticPolicy;
+  signal?: AbortSignal;
 }
 export interface CriticRepairPipelineOptions {
   critic?: Partial<StyleCriticOptions>;
@@ -57,11 +59,13 @@ export async function runCriticRepairPipeline(
       donorBaseline: input.donorBaseline,
       adapter: input.criticAdapter,
       options: options.critic,
+      signal: input.signal,
     }),
     input.semanticVerifier.assess({
       sourceText: input.sourceText,
       candidateText: input.candidateText,
       propositions: input.inventory.propositions,
+      signal: input.signal,
     }),
     input.styleProfiler.analyze(input.candidateText),
   ]);
@@ -74,6 +78,7 @@ export async function runCriticRepairPipeline(
     donorBaseline: input.donorBaseline,
     adapter: input.repairAdapter,
     options: options.repair,
+    signal: input.signal,
   });
 
   const finalText = repairResult.repairedText;
@@ -82,6 +87,7 @@ export async function runCriticRepairPipeline(
       sourceText: input.sourceText,
       candidateText: finalText,
       propositions: input.inventory.propositions,
+      signal: input.signal,
     }),
     input.styleProfiler.analyze(finalText),
   ]);
