@@ -1,4 +1,4 @@
-import express, { type Request, type Response, type NextFunction, type RequestHandler, type Router } from "express";
+import express, { type ErrorRequestHandler, type Request, type Response, type RequestHandler, type Router } from "express";
 import type { StyleTransferService } from "../application/styleTransferService";
 import type { StyleTransferRequest } from "../application/applicationTypes";
 
@@ -83,7 +83,7 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
     "/",
     options.authenticate,
     express.json({ limit: "768kb", strict: true, type: "application/json" }),
-    async (req: Request, res: Response, _next: NextFunction) => {
+    async (req: Request, res: Response) => {
       const parsed = readBody(req.body, { maxSourceCharacters, maxDonorCharacters });
       if (!parsed.ok) return res.status(400).json({ error: { code: "INVALID_REQUEST", message: parsed.message } });
 
@@ -125,6 +125,19 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
       }
     },
   );
+
+  const parserErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+    const status = typeof error?.status === "number" ? error.status : 500;
+    if (status === 413) {
+      return res.status(413).json({ error: { code: "PAYLOAD_TOO_LARGE", message: "Размер JSON-запроса превышает допустимый лимит." } });
+    }
+    if (status === 400 || error?.type === "entity.parse.failed") {
+      return res.status(400).json({ error: { code: "INVALID_JSON", message: "Тело запроса должно содержать корректный JSON." } });
+    }
+    options.onError?.(error);
+    return res.status(500).json({ error: { code: "STYLE_TRANSFER_API_ERROR", message: "Не удалось обработать запрос." } });
+  };
+  router.use(parserErrorHandler);
 
   return router;
 }
