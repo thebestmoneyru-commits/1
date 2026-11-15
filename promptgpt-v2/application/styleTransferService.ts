@@ -119,6 +119,7 @@ export class StyleTransferService {
                 this.deps.semanticVerifier.assess({ sourceText, candidateText, propositions, signal: request.signal }),
             },
             styleProfiler: this.deps.styleProfiler,
+            semanticPolicy: request.semanticPolicy,
           }, {
             critic: request.critic,
             repair: request.repair,
