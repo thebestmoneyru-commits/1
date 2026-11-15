@@ -36,10 +36,12 @@ function validateProfile(profile: StyleDNAProfile): string[] {
   const errors: string[] = [];
   if (!profile || typeof profile !== "object") return ["Профиль донора отсутствует."];
   if (!profile.profileVersion || !profile.sourceFingerprint) errors.push("Не указана версия профиля или fingerprint исходного корпуса.");
+  if (profile.status !== "sufficient" && profile.status !== "limited") errors.push("Некорректный статус надёжности донорского профиля.");
+  if (!Number.isFinite(profile.confidence) || profile.confidence < 0 || profile.confidence > 1) errors.push("Некорректная уверенность донорского профиля.");
   if (!profile.corpus || !Array.isArray(profile.features)) errors.push("Структура профиля донора неполная.");
   if (profile.status === "insufficient") errors.push("Недостаточный корпус нельзя закрепить как стилевой эталон.");
   const ids = new Set<string>();
-  for (const feature of profile.features ?? []) {
+  for (const feature of Array.isArray(profile.features) ? profile.features : []) {
     if (!feature.id || ids.has(feature.id)) errors.push("Профиль содержит пустые или повторяющиеся идентификаторы признаков.");
     ids.add(feature.id);
     if (!Number.isFinite(feature.rate) || !Number.isFinite(feature.confidence)) {
@@ -73,7 +75,7 @@ export function createDonorStyleBaseline(profile: StyleDNAProfile): DonorBaselin
     ok: true,
     baseline: deepFreeze({
       baselineVersion: DONOR_BASELINE_VERSION,
-      baselineId: `donor-${baselineFingerprint.slice(16, 24)}`,
+      baselineId: `donor-${baselineFingerprint.split(":")[1]?.slice(0, 8)}`,
       baselineFingerprint,
       profile: snapshot,
       warnings,
@@ -96,7 +98,7 @@ export function verifyDonorStyleBaseline(baseline: DonorStyleBaseline): DonorBas
   if (actual !== baseline.baselineFingerprint) {
     return { valid: false, reason: "Профиль донора изменился после закрепления baseline." };
   }
-  const expectedId = `donor-${actual.slice(16, 24)}`;
+  const expectedId = `donor-${actual.split(":")[1]?.slice(0, 8)}`;
   if (baseline.baselineId !== expectedId) {
     return { valid: false, reason: "Идентификатор baseline не соответствует его содержимому." };
   }
