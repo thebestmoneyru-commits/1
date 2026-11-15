@@ -39,6 +39,66 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(result.donorBaseline.profile.status === "sufficient", "sufficient donor sample must produce a frozen baseline");
   names.push("build source-bound inventory and donor baseline");
 
+  const sharedPredicateSource = "Общая причина влечет за собой упразднение моральной ответственности и превращение исторического процесса в механическую последовательность фактов.";
+  const firstObject = "упразднение моральной ответственности";
+  const secondObject = "превращение исторического процесса в механическую последовательность фактов";
+  const sharedPredicateStart = sharedPredicateSource.indexOf("влечет за собой");
+  const firstObjectStart = sharedPredicateSource.indexOf(firstObject);
+  const secondObjectStart = sharedPredicateSource.indexOf(secondObject);
+  const sharedPredicateExtraction = [
+    {
+      id: "p1", summary: "Причина влечет за собой упразднение ответственности",
+      sourceSpan: { start: sharedPredicateStart, end: firstObjectStart + firstObject.length, text: sharedPredicateSource.slice(sharedPredicateStart, firstObjectStart + firstObject.length) },
+      subject: "Общая причина", predicate: "влечет за собой", object: firstObject,
+      polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Причина влечет за собой превращение исторического процесса",
+      sourceSpan: { start: secondObjectStart, end: secondObjectStart + secondObject.length, text: secondObject },
+      subject: "Общая причина", predicate: "влечет за собой", object: secondObject,
+      polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const sharedPredicateIssue = {
+    propositionId: "p2", field: "predicate",
+    evidenceSpan: { start: secondObjectStart, end: secondObjectStart + secondObject.length, text: secondObject },
+    explanation: "Сказуемое отсутствует в узком sourceSpan второй однородной пропозиции.",
+  };
+  const sharedPredicatePrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      sharedPredicateExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"], [sharedPredicateIssue]),
+      { decisions: [{ issueIndex: 0, classification: "already-grounded-in-sentence", explanation: "Общее сказуемое синтаксически относится к обоим однородным дополнениям." }] },
+      structureAudit(["p1", "p2"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "shared-predicate-grounded", sourceText: sharedPredicateSource, donorText: donor });
+  assert(
+    sharedPredicatePrepared.inventory.propositions.find((item) => item.id === "p2")?.sourceSpan.text === secondObject,
+    "shared predicate adjudication must preserve the narrow verbatim sourceSpan",
+  );
+  names.push("accept a shared predicate grounded in the containing sentence without widening sourceSpan");
+
+  let sharedPredicateMismatchRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        sharedPredicateExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1", "p2"], [sharedPredicateIssue]),
+        { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "The predicate is not syntactically licensed for this proposition." }] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "shared-predicate-genuine-mismatch", sourceText: sharedPredicateSource, donorText: donor });
+  } catch (error) {
+    sharedPredicateMismatchRejected = String(error).includes("Semantic interpretation audit found");
+  }
+  assert(sharedPredicateMismatchRejected, "a genuine shared-predicate mismatch must remain blocking");
+  names.push("retain fail-closed behavior for genuine shared-predicate mismatches");
+
   const selfRelationSource = "Дождь пошёл, поэтому путники укрылись.";
   const selfRelationExtraction = [
     { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" }, subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p1", expression: "поэтому" }], mandatory: true },
