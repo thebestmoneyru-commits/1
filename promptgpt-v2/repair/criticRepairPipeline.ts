@@ -1,4 +1,4 @@
-import type { FactInventory, PropositionAssessment, Proposition } from "../types";
+import type { FactInventory, PropositionAssessment, Proposition, SemanticPolicy } from "../types";
 import { runStyleCritic, type StyleCriticAdapter, type StyleCriticReport, type StyleCriticOptions } from "../critic/styleCritic";
 import { repairCandidateSurgically, type SurgicalRepairAdapter, type SurgicalRepairOptions, type SurgicalRepairResult } from "./surgicalRepair";
 import { verifyRepairedCandidate, type RepairVerificationOptions, type RepairVerificationReport } from "./repairVerification";
@@ -24,6 +24,7 @@ export interface CriticRepairPipelineInput {
   repairAdapter: SurgicalRepairAdapter;
   semanticVerifier: IndependentSemanticVerifier;
   styleProfiler: IndependentStyleProfiler;
+  semanticPolicy?: SemanticPolicy;
 }
 export interface CriticRepairPipelineOptions {
   critic?: Partial<StyleCriticOptions>;
@@ -96,6 +97,7 @@ export async function runCriticRepairPipeline(
     donorBaseline: input.donorBaseline,
     beforeProfile,
     repairedProfile,
+    semanticPolicy: input.semanticPolicy,
   }, options.verification);
 
   const warnings = [
