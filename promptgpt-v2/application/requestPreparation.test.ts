@@ -869,5 +869,81 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(missingMarkerRejected, "recovered relations must include exact textual evidence");
   names.push("require verbatim evidence for every recovered relation");
 
+
+  const concurrentSource = "Возможно, учитель объяснил правило и привёл пример.";
+  const firstSpanEnd = concurrentSource.indexOf(" и привёл");
+  const secondSpanStart = concurrentSource.indexOf("привёл");
+  const concurrentExtraction = [
+    {
+      id: "p1", summary: "Учитель объяснил правило",
+      sourceSpan: { start: 0, end: firstSpanEnd, text: concurrentSource.slice(0, firstSpanEnd) },
+      subject: "учитель", predicate: "объяснил", object: "правило",
+      polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Учитель привёл пример",
+      sourceSpan: { start: secondSpanStart, end: concurrentSource.length, text: concurrentSource.slice(secondSpanStart) },
+      subject: "учитель", predicate: "привёл", object: "пример",
+      polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const modalityIssue = {
+    propositionId: "p1", field: "modality",
+    evidenceSpan: { start: concurrentSource.indexOf("Возможно"), end: concurrentSource.indexOf("Возможно") + "Возможно".length, text: "Возможно" },
+    explanation: "Проверить сохранение значения возможности.",
+  };
+  const sharedSubjectIssue = {
+    propositionId: "p2", field: "subject",
+    evidenceSpan: { start: concurrentSource.indexOf("учитель"), end: concurrentSource.indexOf("учитель") + "учитель".length, text: "учитель" },
+    explanation: "Общее подлежащее находится за пределами узкого sourceSpan второй пропозиции.",
+  };
+  const concurrentOutputs = [
+    concurrentExtraction,
+    { missingPropositions: [], missingRelations: [] },
+    interpretationAudit(["p1", "p2"], [modalityIssue, sharedSubjectIssue]),
+    { decisions: [{ issueIndex: 0, classification: "already-preserved", explanation: "Модальность сохранена в смысловом представлении." }] },
+    { decisions: [{ issueIndex: 1, classification: "already-grounded-in-sentence", explanation: "Подлежащее синтаксически относится к обоим однородным сказуемым." }] },
+    structureAudit(["p1", "p2"]),
+  ];
+  let concurrentCall = 0;
+  let activeAdjudications = 0;
+  let maximumConcurrentAdjudications = 0;
+  let releaseModality: (() => void) | undefined;
+  const sharedStarted = new Promise<void>((resolve) => { releaseModality = resolve; });
+  const concurrentRouter = {
+    async generate() {
+      const index = concurrentCall++;
+      const output = concurrentOutputs[Math.min(index, concurrentOutputs.length - 1)];
+      if (index !== 3 && index !== 4) {
+        return { text: JSON.stringify(output), requestedModel: "test", usedModel: "test", fallbackOccurred: false, attempts: [], warnings: [] };
+      }
+      activeAdjudications += 1;
+      maximumConcurrentAdjudications = Math.max(maximumConcurrentAdjudications, activeAdjudications);
+      try {
+        if (index === 3) {
+          await Promise.race([sharedStarted, new Promise<void>((resolve) => setTimeout(resolve, 40))]);
+        } else {
+          releaseModality?.();
+        }
+        return { text: JSON.stringify(output), requestedModel: "test", usedModel: "test", fallbackOccurred: false, attempts: [], warnings: [] };
+      } finally {
+        activeAdjudications -= 1;
+      }
+    },
+  } as unknown as ModelRouter;
+  const concurrentPrepared = await createStyleTransferRequestPreparer(
+    concurrentRouter, routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "parallel-interpretation-adjudication", sourceText: concurrentSource, donorText: donor });
+  assert(
+    maximumConcurrentAdjudications === 2,
+    "modality and shared-constituent adjudications must overlap instead of waiting for one another",
+  );
+  assert(
+    concurrentPrepared.inventory.propositions.length === 2,
+    "parallel adjudication must preserve the validated proposition inventory",
+  );
+  names.push("run independent modality and shared-constituent adjudications concurrently");
+
   return { passed: names.length, names };
 }
