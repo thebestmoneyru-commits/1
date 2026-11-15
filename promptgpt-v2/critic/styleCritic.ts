@@ -1,4 +1,5 @@
 import type { FactInventory, TextSpan } from "../types";
+import { fingerprintSource } from "../semantic/factInventory";
 import { verifyDonorStyleBaseline } from "../style/donorBaseline";
 import type { DonorStyleBaseline, StyleEvidence } from "../style/styleTypes";
 
@@ -158,8 +159,9 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
   const options = normalizeOptions(input.options ?? {});
   const integrity = verifyDonorStyleBaseline(input.donorBaseline);
   if (!integrity.valid) throw new Error(integrity.reason ?? "Donor baseline integrity check failed.");
-  if (input.inventory.sourceLength !== input.sourceText.length) {
-    throw new Error("Fact inventory does not belong to the supplied source text.");
+  if (input.inventory.sourceLength !== input.sourceText.length ||
+      input.inventory.sourceFingerprint !== fingerprintSource(input.sourceText)) {
+    throw new Error("Fact inventory does not belong to the exact supplied source text.");
   }
 
   const raw = await input.adapter.review(buildStyleCriticPrompt(input));
@@ -236,7 +238,7 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
 
   return {
     criticVersion: "1.0.0",
-    candidateFingerprint: input.candidateText.length.toString(36) + ":" + input.candidateText.slice(0, 32),
+    candidateFingerprint: fingerprintSource(input.candidateText),
     donorBaselineId: input.donorBaseline.baselineId,
     styleFidelityScore: styleScore as number,
     naturalnessScore: naturalness as number,
