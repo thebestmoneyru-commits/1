@@ -9,6 +9,7 @@ Foundation phase: shared contracts and the first deterministic semantic-preserva
 Implemented:
 - shared TypeScript contracts in `types.ts`;
 - literal anchor inventory in `semantic/factInventory.ts`;
+- source-span validation for extracted propositions in `semantic/propositionSchema.ts`;
 - structured proposition assessment validation in `semantic/propositionIntegrity.ts`;
 - combined semantic gate in `semantic/semanticPreservation.ts`.
 
