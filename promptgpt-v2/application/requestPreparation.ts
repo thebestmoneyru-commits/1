@@ -831,7 +831,10 @@ export function createStyleTransferRequestPreparer(
         maxAttemptsPerModel: 3,
         signal,
       };
-      let sharedConstituentResponsePromise: ReturnType<typeof router.generate> | undefined;
+      type SharedConstituentResponseSettlement =
+        | { ok: true; value: Awaited<ReturnType<typeof router.generate>> }
+        | { ok: false; error: unknown };
+      let sharedConstituentResponsePromise: Promise<SharedConstituentResponseSettlement> | undefined;
       if (modalityCandidates.length) {
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
         const modalityAdjudicationPrompt = [
@@ -864,7 +867,10 @@ export function createStyleTransferRequestPreparer(
           signal,
         });
         if (sharedConstituentCandidates.length) {
-          sharedConstituentResponsePromise = router.generate(sharedConstituentRequest);
+          sharedConstituentResponsePromise = router.generate(sharedConstituentRequest).then(
+            (value) => ({ ok: true as const, value }),
+            (error: unknown) => ({ ok: false as const, error }),
+          );
         }
         const modalityResponse = await modalityResponsePromise;
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
@@ -906,9 +912,14 @@ export function createStyleTransferRequestPreparer(
       if (sharedConstituentCandidates.length) {
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
 
-        const sharedConstituentResponse = sharedConstituentResponsePromise
-          ? await sharedConstituentResponsePromise
-          : await router.generate(sharedConstituentRequest);
+        let sharedConstituentResponse: Awaited<ReturnType<typeof router.generate>>;
+        if (sharedConstituentResponsePromise) {
+          const settlement = await sharedConstituentResponsePromise;
+          if (!settlement.ok) throw settlement.error;
+          sharedConstituentResponse = settlement.value;
+        } else {
+          sharedConstituentResponse = await router.generate(sharedConstituentRequest);
+        }
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
         let sharedConstituentParsed: unknown;
         try {
