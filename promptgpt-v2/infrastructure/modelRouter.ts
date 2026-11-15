@@ -29,7 +29,6 @@ export interface ModelDefinition {
   supportsJsonSchema: boolean;
   supportsThinking: boolean;
   supportsSampling: boolean;
-  priority: number;
 }
 
 export interface ModelInvocation {
