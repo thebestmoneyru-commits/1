@@ -50,6 +50,22 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
     "rate-limited model enters cooldown");
   names.push("fallback and cooldown");
 
+  let transientCalls = 0;
+  const retryRouter = new ModelRouter({
+    models, maxAttemptsPerModel: 2,
+    adapter: { async invoke() {
+      transientCalls++;
+      if (transientCalls === 1) throw { status: 503, message: "service unavailable" };
+      return "recovered";
+    } },
+  });
+  const recovered = await retryRouter.generate({
+    task: "candidate-generation", preferredModel: "primary", prompt: "retry",
+  });
+  assert(recovered.text === "recovered" && transientCalls === 2 && recovered.attempts.length === 2,
+    "transient service failure is retried with bounded attempts");
+  names.push("bounded transient retry");
+
   let fallbackInvoked = false;
   const authRouter = new ModelRouter({
     models, maxAttemptsPerModel: 1,
