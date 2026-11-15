@@ -86,15 +86,40 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(invalidSelfRelationRepairRejected, "an invalid relation repair must still fail strict validation");
   names.push("reject a self-referential relation that survives the bounded repair pass");
 
+  const omissionSource = "Святитель пришёл в город. Он помог людям. Он основал обитель.";
+  const omissionFirstEnd = omissionSource.indexOf(".") + 1;
+  const omissionSecondStart = omissionSource.indexOf("Он помог");
+  const omissionSecondEnd = omissionSource.indexOf(". ", omissionSecondStart) + 1;
+  const omissionThirdStart = omissionSource.indexOf("Он основал");
+  const omissionExtraction = [
+    {
+      id: "p1", summary: "Святитель пришёл в город",
+      sourceSpan: { start: 0, end: omissionFirstEnd, text: omissionSource.slice(0, omissionFirstEnd) },
+      subject: "Святитель", predicate: "пришёл", object: "в город", polarity: "positive",
+      qualifications: [], relations: [], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Он помог людям",
+      sourceSpan: { start: omissionSecondStart, end: omissionSecondEnd, text: omissionSource.slice(omissionSecondStart, omissionSecondEnd) },
+      subject: "Он", predicate: "помог", object: "людям", polarity: "positive",
+      qualifications: [], relations: [], mandatory: true,
+    },
+  ];
   const omitted = {
-    id: "p3", summary: "Он основал обитель", sourceSpan: { start: 0, end: 25, text: source.slice(0, 25) },
+    id: "p3", summary: "Он основал обитель",
+    sourceSpan: { start: omissionThirdStart, end: omissionSource.length, text: omissionSource.slice(omissionThirdStart) },
     subject: "Он", predicate: "основал", object: "обитель", polarity: "positive",
     qualifications: [], relations: [], mandatory: true,
   };
   const audited = await createStyleTransferRequestPreparer(
-    fakeRouter(validExtraction, { missingPropositions: [omitted], missingRelations: [] }, interpretationAudit(["p1", "p2", "p3"]), structureAudit(["p1", "p2", "p3"])), routes,
+    fakeRouter(
+      omissionExtraction,
+      { missingPropositions: [omitted], missingRelations: [] },
+      interpretationAudit(["p1", "p2", "p3"]),
+      structureAudit(["p1", "p2", "p3"]),
+    ), routes,
     { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
-  )({ requestId: "audit", sourceText: source, donorText: donor });
+  )({ requestId: "audit", sourceText: omissionSource, donorText: donor });
   assert(audited.inventory.propositions.length === 3, "omission audit must add validated missing propositions");
   assert(audited.inventory.propositions.some((item) => item.id === "p3"), "audited omission must be retained");
   names.push("recover source-grounded omissions found by independent audit");
@@ -481,8 +506,12 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   )({ requestId: "relation-inversion-reverse", sourceText: inversionSource, donorText: donor });
   assert(
     correctedDirection.inventory.propositions[0].relations.some((relation) =>
-      relation.kind === "cause" && relation.from === "p1" && relation.to === "p2" && relation.expression === "поэтому"),
-    "a confirmed relation inversion must reverse only the identified relation endpoints",
+      relation.kind === "cause" && relation.from === "p1" && relation.to === "p2" && relation.expression === "поэтому") &&
+    correctedDirection.inventory.propositions[0].summary === inversionExtraction[0].summary &&
+    correctedDirection.inventory.propositions[0].subject === inversionExtraction[0].subject &&
+    correctedDirection.inventory.propositions[0].predicate === inversionExtraction[0].predicate &&
+    correctedDirection.inventory.propositions[1].predicate === inversionExtraction[1].predicate,
+    "a confirmed relation inversion must reverse only the identified relation endpoints and preserve proposition content",
   );
   names.push("reverse an independently confirmed relation direction without changing its kind or evidence");
 
@@ -522,6 +551,28 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   }
   assert(genuineInversionRejected, "an unresolved genuine inversion must remain blocking");
   names.push("retain fail-closed behavior for unresolved relation inversions");
+
+  let incompleteInversionAdjudicationRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        inversionExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1", "p2"]),
+        inversionAudit,
+        { decisions: [] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "relation-inversion-incomplete", sourceText: inversionSource, donorText: donor });
+  } catch (error) {
+    incompleteInversionAdjudicationRejected = String(error).includes("did not decide every candidate");
+  }
+  assert(
+    incompleteInversionAdjudicationRejected,
+    "an inversion adjudicator that omits a candidate must not silently dismiss the finding",
+  );
+  names.push("fail closed when relation-inversion adjudication omits a candidate");
 
   const falsePositiveRelation = {
     kind: "relation-omission", propositionIds: ["p1", "p2"],
