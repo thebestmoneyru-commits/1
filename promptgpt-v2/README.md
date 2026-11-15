@@ -38,6 +38,7 @@ This directory is an isolated modernization track. Existing production files are
 - Explicit deployment-supplied model allowlist and task-route validation in `application/modelCatalog.ts`; no default model IDs are assumed.
 - Shared-router adapters for candidate generation, style critique, surgical repair and independent proposition verification in `application/routerAdapters.ts`.
 - End-to-end service orchestration in `application/styleTransferService.ts`: immutable source/baseline binding, bounded candidate generation, semantic-first admission, one critic/repair cycle, and final selection with trace metadata.
+- A Gemini composition root in `application/createGeminiService.ts` constructs one SDK client and one shared router for the lifetime of the service instance; initialize it at server startup, not per request.
 - Application contracts in `application/applicationTypes.ts`. The service receives a prebuilt, source-bound semantic inventory and frozen donor baseline; it does not invent or silently extract either one.
 
 ## Running the v2 regression checks
