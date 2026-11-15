@@ -6,6 +6,7 @@ import { checkPropositionSourceCoverage } from "../semantic/propositionCoverage"
 import { validatePropositionInterpretationAudit } from "../semantic/propositionInterpretationAudit";
 import { getLogicalRelationAuditKey, validateSemanticStructureAudit } from "../semantic/semanticStructureAudit";
 import {
+  resolveVerbatimSpan,
   normalizeModelExtractedPropositions,
   normalizeModelInterpretationAudit,
   normalizeModelStructureAudit,
