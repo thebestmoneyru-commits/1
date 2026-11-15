@@ -50,10 +50,15 @@ export function validateModelCatalog(config: ModelCatalogConfig): ModelCatalogCo
     if (!route.preferredModel?.trim()) {
       throw new Error("Missing preferred model for route semanticAudit.");
     }
-    if (route.preferredModel === config.routes.semanticExtraction.preferredModel) {
-      throw new Error("The semanticAudit preferred model must differ from semanticExtraction for an independent audit.");
+    const extractionRouteIds = new Set([
+      config.routes.semanticExtraction.preferredModel,
+      ...(config.routes.semanticExtraction.fallbackModels ?? []),
+    ]);
+    const auditRouteIds = [route.preferredModel, ...(route.fallbackModels ?? [])];
+    if (auditRouteIds.some((id) => extractionRouteIds.has(id))) {
+      throw new Error("The semanticAudit route must use models distinct from semanticExtraction for an independent audit.");
     }
-    for (const id of [route.preferredModel, ...(route.fallbackModels ?? [])]) {
+    for (const id of auditRouteIds) {
       const model = config.models.find((item) => item.id === id);
       if (!model) throw new Error(`Route semanticAudit references model ${id}, which is not in the allowlist.`);
       if (!model.enabled) throw new Error(`Route semanticAudit references disabled model ${id}.`);
