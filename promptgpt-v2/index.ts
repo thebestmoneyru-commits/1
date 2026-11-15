@@ -9,3 +9,5 @@ export * from "./critic";
 export * from "./repair";
 export * from "./infrastructure";
 export * from "./application";
+
+export * from "./api";
