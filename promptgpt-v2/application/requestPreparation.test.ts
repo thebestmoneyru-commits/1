@@ -39,6 +39,53 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(result.donorBaseline.profile.status === "sufficient", "sufficient donor sample must produce a frozen baseline");
   names.push("build source-bound inventory and donor baseline");
 
+  const selfRelationSource = "Дождь пошёл, поэтому путники укрылись.";
+  const selfRelationExtraction = [
+    { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" }, subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p1", expression: "поэтому" }], mandatory: true },
+    { id: "p2", summary: "Путники укрылись", sourceSpan: { start: selfRelationSource.indexOf("путники"), end: selfRelationSource.length, text: "путники укрылись." }, subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+  ];
+  const repairedRelations = [
+    { id: "p1", relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }] },
+    { id: "p2", relations: [] },
+  ];
+  const selfRelationRepaired = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      selfRelationExtraction,
+      repairedRelations,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      { checkedPropositionIds: ["p1", "p2"], checkedRelationKeys: [JSON.stringify(["cause", "p1", "p2", "поэтому"])], issues: [] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "repair-self-relation", sourceText: selfRelationSource, donorText: donor });
+  assert(
+    selfRelationRepaired.inventory.propositions.find((item) => item.id === "p1")?.relations.some(
+      (relation) => relation.from === "p1" && relation.to === "p2" && relation.expression === "поэтому",
+    ),
+    "a self-referential edge must be repairable without changing proposition content",
+  );
+  names.push("repair isolated self-referential relations while preserving proposition fields");
+
+  let invalidSelfRelationRepairRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        selfRelationExtraction,
+        [
+          { id: "p1", relations: [{ kind: "cause", from: "p1", to: "p1", expression: "поэтому" }] },
+          { id: "p2", relations: [] },
+        ],
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "reject-unfixed-self-relation", sourceText: selfRelationSource, donorText: donor });
+  } catch (error) {
+    invalidSelfRelationRepairRejected = String(error).includes("логическое отношение не может ссылаться на саму себя");
+  }
+  assert(invalidSelfRelationRepairRejected, "an invalid relation repair must still fail strict validation");
+  names.push("reject a self-referential relation that survives the bounded repair pass");
+
   const omitted = {
     id: "p3", summary: "Он основал обитель", sourceSpan: { start: 0, end: 25, text: source.slice(0, 25) },
     subject: "Он", predicate: "основал", object: "обитель", polarity: "positive",
