@@ -924,7 +924,10 @@ export function createStyleTransferRequestPreparer(
           decisionByIndex.set(item.issueIndex as number, item.classification as string);
         }
         if (decisionByIndex.size !== expectedIndexes.size) throw new Error("Relation-omission adjudication did not decide every candidate; preparation stopped safely.");
-        confirmedStructureIssues = confirmedStructureIssues.filter((issue, index) => issue.kind !== "relation-omission" || decisionByIndex.get(index) === "genuine-missing");
+        confirmedStructureIssues = structure.audit.issues.filter((issue, index) =>
+          issue.kind !== "relation-type" &&
+          (issue.kind !== "relation-omission" || decisionByIndex.get(index) === "genuine-missing"),
+        );
       }
       if (confirmedStructureIssues.length) {
         const findings = confirmedStructureIssues.slice(0, 8).map((issue) =>
