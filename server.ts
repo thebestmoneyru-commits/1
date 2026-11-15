@@ -1211,6 +1211,10 @@ ${text2}
         'high',
         { temperature: 0.98, topP: 0.95, frequencyPenalty: 0.25, presencePenalty: 0.15 }
       );
+        systemInstruction,
+        'high',
+        { temperature: 0.98, topP: 0.95, frequencyPenalty: 0.25, presencePenalty: 0.15 }
+      );
 
       bestText = deterministicPolish(
         pass1.text,
