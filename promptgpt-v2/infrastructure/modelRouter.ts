@@ -19,7 +19,8 @@ export type ModelErrorKind =
   | "safety-block"
   | "empty-response"
   | "unknown"
-  | "cancelled";
+  | "cancelled"
+  | "queue-full";
 
 export interface ModelDefinition {
   id: string;
@@ -118,6 +119,7 @@ const DEFAULT_COOLDOWNS: Record<ModelErrorKind, number> = {
   "empty-response": 0,
   unknown: 0,
   cancelled: 0,
+  "queue-full": 0,
 };
 
 function errorText(error: unknown): string {
@@ -209,7 +211,7 @@ export class ModelRouter {
       return () => this.release(model.id);
     }
     if (state.queue.length >= (model.maxQueueLength ?? 20)) {
-      throw new ModelRouterError(`Model ${model.id} queue is full.`, "unavailable", model.id);
+      throw new ModelRouterError(`Model ${model.id} queue is full.`, "queue-full", model.id);
     }
     await new Promise<void>((resolve, reject) => {
       const wake = () => { signal.removeEventListener("abort", abort); resolve(); };
