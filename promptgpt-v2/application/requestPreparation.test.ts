@@ -21,6 +21,7 @@ function fakeRouter(...outputs: unknown[]): ModelRouter {
     },
   } as unknown as ModelRouter;
 }
+const interpretationAudit = (ids: string[], issues: unknown[] = []) => ({ checkedPropositionIds: ids, issues });
 const donor = Array.from({ length: 40 }, (_, i) =>
   `В тот день святой отец пришёл в храм, где собралось множество людей. Он говорил с ними долго и внимательно, наставляя каждого на путь добра.`
 ).join("\n\n");
@@ -28,7 +29,7 @@ const donor = Array.from({ length: 40 }, (_, i) =>
 export async function runRequestPreparationSelfTests(): Promise<{ passed: number; names: string[] }> {
   const names: string[] = [];
   const routes = { semanticExtraction: { preferredModel: "extractor" } };
-  const prepare = createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [] }), routes, {
+  const prepare = createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"])), routes, {
     analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
   });
   const result = await prepare({ requestId: "test", sourceText: source, donorText: donor });
@@ -43,7 +44,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     qualifications: [], relations: [], mandatory: true,
   };
   const audited = await createStyleTransferRequestPreparer(
-    fakeRouter(validExtraction, { missingPropositions: [omitted] }), routes,
+    fakeRouter(validExtraction, { missingPropositions: [omitted] }, interpretationAudit(["p1", "p2", "p3"])), routes,
     { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
   )({ requestId: "audit", sourceText: source, donorText: donor });
   assert(audited.inventory.propositions.length === 3, "omission audit must add validated missing propositions");
@@ -71,6 +72,34 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   } catch (error) { invalidAuditSpanRejected = String(error).includes("Semantic completeness audit failed source-bound validation"); }
   assert(invalidAuditSpanRejected, "audit omissions must be tied to exact source spans");
   names.push("reject audit omissions without exact source evidence");
+
+  let interpretationIssueRejected = false;
+  const attributionIssue = {
+    propositionId: "p2",
+    field: "attribution",
+    evidenceSpan: { start: 26, end: source.length, text: source.slice(26) },
+    explanation: "Не подтверждается, что слова принадлежат автору, а не цитируемому лицу.",
+  };
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"], [attributionIssue])),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "misattribution", sourceText: source, donorText: donor });
+  } catch (error) { interpretationIssueRejected = String(error).includes("potential source-interpretation error"); }
+  assert(interpretationIssueRejected, "an evidence-backed interpretation finding must stop preparation");
+  names.push("stop preparation when independent interpretation audit finds a source mismatch");
+
+  let incompleteInterpretationRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1"])),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "incomplete-interpretation", sourceText: source, donorText: donor });
+  } catch (error) { incompleteInterpretationRejected = String(error).includes("не подтвердил проверку пропозиции p2"); }
+  assert(incompleteInterpretationRejected, "interpretation audit must account for every proposition");
+  names.push("reject interpretation audits that omit proposition IDs");
 
   let uncoveredSourceRejected = false;
   try {
@@ -105,7 +134,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
 
   let donorRejected = false;
   try {
-    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [] }), routes)({
+    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"])), routes)({
       requestId: "short-donor", sourceText: source, donorText: "Короткий образец.",
     });
   } catch (error) { donorRejected = String(error).includes("Donor corpus is insufficient"); }
