@@ -66,6 +66,7 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
         model("repair", ["surgical-repair"]),
         model("semantic", ["semantic-verification"]),
         model("extractor", ["semantic-extraction"]),
+        { ...model("auditor", ["semantic-extraction"]), enabled: false },
       ],
       routes,
     });
