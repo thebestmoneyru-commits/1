@@ -16,10 +16,11 @@ This directory is an isolated modernization track. Existing production files are
 - Style profile contracts in `style/styleTypes.ts`.
 - Russian-aware paragraph and sentence segmentation in `style/tokenizer.ts`.
 - Heuristic corpus analysis in `style/styleDNAAnalyzer.ts`.
-- Confidence-aware Style DNA scoring against a fixed donor baseline in `style/styleDNAScorer.ts`.
+- Confidence-aware Style DNA scoring in `style/styleDNAScorer.ts`.
+- Frozen donor baseline creation and integrity checks in `style/donorBaseline.ts`.
+- Semantic-first candidate admission in `style/candidateEvaluator.ts`.
 - Public exports in `style/index.ts`.
-- Analyzer regression checks in `style/styleDNAAnalyzer.test.ts`.
-- Scorer regression checks in `style/styleDNAScorer.test.ts`.
+- Analyzer, scorer, baseline and candidate-gate regression checks in their corresponding `*.test.ts` files.
 
 ## Style analyzer limitations
 
@@ -27,7 +28,9 @@ The analyzer records measurable signals and source excerpts, but does not claim 
 
 Short samples are explicitly marked limited or insufficient. Their apparent frequent patterns must not be treated as stable authorial traits. The current analyzer is a feature extractor, not a complete author-style fingerprint. The scorer compares measured feature rates and distributions against the donor profile, uses family weights and confidence discounts, and explicitly refuses to score insufficient or version-incompatible profiles. Candidate-only repeated markers are treated as possible overfitting rather than automatic style matches.
 
-The score is a heuristic similarity estimate, not a calibrated probability that a human reader will identify the author. It compares sentence-length buckets, mean and median sentence length, punctuation rates, syntactic and connector rates, repeated openings/closings, lexical repetitions, and paragraph rhythm where the analyzer has enough evidence. Rare markers and lexical repeats have reduced weight. Corpus-wide features with zero observed occurrences remain part of the comparison, so the scorer can detect candidate overuse of traits absent from the donor sample.
+The score is a heuristic similarity estimate, not a calibrated probability that a human reader will identify the author. The original donor profile is deep-cloned and recursively frozen before it becomes a baseline. An integrity checksum detects accidental profile substitution or mutation; it is not a cryptographic signature.
+
+Candidate admission applies the semantic gate first. A style score cannot compensate for missing facts or failed proposition checks. Candidates with inadequate style evidence are marked for review, not silently admitted or assigned a fabricated numeric score. It compares sentence-length buckets, mean and median sentence length, punctuation rates, syntactic and connector rates, repeated openings/closings, lexical repetitions, and paragraph rhythm where the analyzer has enough evidence. Rare markers and lexical repeats have reduced weight. Corpus-wide features with zero observed occurrences remain part of the comparison, so the scorer can detect candidate overuse of traits absent from the donor sample.
 
 The dependency-free regression checks can be invoked from the repository root with a TypeScript runner by importing `runStyleDNAAnalyzerSelfTests` from `promptgpt-v2/style/styleDNAAnalyzer.test.ts` and `runStyleDNAScorerSelfTests` from `promptgpt-v2/style/styleDNAScorer.test.ts`. They have been added but have not yet been executed in this environment.
 
