@@ -16,21 +16,25 @@ This directory is an isolated modernization track. Existing production files are
 - Style profile contracts in `style/styleTypes.ts`.
 - Russian-aware paragraph and sentence segmentation in `style/tokenizer.ts`.
 - Heuristic corpus analysis in `style/styleDNAAnalyzer.ts`.
+- Confidence-aware Style DNA scoring against a fixed donor baseline in `style/styleDNAScorer.ts`.
 - Public exports in `style/index.ts`.
-- Dependency-free regression checks in `style/styleDNAAnalyzer.test.ts`.
+- Analyzer regression checks in `style/styleDNAAnalyzer.test.ts`.
+- Scorer regression checks in `style/styleDNAScorer.test.ts`.
 
 ## Style analyzer limitations
 
 The analyzer records measurable signals and source excerpts, but does not claim full grammatical parsing. Russian participle and gerund detection uses approximate suffix heuristics and can produce false positives or miss forms. Sentence segmentation handles common abbreviations and personal initials, but still needs broader corpus-based testing.
 
-Short samples are explicitly marked limited or insufficient. Their apparent frequent patterns must not be treated as stable authorial traits. The current analyzer is a feature extractor, not yet a complete author-style fingerprint or a similarity score.
+Short samples are explicitly marked limited or insufficient. Their apparent frequent patterns must not be treated as stable authorial traits. The current analyzer is a feature extractor, not a complete author-style fingerprint. The scorer compares measured feature rates and distributions against the donor profile, uses family weights and confidence discounts, and explicitly refuses to score insufficient or version-incompatible profiles. Candidate-only repeated markers are treated as possible overfitting rather than automatic style matches.
 
-The regression checks can be invoked from the repository root with a TypeScript runner by importing `runStyleDNAAnalyzerSelfTests` from `promptgpt-v2/style/styleDNAAnalyzer.test.ts`. They have been added but have not yet been executed in this environment.
+The score is a heuristic similarity estimate, not a calibrated probability that a human reader will identify the author. Rare markers and lexical repeats have reduced weight. Corpus-wide features with zero observed occurrences remain part of the comparison, so the scorer can detect candidate overuse of traits absent from the donor sample.
+
+The dependency-free regression checks can be invoked from the repository root with a TypeScript runner by importing `runStyleDNAAnalyzerSelfTests` from `promptgpt-v2/style/styleDNAAnalyzer.test.ts` and `runStyleDNAScorerSelfTests` from `promptgpt-v2/style/styleDNAScorer.test.ts`. They have been added but have not yet been executed in this environment.
 
 ## Not yet implemented
 
 - Natural-language proposition extraction and independent model-backed semantic verification.
-- Weighted style scoring against an immutable donor baseline.
+- Full author-style parsing, including reliable Russian morphology and clause structure.
 - Candidate generation, critic, repair and repair verification.
 - Hardened model routing and API integration.
 - Full automated test suite and build configuration.
