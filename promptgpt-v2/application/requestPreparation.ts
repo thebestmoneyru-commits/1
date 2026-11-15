@@ -877,8 +877,11 @@ export function createStyleTransferRequestPreparer(
       if (!structure.valid || !structure.audit) {
         throw new Error(`Semantic structure audit failed validation: ${structure.errors.join(" ")}`);
       }
-      let confirmedStructureIssues = structure.audit.issues;
-      const relationTypeCandidates = structure.audit.issues.map((issue, index) => ({ issue, index }))
+      // Keep the validated audit in a stable local reference so TypeScript can
+      // preserve the non-undefined narrowing inside callbacks.
+      const structureAudit = structure.audit;
+      let confirmedStructureIssues = structureAudit.issues;
+      const relationTypeCandidates = structureAudit.issues.map((issue, index) => ({ issue, index }))
         .filter(({ issue }) => issue.kind === "relation-type");
       if (relationTypeCandidates.length) {
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
@@ -989,7 +992,7 @@ export function createStyleTransferRequestPreparer(
         confirmedStructureIssues = confirmedStructureIssues.filter((issue) => issue.kind !== "relation-type");
       }
 
-      const inversionCandidates = structure.audit.issues.map((issue, index) => ({ issue, index }))
+      const inversionCandidates = structureAudit.issues.map((issue, index) => ({ issue, index }))
         .filter(({ issue }) => issue.kind === "relation-inversion");
       if (inversionCandidates.length) {
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
@@ -1086,11 +1089,11 @@ export function createStyleTransferRequestPreparer(
         completePropositions = repairedStructure.propositions;
         confirmedStructureIssues = confirmedStructureIssues.filter((issue) =>
           issue.kind !== "relation-inversion" ||
-          decisionByIndex.get(structure.audit.issues.indexOf(issue)) === "genuine-mismatch",
+          decisionByIndex.get(structureAudit.issues.indexOf(issue)) === "genuine-mismatch",
         );
       }
 
-      const omissionCandidates = structure.audit.issues.map((issue, index) => ({ issue, index }))
+      const omissionCandidates = structureAudit.issues.map((issue, index) => ({ issue, index }))
         .filter(({ issue }) => issue.kind === "relation-omission");
       if (omissionCandidates.length) {
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
@@ -1136,7 +1139,7 @@ export function createStyleTransferRequestPreparer(
         if (decisionByIndex.size !== expectedIndexes.size) throw new Error("Relation-omission adjudication did not decide every candidate; preparation stopped safely.");
         confirmedStructureIssues = confirmedStructureIssues.filter((issue) =>
           issue.kind !== "relation-omission" ||
-          decisionByIndex.get(structure.audit.issues.indexOf(issue)) === "genuine-missing",
+          decisionByIndex.get(structureAudit.issues.indexOf(issue)) === "genuine-missing",
         );
       }
       if (confirmedStructureIssues.length) {
