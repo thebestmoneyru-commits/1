@@ -67,3 +67,12 @@ export interface StyleAnalyzerOptions {
   /** Caller-supplied phrases that should be tracked as stylistic markers. */
   trackedPhrases?: readonly string[];
 }
+
+/** A frozen snapshot of the original donor profile; candidates must never replace it. */
+export interface DonorStyleBaseline {
+  baselineVersion: string;
+  baselineId: string;
+  baselineFingerprint: string;
+  profile: StyleDNAProfile;
+  warnings: string[];
+}
