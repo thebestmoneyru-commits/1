@@ -4,16 +4,24 @@ on:
   push:
     paths:
       - "promptgpt-v2/**"
+      - "server.ts"
+      - "src/**"
+      - ".env.example"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
+      - "vite.config.ts"
       - ".github/workflows/promptgpt-v2.yml"
   pull_request:
     paths:
       - "promptgpt-v2/**"
+      - "server.ts"
+      - "src/**"
+      - ".env.example"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
+      - "vite.config.ts"
       - ".github/workflows/promptgpt-v2.yml"
 
 jobs:
@@ -33,3 +41,7 @@ jobs:
         run: npx tsc --noEmit --project promptgpt-v2/tsconfig.json
       - name: Run offline PROMPTGPT v2 regression suite
         run: npx tsx promptgpt-v2/runSelfTests.cli.ts
+      - name: Build the integrated application
+        run: npx vite build
+      - name: Type-check integrated server and frontend sources
+        run: npx tsc --noEmit

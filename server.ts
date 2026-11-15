@@ -97,6 +97,11 @@ import {
   acceptCandidateWithDetectors,
   type DetectorFeedbackReport,
 } from './server/detectorFeedback.ts';
+import {
+  analyzeStyleDNA,
+  createGeminiStyleTransferService,
+  createPreparedStyleTransferApiRouter,
+} from './promptgpt-v2/index.ts';
 
 dotenv.config();
 
@@ -144,6 +149,120 @@ const ai = new GoogleGenAI({
     },
   },
 });
+
+/* ------------------------------------------------------------------ */
+/* PROMPTGPT V2 — ISOLATED PRODUCTION API                             */
+/* ------------------------------------------------------------------ */
+
+// V2 is opt-in and isolated from the legacy endpoints. Configure a long,
+// random PROMPTGPT_V2_ACCESS_KEY in the server environment before enabling it.
+const V2_MODEL_ID = process.env.PROMPTGPT_V2_MODEL?.trim() || 'gemini-3.1-flash-lite';
+const V2_MODEL_TASKS = [
+  'candidate-generation',
+  'style-critique',
+  'surgical-repair',
+  'semantic-verification',
+  'semantic-extraction',
+] as const;
+
+const v2AccessKey = process.env.PROMPTGPT_V2_ACCESS_KEY?.trim() || '';
+const v2RateLimitWindows = new Map<string, { startedAt: number; count: number }>();
+
+const authenticateV2: express.RequestHandler = (req, res, next) => {
+  if (!v2AccessKey) {
+    return res.status(503).json({
+      error: { code: 'V2_NOT_CONFIGURED', message: 'Для PROMPTGPT v2 не задан PROMPTGPT_V2_ACCESS_KEY.' },
+    });
+  }
+
+  const supplied = req.get('x-promptgpt-v2-key') || '';
+  const expectedBytes = Buffer.from(v2AccessKey);
+  const suppliedBytes = Buffer.from(supplied);
+  if (
+    suppliedBytes.length !== expectedBytes.length ||
+    !crypto.timingSafeEqual(suppliedBytes, expectedBytes)
+  ) {
+    return res.status(401).json({
+      error: { code: 'UNAUTHORIZED', message: 'Неверный ключ доступа к PROMPTGPT v2.' },
+    });
+  }
+  return next();
+};
+
+// Bounded per-process limiter for this single-server deployment.
+// Use a shared store if the application is later scaled to multiple instances.
+const rateLimitV2: express.RequestHandler = (req, res, next) => {
+  const now = Date.now();
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const windowMs = 15 * 60 * 1000;
+  const limit = 8;
+  let entry = v2RateLimitWindows.get(key);
+
+  if (!entry || now - entry.startedAt >= windowMs) {
+    entry = { startedAt: now, count: 0 };
+    v2RateLimitWindows.set(key, entry);
+  }
+  if (entry.count >= limit) {
+    return res.status(429).json({
+      error: { code: 'RATE_LIMITED', message: 'Лимит PROMPTGPT v2: не более 8 запусков за 15 минут с одного адреса.' },
+    });
+  }
+  entry.count += 1;
+
+  if (v2RateLimitWindows.size > 5000) {
+    for (const [ip, value] of v2RateLimitWindows) {
+      if (now - value.startedAt >= windowMs) v2RateLimitWindows.delete(ip);
+    }
+  }
+  return next();
+};
+
+const v2Catalog = {
+  models: [{
+    id: V2_MODEL_ID,
+    tasks: V2_MODEL_TASKS,
+    enabled: true,
+    maxConcurrency: 2,
+    maxQueueLength: 8,
+    supportsJsonSchema: true,
+    supportsThinking: true,
+    supportsSampling: true,
+  }],
+  routes: {
+    candidateGeneration: { preferredModel: V2_MODEL_ID },
+    styleCritique: { preferredModel: V2_MODEL_ID },
+    surgicalRepair: { preferredModel: V2_MODEL_ID },
+    semanticVerification: { preferredModel: V2_MODEL_ID },
+    semanticExtraction: { preferredModel: V2_MODEL_ID },
+  },
+};
+
+if (process.env.GEMINI_API_KEY?.trim()) {
+  const v2Runtime = createGeminiStyleTransferService({
+    apiKey: process.env.GEMINI_API_KEY.trim(),
+    catalog: v2Catalog,
+    styleProfiler: { analyze: (text) => analyzeStyleDNA(text) },
+    router: { defaultTimeoutMs: 60_000, maxAttemptsPerModel: 2 },
+  });
+
+  app.use('/api/v2/style-transfer', createPreparedStyleTransferApiRouter({
+    service: v2Runtime.service,
+    modelRouter: v2Runtime.router,
+    routes: v2Catalog.routes,
+    authenticate: authenticateV2,
+    rateLimit: rateLimitV2,
+    maxSourceCharacters: 30_000,
+    maxDonorCharacters: 100_000,
+    preparation: { requireSufficientDonor: true },
+    onError: (error) => console.error('[PROMPTGPT v2 API]', error),
+  }));
+} else {
+  app.use('/api/v2/style-transfer', (_req, res) => {
+    res.status(503).json({
+      error: { code: 'GEMINI_NOT_CONFIGURED', message: 'Для PROMPTGPT v2 не задан GEMINI_API_KEY.' },
+    });
+  });
+}
 
 /* ------------------------------------------------------------------ */
 /* HELPERS                                                            */
