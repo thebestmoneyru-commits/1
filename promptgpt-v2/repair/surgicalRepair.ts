@@ -133,16 +133,27 @@ export async function repairCandidateSurgically(input: {
     };
   }
 
+  if (!Array.isArray(input.criticReport.issues)) {
+    throw new Error("Critic report issues must be an array.");
+  }
   const actionable = input.criticReport.issues.filter((issue) =>
     issue.severity !== "info" || options.allowInfoIssues
   ).slice(0, options.maxPatches);
+  const seenIssueIds = new Set<string>();
   for (const issue of actionable) {
     const feature = input.donorBaseline.profile.features.find((item) => item.id === issue.donorFeatureId);
     const evidenceIsGrounded = !!feature && typeof issue.donorEvidenceExcerpt === "string" &&
+      issue.donorEvidenceExcerpt.trim().length > 0 &&
       feature.evidence.some((item) => item.excerpt.includes(issue.donorEvidenceExcerpt.trim()));
-    if (!issue.id || !evidenceIsGrounded || !issue.rationale.trim() || !issue.suggestedChange.trim()) {
-      throw new Error(`Critic issue ${issue.id || "(без ID)"} lacks verifiable donor evidence or repair guidance.`);
+    if (typeof issue.id !== "string" || !issue.id.trim() || seenIssueIds.has(issue.id) ||
+        !spanIsExact(issue.outputSpan, input.candidateText) ||
+        (issue.severity !== "blocking" && issue.severity !== "warning" && issue.severity !== "info") ||
+        !evidenceIsGrounded ||
+        typeof issue.rationale !== "string" || !issue.rationale.trim() ||
+        typeof issue.suggestedChange !== "string" || !issue.suggestedChange.trim()) {
+      throw new Error(`Critic issue ${issue.id || "(без ID)"} is malformed, stale or lacks verifiable donor evidence.`);
     }
+    seenIssueIds.add(issue.id);
   }
   if (!actionable.length) {
     return {
