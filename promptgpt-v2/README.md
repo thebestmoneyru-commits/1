@@ -44,6 +44,13 @@ This directory is an isolated modernization track. Existing production files are
 - Application contracts in `application/applicationTypes.ts`. The service receives a prebuilt, source-bound semantic inventory and frozen donor baseline; it does not invent or silently extract either one.
 - Mock-based orchestration regression tests in `application/styleTransferService.test.ts` cover successful admission, rejection of a source/inventory mismatch before model calls, and cancellation before generation.
 
+### Isolated Express API Adapter
+- `api/styleTransferRouter.ts` exposes an Express 4 router factory for a separately mounted `/api/v2/style-transfer` endpoint. It does not import or modify the legacy `server.ts`.
+- Host authentication middleware is mandatory and must be supplied by the embedding application; the adapter does not invent an authentication scheme or silently expose a public endpoint.
+- The API accepts only source text and donor text. It deliberately does not trust client-supplied semantic inventories or donor baselines; a server-side `prepareRequest` callback must extract/validate propositions and build the frozen donor baseline before the service runs.
+- Request JSON size and per-field character limits are bounded. Invalid JSON, missing text, oversized fields and client disconnects are handled explicitly.
+- `api/styleTransferRouter.test.ts` exercises authentication ordering, payload validation, field limits and malformed JSON using an ephemeral local Express server.
+
 ## Running the v2 regression checks
 
 The complete offline regression suite (it does not call the live Gemini API) is collected in `runSelfTests.ts`. From the repository root, run:
@@ -72,7 +79,7 @@ The offline regression checks can be invoked from the repository root with a Typ
 
 - Natural-language proposition extraction and independent model-backed semantic verification.
 - Full author-style parsing, including reliable Russian morphology and clause structure.
-- Production API integration and end-to-end provider verification.
+- Deployment-specific API mounting, authentication implementation, server-side proposition extraction/preparation callback and end-to-end provider verification.
 - Integration of the new safe remote transport into the existing production route (the current production server is intentionally untouched).
 - Full automated test suite and build configuration.
 
@@ -94,4 +101,4 @@ Do not connect this directory to the production API until:
 5. frontend response contracts are preserved;
 6. server and frontend builds are checked separately.
 
-The existing application remains untouched during this foundation phase. The application service is an injectable library layer only; it is not yet mounted on Express or connected to the legacy route.
+The existing application remains untouched during this foundation phase. The application service and an isolated Express router factory are injectable library components only; the router is not mounted on the legacy server. A host application must supply authentication middleware and a server-side preparation callback before exposing it.
