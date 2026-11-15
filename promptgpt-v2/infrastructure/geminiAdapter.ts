@@ -1,5 +1,5 @@
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
-import type { ModelAdapter, ModelInvocation } from "./modelRouter";
+import { ModelRouterError, type ModelAdapter, type ModelInvocation } from "./modelRouter";
 
 type SamplingKey = "temperature" | "topP" | "topK" | "frequencyPenalty" | "presencePenalty";
 
@@ -32,6 +32,12 @@ function applySampling(config: Record<string, unknown>, sampling: Readonly<Recor
   }
 }
 
+function abortError(message: string): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
 /**
  * Adapter for the installed @google/genai SDK. The router owns retries,
  * cooldowns and concurrency; the SDK receives the AbortSignal for client-side
@@ -41,7 +47,8 @@ export class GeminiModelAdapter implements ModelAdapter {
   constructor(private readonly client: GoogleGenAI) {}
 
   async invoke(request: ModelInvocation): Promise<string> {
-    if (request.signal.aborted) throw new Error("Gemini request was cancelled before dispatch.");
+    if (request.signal.aborted) throw abortError("Gemini request was cancelled before dispatch.");
+
     const config: Record<string, unknown> = {
       abortSignal: request.signal,
     };
@@ -59,7 +66,30 @@ export class GeminiModelAdapter implements ModelAdapter {
       contents: request.prompt,
       config: config as never,
     });
-    if (request.signal.aborted) throw new Error("Gemini request was cancelled.");
-    return (response.text ?? "").trim();
+
+    // Do not turn a late response into a successful result after cancellation.
+    // The router distinguishes caller cancellation from its own request timeout.
+    if (request.signal.aborted) throw abortError("Gemini request completed after its deadline or cancellation.");
+
+    const providerResponse = response as unknown as {
+      text?: string | null;
+      promptFeedback?: { blockReason?: unknown };
+      candidates?: Array<{ finishReason?: unknown }>;
+    };
+    const finishReason = String(providerResponse.candidates?.[0]?.finishReason ?? "").toUpperCase();
+    const blockReason = providerResponse.promptFeedback?.blockReason;
+
+    if (finishReason === "MAX_TOKENS") {
+      throw new ModelRouterError("Gemini response was truncated because it reached MAX_TOKENS.", "truncated", request.modelId);
+    }
+    if (blockReason || ["SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"].includes(finishReason)) {
+      throw new ModelRouterError(
+        `Gemini blocked the prompt or candidate: ${String(blockReason ?? finishReason)}`,
+        "safety-block",
+        request.modelId,
+      );
+    }
+
+    return (providerResponse.text ?? "").trim();
   }
 }
