@@ -1,8 +1,7 @@
-import type { FactInventory } from "../types";
 import { fingerprintSource } from "../semantic/factInventory";
 import { verifyDonorStyleBaseline } from "../style/donorBaseline";
 import { generateCandidates, type CandidateModelAdapter } from "../style/candidateGenerator";
-import { evaluateCandidate, type CandidateEvaluationResult } from "../style/candidateEvaluator";
+import { evaluateCandidate } from "../style/candidateEvaluator";
 import { runCriticRepairPipeline } from "../repair/criticRepairPipeline";
 import { runStyleCritic, type StyleCriticAdapter } from "../critic/styleCritic";
 import type { SurgicalRepairAdapter } from "../repair/surgicalRepair";
@@ -19,30 +18,6 @@ export interface StyleTransferServiceDependencies {
   semanticVerifier: SemanticVerifier;
   styleProfiler: StyleProfiler;
   now?: () => number;
-}
-
-function makeEvaluation(
-  candidateId: string,
-  sourceText: string,
-  outputText: string,
-  inventory: FactInventory,
-  baseline: DonorStyleBaseline,
-  assessments: Awaited<ReturnType<SemanticVerifier["assess"]>>,
-  request: StyleTransferRequest,
-): CandidateEvaluationResult {
-  return evaluateCandidate({
-    candidateId,
-    sourceText,
-    outputText,
-    inventory,
-    propositionAssessments: assessments,
-    donorBaseline: baseline,
-    candidateProfile: undefined as never,
-  }, {
-    minimumStyleScore: request.minimumStyleScore,
-    minimumStyleConfidence: request.minimumStyleConfidence,
-    semanticPolicy: request.semanticPolicy,
-  });
 }
 
 /**
