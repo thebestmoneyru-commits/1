@@ -52,7 +52,7 @@ function uniqueStrings(values: readonly string[]): string[] {
   });
 }
 function toAnchor(kind: SemanticAnchor["kind"], span: TextSpan, index: number, required = true): SemanticAnchor {
-  return { id: stableId(kind, span.text, index), kind, value: span.text, required, evidence: [{ sourceSpan: span }] };
+  return { id: stableId(kind, span.text, index), kind, value: span.text, required, requiredOccurrences: 1, evidence: [{ sourceSpan: span }] };
 }
 export interface FactInventoryOptions {
   requiredTerms?: readonly string[];
@@ -65,20 +65,20 @@ export function buildFactInventory(sourceText: string, options: FactInventoryOpt
   const text = sourceText ?? "";
   const anchors: SemanticAnchor[] = [];
 
-  uniqueSpans(collectMatches(text, NUMBER_OR_DATE_PATTERN)).forEach((span, i) =>
+  collectMatches(text, NUMBER_OR_DATE_PATTERN).forEach((span, i) =>
     anchors.push(toAnchor("number", span, i)),
   );
-  uniqueSpans(SCRIPTURE_REFERENCE_PATTERNS.flatMap((pattern) => collectMatches(text, pattern))).forEach((span, i) =>
+  SCRIPTURE_REFERENCE_PATTERNS.flatMap((pattern) => collectMatches(text, pattern)).forEach((span, i) =>
     anchors.push(toAnchor("scripture-reference", span, i)),
   );
-  uniqueSpans(collectMatches(text, QUOTED_TEXT_PATTERN)).forEach((span, i) =>
+  collectMatches(text, QUOTED_TEXT_PATTERN).forEach((span, i) =>
     anchors.push(toAnchor("quotation", span, i, options.requireQuotedText ?? true)),
   );
   uniqueStrings(options.properNames ?? []).forEach((name, i) =>
-    anchors.push({ id: stableId("proper-name", name, i), kind: "proper-name", value: name, required: true, evidence: [] }),
+    anchors.push({ id: stableId("proper-name", name, i), kind: "proper-name", value: name, required: true, requiredOccurrences: 1, evidence: [] }),
   );
   uniqueStrings(options.requiredTerms ?? []).forEach((term, i) =>
-    anchors.push({ id: stableId("domain-term", term, i), kind: "domain-term", value: term, required: true, evidence: [] }),
+    anchors.push({ id: stableId("domain-term", term, i), kind: "domain-term", value: term, required: true, requiredOccurrences: 1, evidence: [] }),
   );
 
   return {
