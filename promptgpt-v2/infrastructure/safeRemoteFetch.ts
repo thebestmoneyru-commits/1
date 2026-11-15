@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { request as httpsRequest, type IncomingHttpHeaders, type RequestOptions } from "node:https";
