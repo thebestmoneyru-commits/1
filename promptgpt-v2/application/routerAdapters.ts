@@ -5,6 +5,8 @@ import type { CandidateModelAdapter } from "../style/candidateGenerator";
 import type { StyleCriticAdapter } from "../critic/styleCritic";
 import type { SurgicalRepairAdapter } from "../repair/surgicalRepair";
 import type { SemanticVerifier } from "./applicationTypes";
+import { getLogicalRelationAuditKey } from "../semantic/semanticStructureAudit";
+import type { LogicalRelationAssessment } from "../semantic/logicalRelationPreservation";
 import type { ApplicationModelRoutes } from "./applicationTypes";
 
 function routeFor(routes: ApplicationModelRoutes, task: ModelTask) {
@@ -34,6 +36,15 @@ async function invoke(
     maxAttemptsPerModel: 2,
   });
   return result.text;
+}
+
+function validateRelationAssessments(value: unknown): value is LogicalRelationAssessment[] {
+  return Array.isArray(value) && value.every((item) =>
+    isRecord(item) && isNonEmptyString(item.relationKey) &&
+    ["preserved", "changed", "omitted", "uncertain"].includes(String(item.status)) &&
+    Array.isArray(item.outputEvidence) && item.outputEvidence.every((evidence) => typeof evidence === "string") &&
+    typeof item.rationale === "string" && isFiniteNumberInRange(item.confidence, 0, 1)
+  );
 }
 
 function validateAssessments(value: unknown): value is PropositionAssessment[] {
@@ -88,6 +99,27 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
         if (!validateAssessments(parsed)) {
           throw new Error("Semantic verifier returned an invalid assessment array.");
         }
+        return parsed;
+      },
+      async assessRelations({ sourceText, candidateText, propositions, signal }) {
+        const relations = new Map<string, unknown>();
+        for (const proposition of propositions) {
+          for (const relation of proposition.relations) relations.set(getLogicalRelationAuditKey(relation), relation);
+        }
+        if (relations.size === 0) return [];
+        const prompt = [
+          "Проведи независимое сравнение логической структуры оригинала и преобразованного текста.",
+          "Оцени каждую исходную логическую связь ровно один раз: направление причины и следствия, временной порядок, условия, уступки, цель, противопоставление, сравнение и атрибуцию.",
+          "Факты могут сохраниться, даже если связь между ними перевёрнута, ослаблена или исчезла. Не считай простое наличие обоих фактов сохранением связи.",
+          "Для каждой связи верни status: preserved, changed, omitted или uncertain. При preserved укажи точный фрагмент кандидата в outputEvidence. Не выдумывай цитаты.",
+          "relationKey должен дословно совпадать с ключом связи из SOURCE RELATIONS JSON. Верни только JSON-массив объектов {relationKey,status,outputEvidence,rationale,confidence}.",
+          "", "ORIGINAL SOURCE JSON:", JSON.stringify(sourceText),
+          "", "CANDIDATE JSON:", JSON.stringify(candidateText),
+          "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
+        ].join("\\n");
+        const raw = await invoke(router, routes, "semantic-verification", prompt, signal);
+        const parsed = parseJsonUnknown(raw);
+        if (!validateRelationAssessments(parsed)) throw new Error("Semantic structure verifier returned an invalid relation assessment array.");
         return parsed;
       },
     },
