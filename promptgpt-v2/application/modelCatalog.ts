@@ -38,6 +38,7 @@ export function validateModelCatalog(config: ModelCatalogConfig): ModelCatalogCo
     for (const id of routeIds) {
       const model = config.models.find((item) => item.id === id);
       if (!model) throw new Error(`Route ${routeName} references model ${id}, which is not in the allowlist.`);
+      if (!model.enabled) throw new Error(`Route ${routeName} references disabled model ${id}.`);
       if (!model.tasks.includes(task)) {
         throw new Error(`Model ${id} is not enabled for task ${task} required by route ${routeName}.`);
       }
