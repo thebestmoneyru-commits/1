@@ -5,7 +5,8 @@ import { evaluateCandidate } from "../style/candidateEvaluator";
 import { runCriticRepairPipeline } from "../repair/criticRepairPipeline";
 import type { StyleCriticAdapter } from "../critic/styleCritic";
 import type { SurgicalRepairAdapter } from "../repair/surgicalRepair";
-import type { DonorStyleBaseline } from "../style/styleTypes";
+import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
+import type { PropositionAssessment } from "../types";
 import type {
   CandidateOutcome, SemanticVerifier, StyleProfiler, StyleTransferRequest,
   StyleTransferResponse, TransferTraceEvent,
@@ -76,8 +77,8 @@ export class StyleTransferService {
         if (candidate.status !== "generated" || !candidate.text) continue;
         if (request.signal?.aborted) break;
         mark("evaluating-candidates", "Независимая семантическая и стилевая оценка.", candidate.candidateId);
-        let assessments;
-        let profile;
+        let assessments: PropositionAssessment[];
+        let profile: StyleDNAProfile;
         try {
           assessments = await this.deps.semanticVerifier.assess({
             sourceText: request.sourceText,
