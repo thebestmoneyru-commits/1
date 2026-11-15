@@ -120,7 +120,9 @@ function toleranceFor(feature: StyleFeature, donorValue: number, options: StyleS
 }
 function similarityFor(donor: number, candidate: number, tolerance: number, exponent: number): number {
   const deviation = Math.abs(candidate - donor) / Math.max(tolerance, Number.EPSILON);
-  return clamp(1 - Math.pow(clamp(deviation / 2, 0, 1), exponent));
+  // A deviation equal to tolerance retains 50% similarity; larger deviations
+  // decay smoothly instead of creating an abrupt pass/fail boundary.
+  return clamp(Math.exp(-Math.LN2 * Math.pow(deviation, exponent)));
 }
 function featureReliability(feature: StyleFeature): number {
   const confidence = clamp(safeNumber(feature.confidence));
@@ -185,7 +187,10 @@ export function scoreStyleDNA(
   const comparisons: FeatureComparison[] = [];
 
   for (const [id, donorFeature] of donorFeatures) {
-    if (donorFeature.observations < options.minimumDonorObservations && !id.startsWith("rhythm.")) continue;
+    const isCorpusWideFeature =
+      id.startsWith("rhythm.") || id.startsWith("syntax.") ||
+      id.startsWith("punctuation.") || id.startsWith("connectors.");
+    if (!isCorpusWideFeature && donorFeature.observations < options.minimumDonorObservations) continue;
     const candidateFeature = candidateFeatures.get(id);
     const donorValue = featureValue(donorFeature);
     const candidateValue = candidateFeature ? featureValue(candidateFeature) : 0;
