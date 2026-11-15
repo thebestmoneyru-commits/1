@@ -39,6 +39,46 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(result.donorBaseline.profile.status === "sufficient", "sufficient donor sample must produce a frozen baseline");
   names.push("build source-bound inventory and donor baseline");
 
+  const repairableInterpretationIssue = {
+    propositionId: "p1",
+    field: "object",
+    evidenceSpan: {
+      start: source.indexOf("людям"),
+      end: source.indexOf("людям") + "людям".length,
+      text: "людям",
+    },
+    explanation: "Проверить объект первой пропозиции по исходному фрагменту.",
+  };
+  let repairedInterpretationAuditReachedSemanticGate = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        validExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1"], [repairableInterpretationIssue]),
+        interpretationAudit(["p1", "p2"], [{
+          ...repairableInterpretationIssue,
+          evidenceSpan: {
+            start: source.indexOf("город"),
+            end: source.indexOf("город") + "город".length,
+            text: "город",
+          },
+        }]),
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "bounded-interpretation-audit-repair", sourceText: source, donorText: donor });
+  } catch (error) {
+    repairedInterpretationAuditReachedSemanticGate =
+      String(error).includes("Semantic interpretation audit found") &&
+      !String(error).includes("failed validation");
+  }
+  assert(
+    repairedInterpretationAuditReachedSemanticGate,
+    "one bounded audit repair must correct checked IDs and evidence anchors without suppressing the original semantic finding",
+  );
+  names.push("repair interpretation-audit bookkeeping and evidence anchors once while preserving immutable findings");
+
   const sharedPredicateSource = "Общая причина влечет за собой упразднение моральной ответственности и превращение исторического процесса в механическую последовательность фактов.";
   const firstObject = "упразднение моральной ответственности";
   const secondObject = "превращение исторического процесса в механическую последовательность фактов";
