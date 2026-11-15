@@ -17,6 +17,7 @@ import { runStyleTransferServiceSelfTests } from "./application/styleTransferSer
 import { runRequestPreparationSelfTests } from "./application/requestPreparation.test";
 import { runPropositionCoverageSelfTests } from "./semantic/propositionCoverage.test";
 import { runPropositionSchemaSelfTests } from "./semantic/propositionSchema.test";
+import { runPropositionConsistencySelfTests } from "./semantic/propositionConsistency.test";
 import { runStyleTransferApiSelfTests } from "./api/styleTransferRouter.test";
 
 export interface SelfTestGroupResult {
@@ -51,6 +52,7 @@ export async function runV2SelfTestSuite(): Promise<SelfTestSuiteResult> {
     { group: "application-request-preparation", run: runRequestPreparationSelfTests },
     { group: "semantic-proposition-coverage", run: runPropositionCoverageSelfTests },
     { group: "semantic-proposition-schema", run: runPropositionSchemaSelfTests },
+    { group: "semantic-proposition-consistency", run: runPropositionConsistencySelfTests },
     { group: "api-style-transfer-router", run: runStyleTransferApiSelfTests },
   ];
   const results: SelfTestGroupResult[] = [];
