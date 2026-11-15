@@ -59,6 +59,19 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(malformedAuditRejected, "malformed completeness audit must fail closed");
   names.push("reject malformed completeness audit responses");
 
+  const invalidAuditSpan = {
+    id: "p4", summary: "Недостоверное утверждение", sourceSpan: { start: 0, end: 25, text: "not the source" },
+    subject: "Он", predicate: "сделал", polarity: "positive", qualifications: [], relations: [], mandatory: true,
+  };
+  let invalidAuditSpanRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [invalidAuditSpan] }), routes, {
+      analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
+    })({ requestId: "bad-audit-span", sourceText: source, donorText: donor });
+  } catch (error) { invalidAuditSpanRejected = String(error).includes("Semantic completeness audit failed source-bound validation"); }
+  assert(invalidAuditSpanRejected, "audit omissions must be tied to exact source spans");
+  names.push("reject audit omissions without exact source evidence");
+
   const invalid = validExtraction.map((item, index) => ({ ...item, id: index ? "p1" : item.id }));
   let duplicateRejected = false;
   try {
