@@ -1,5 +1,6 @@
 import type { Proposition } from "../types";
 import { detectPotentialPropositionContradictions } from "./propositionConsistency";
+import { buildSemanticInventory } from "./buildInventory";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -70,6 +71,31 @@ export function runPropositionConsistencySelfTests(): { passed: number; names: s
   ]);
   assert(unknownPolarity.contradictions.length === 0, "unknown polarity must not be treated as explicit contradiction");
   names.push("ignore unknown polarity in contradiction screening");
+
+  const source = "Монах пришёл в монастырь. Монах не пришёл в монастырь.";
+  const firstText = "Монах пришёл в монастырь.";
+  const secondText = "Монах не пришёл в монастырь.";
+  const firstStart = source.indexOf(firstText);
+  const secondStart = source.indexOf(secondText);
+  const inventory = buildSemanticInventory(source, [
+    {
+      ...makeProposition("p1", "positive"),
+      sourceSpan: { start: firstStart, end: firstStart + firstText.length, text: firstText },
+      subject: "Монах",
+      predicate: "пришёл",
+      object: "в монастырь",
+    },
+    {
+      ...makeProposition("p2", "negative"),
+      sourceSpan: { start: secondStart, end: secondStart + secondText.length, text: secondText },
+      subject: "Монах",
+      predicate: "не пришёл",
+      object: "в монастырь",
+    },
+  ]);
+  assert(inventory.valid && inventory.inventory?.warnings.some((warning) => warning.includes("Возможное противоречие")),
+    "canonical inventory must retain potential contradiction warnings");
+  names.push("surface contradiction warnings in the canonical inventory");
 
   return { passed: names.length, names };
 }
