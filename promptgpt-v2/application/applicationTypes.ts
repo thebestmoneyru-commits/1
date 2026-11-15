@@ -5,6 +5,7 @@ import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
 import type { StyleCriticOptions } from "../critic/styleCritic";
 import type { SurgicalRepairOptions } from "../repair/surgicalRepair";
 import type { RepairVerificationOptions } from "../repair/repairVerification";
+import type { LogicalRelationAssessment } from "../semantic/logicalRelationPreservation";
 
 export type TransferStage =
   | "validating-input"
@@ -72,6 +73,12 @@ export interface SemanticVerifier {
     propositions: readonly Proposition[];
     signal?: AbortSignal;
   }): Promise<PropositionAssessment[]>;
+  assessRelations(input: {
+    sourceText: string;
+    candidateText: string;
+    propositions: readonly Proposition[];
+    signal?: AbortSignal;
+  }): Promise<LogicalRelationAssessment[]>;
 }
 
 export interface ApplicationModelRoutes {
