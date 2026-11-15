@@ -120,5 +120,110 @@ export async function runCriticRepairPipelineSelfTests(): Promise<{ passed: numb
   assert(!strictResult.verification.after.semanticReport.passed, "custom semantic policy must reach final verification");
   names.push("semantic policy preserved through repair verification");
 
+  const repairFeature = baseline.profile.features.find((item) => item.evidence.length > 0 && item.evidence[0].excerpt.trim().length > 0);
+  assert(!!repairFeature, "baseline fixture must have at least one feature with evidence");
+  const repairEvidenceExcerpt = repairFeature!.evidence[0].excerpt.trim();
+  const uniqueEvidence = "В 1912 году пастырь открыл приходскую библиотеку";
+  const initialCandidate = `${sourceText} ${uniqueEvidence}.`;
+  const targetSubstring = "открыл приходскую библиотеку";
+  const replacementSubstring = "учредил духовную читальню";
+  const targetStart = initialCandidate.indexOf(targetSubstring);
+  assert(targetStart >= 0, "candidate fixture must contain targetSubstring");
+  const tailInventory = {
+    ...buildFactInventory(initialCandidate),
+    propositions: [{
+      id: "p1",
+      summary: "Пастырь открыл приходскую библиотеку в 1912 году.",
+      sourceSpan: {
+        start: initialCandidate.indexOf(uniqueEvidence),
+        end: initialCandidate.indexOf(uniqueEvidence) + uniqueEvidence.length,
+        text: uniqueEvidence,
+      },
+      subject: "пастырь",
+      predicate: "открыл",
+      object: "приходскую библиотеку",
+      polarity: "positive" as const,
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    }],
+  };
+
+  let pipelineAssessCalls = 0;
+  const stalePostRepairPipeline = await runCriticRepairPipeline({
+    candidateId: "pipeline-stale-repaired-evidence",
+    sourceText: initialCandidate,
+    candidateText: initialCandidate,
+    inventory: tailInventory,
+    donorBaseline: baseline,
+    criticAdapter: {
+      async review() {
+        return JSON.stringify({
+          styleFidelityScore: 60,
+          naturalnessScore: 80,
+          issues: [{
+            id: "issue-1",
+            type: "syntax-mismatch",
+            severity: "warning",
+            outputSpan: {
+              start: targetStart,
+              end: targetStart + targetSubstring.length,
+              text: targetSubstring,
+            },
+            donorFeatureId: repairFeature!.id,
+            donorEvidenceExcerpt: repairEvidenceExcerpt,
+            rationale: "Фрагмент требует точечной правки стиля.",
+            suggestedChange: "Заменить оборот на более характерный.",
+            affectedPropositionIds: ["p1"],
+          }],
+        });
+      },
+    },
+    repairAdapter: {
+      async repair() {
+        return JSON.stringify([{
+          issueId: "issue-1",
+          expectedText: targetSubstring,
+          replacement: replacementSubstring,
+        }]);
+      },
+    },
+    semanticVerifier: {
+      async assessRelations() { return []; },
+      async assess() {
+        pipelineAssessCalls++;
+        // Returns quote valid only before repair; absent from repairedText after replacement.
+        return [{
+          propositionId: "p1",
+          status: "preserved" as const,
+          outputEvidence: [uniqueEvidence],
+          rationale: "Проверяем точность привязки цитаты после правки.",
+          confidence: 0.96,
+        }];
+      },
+    },
+    styleProfiler: {
+      analyze(text) {
+        return analyzeStyleDNA(text, {
+          minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+        });
+      },
+    },
+  }, { verification: { minimumStyleScore: 0, minimumStyleConfidence: 0 } });
+
+  assert(stalePostRepairPipeline.repairResult.applied, "repair must apply when critic flags an actionable issue");
+  assert(stalePostRepairPipeline.finalText !== initialCandidate, "surgical repair must produce modified finalText");
+  assert(pipelineAssessCalls === 2, "semantic verifier must re-run against repairedText after modification");
+  assert(stalePostRepairPipeline.verification.before.semanticReport.passed, "initial evidence was valid before repair");
+  assert(
+    !stalePostRepairPipeline.completed &&
+    !stalePostRepairPipeline.verification.passed &&
+    !stalePostRepairPipeline.verification.after.semanticReport.passed &&
+    stalePostRepairPipeline.verification.after.disposition === "rejected" &&
+    stalePostRepairPipeline.verification.after.semanticReport.issues.some((issue) => issue.code === "INVALID_ASSESSMENT"),
+    "pipeline must reject stale outputEvidence that is absent from repairedText",
+  );
+  names.push("post-repair semantic evidence must match repairedText");
+
   return { passed: names.length, names };
 }

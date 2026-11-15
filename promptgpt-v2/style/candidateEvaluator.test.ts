@@ -95,5 +95,45 @@ export function runCandidateEvaluatorSelfTests(): { passed: number; names: strin
   assert(fingerprintMismatch.disposition === "rejected", "candidate profile must describe the exact output text");
   names.push("candidate profile text binding");
 
+  const propSpanText = "И тогда автор подробно объяснил обстоятельства";
+  const propSource = `${propSpanText}.`;
+  const propCandidate = "Рассказчик изложил события в деталях.";
+  const propInventory = {
+    ...inventory,
+    sourceLength: propSource.length,
+    sourceFingerprint: buildFactInventory(propSource).sourceFingerprint,
+    anchors: [],
+    propositions: [{
+      id: "p-evidence",
+      summary: "Автор объяснил обстоятельства",
+      sourceSpan: { start: 0, end: propSpanText.length, text: propSpanText },
+      subject: "автор",
+      predicate: "объяснил",
+      object: "обстоятельства",
+      polarity: "positive" as const,
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    }],
+  };
+  const ungroundedPropEvidence = evaluateCandidate({
+    candidateId: "ungrounded-prop-evidence",
+    sourceText: propSource,
+    outputText: propCandidate,
+    inventory: propInventory,
+    propositionAssessments: [{
+      propositionId: "p-evidence",
+      status: "preserved",
+      outputEvidence: [propSpanText],
+      rationale: "Цитата взята из исходника, а не из кандидата.",
+      confidence: 0.96,
+    }],
+    donorBaseline: baseline,
+    candidateProfile: profile(propCandidate),
+  });
+  assert(ungroundedPropEvidence.disposition === "rejected" && !ungroundedPropEvidence.semanticReport.passed,
+    "candidate evaluator must reject proposition evidence missing from outputText");
+  names.push("reject ungrounded proposition evidence in candidate gate");
+
   return { passed: names.length, names };
 }

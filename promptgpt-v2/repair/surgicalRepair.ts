@@ -3,6 +3,7 @@ import { fingerprintSource } from "../semantic/factInventory";
 import { verifyDonorStyleBaseline } from "../style/donorBaseline";
 import type { DonorStyleBaseline } from "../style/styleTypes";
 import type { StyleCriticReport, StyleCriticIssue } from "../critic/styleCritic";
+import { parseJsonUnknown } from "../infrastructure/jsonValidation";
 
 export interface RepairPatch {
   issueId: string;
@@ -173,7 +174,12 @@ export async function repairCandidateSurgically(input: {
     allowInfoIssues: options.allowInfoIssues,
   }), input.signal);
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { throw new Error("Repair model returned invalid JSON."); }
+  try {
+    parsed = parseJsonUnknown(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown parse error";
+    throw new Error(`Repair model returned invalid JSON: ${detail}`);
+  }
   if (!Array.isArray(parsed) || parsed.length > options.maxPatches) {
     throw new Error("Repair model must return a bounded JSON array of patches.");
   }

@@ -50,5 +50,37 @@ export function runPropositionCoverageSelfTests(): { passed: number; names: stri
   assert(missingSentence.gaps.some((gap) => gap.sentenceIndex === 3), "coverage gap must report the sentence index");
   names.push("detect a wholly unrepresented sentence");
 
+  const boundarySource = [
+    "Простое предложение без точки с запятой.",
+    "Первая клауза; вторая клауза; третья перед точкой.",
+    "Кто пришёл?",
+    "Идите скорее!",
+    "Он долго молчал…",
+    "Они ждали ответа...",
+    "Он сказал: «Мир вам!»",
+    "Брат (см. примечание) вышел.",
+    "Макарий молился 🙏; братия слушала 😊.",
+  ].join(" ");
+  const boundaryGaps = checkPropositionSourceCoverage(boundarySource, []);
+  assert(!boundaryGaps.covered && boundaryGaps.sentenceCount === 9 && boundaryGaps.segmentCount === 12,
+    "all sentences and semicolon clauses must be counted across punctuation and emoji cases");
+  for (const gap of boundaryGaps.gaps) {
+    assert(boundarySource.slice(gap.sourceSpan.start, gap.sourceSpan.end) === gap.sourceSpan.text,
+      `gap span must match exact UTF-16 slice: ${gap.sourceSpan.text}`);
+  }
+  const gapTexts = boundaryGaps.gaps.map((gap) => gap.sourceSpan.text);
+  assert(gapTexts.includes("Простое предложение без точки с запятой"), "sentence without semicolon must trim terminal period");
+  assert(gapTexts.includes("Первая клауза") && gapTexts.includes("вторая клауза") && gapTexts.includes("третья перед точкой"),
+    "multiple semicolon clauses and final clause before period must have exact boundaries");
+  assert(gapTexts.includes("Кто пришёл") && gapTexts.includes("Идите скорее"),
+    "question and exclamation marks must be handled cleanly");
+  assert(gapTexts.includes("Он долго молчал") && gapTexts.includes("Они ждали ответа"),
+    "both Unicode ellipsis and three-dot ellipsis must be handled cleanly");
+  assert(gapTexts.includes("Он сказал: «Мир вам!»") && gapTexts.includes("Брат (см. примечание) вышел"),
+    "quotes and parentheses must not lose characters");
+  assert(gapTexts.includes("Макарий молился 🙏") && gapTexts.includes("братия слушала 😊"),
+    "Cyrillic and emoji surrogate pairs must preserve exact UTF-16 boundaries");
+  names.push("preserve exact UTF-16 boundaries across punctuation, quotes, brackets and emojis");
+
   return { passed: names.length, names };
 }

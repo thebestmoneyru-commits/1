@@ -26,7 +26,14 @@ export function verifyPropositionAssessments(
   sourcePropositions: readonly Proposition[],
   assessments: readonly PropositionAssessment[],
   policy: SemanticPolicy = DEFAULT_SEMANTIC_POLICY,
+  candidateText: string,
 ): PropositionVerificationResult {
+  if (typeof candidateText !== "string") {
+    throw new TypeError(
+      "verifyPropositionAssessments requires candidateText: string to ground outputEvidence.",
+    );
+  }
+
   const issues: SemanticIssue[] = [];
   const byId = new Map<string, PropositionAssessment[]>();
 
@@ -81,20 +88,45 @@ export function verifyPropositionAssessments(
       });
     }
 
+    const hasValidEvidenceArray = Array.isArray(assessment.outputEvidence);
+    const allEvidenceNonEmpty =
+      hasValidEvidenceArray &&
+      assessment.outputEvidence.every(
+        (item) => typeof item === "string" && item.trim().length > 0,
+      );
+    const allEvidenceGrounded =
+      allEvidenceNonEmpty &&
+      assessment.outputEvidence.every((evidence) => candidateText.includes(evidence));
+
+    if (!allEvidenceGrounded) {
+      issues.push({
+        code: "INVALID_ASSESSMENT",
+        severity: proposition.mandatory ? "error" : "warning",
+        propositionId: proposition.id,
+        message: !allEvidenceNonEmpty
+          ? `Пропозиция ${proposition.id} содержит пустое доказательство.`
+          : `Пропозиция ${proposition.id}: доказательство отсутствует в точном тексте кандидата.`,
+      });
+    }
+
     if (assessment.status === "preserved") {
       const hasEvidence =
+        hasValidEvidenceArray &&
         assessment.outputEvidence.length > 0 &&
-        assessment.outputEvidence.some((item) => item.trim().length > 0);
+        allEvidenceGrounded;
 
       if (policy.requireEvidenceForPreservedPropositions && !hasEvidence) {
-        issues.push({
-          code: "INVALID_ASSESSMENT",
-          severity: proposition.mandatory ? "error" : "warning",
-          propositionId: proposition.id,
-          message: `Пропозиция ${proposition.id} признана сохранённой без фрагмента-доказательства.`,
-        });
+        if (allEvidenceGrounded) {
+          issues.push({
+            code: "INVALID_ASSESSMENT",
+            severity: proposition.mandatory ? "error" : "warning",
+            propositionId: proposition.id,
+            message: `Пропозиция ${proposition.id} признана сохранённой без фрагмента-доказательства.`,
+          });
+        }
       } else if (
         assessment.confidence >= policy.minimumAssessmentConfidence &&
+        allEvidenceGrounded &&
         (!policy.requireEvidenceForPreservedPropositions || hasEvidence) &&
         proposition.mandatory
       ) {

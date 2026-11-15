@@ -98,5 +98,51 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
   assert(inventoryGuard, "critic refuses an inventory from a different source");
   names.push("immutable source inventory guard");
 
+  const validPayload = JSON.stringify({
+    styleFidelityScore: 86,
+    naturalnessScore: 89,
+    issues: [{
+      id: "issue-md", type: "syntax-mismatch", severity: "warning",
+      outputSpan: span, donorFeatureId: feature!.id,
+      donorEvidenceExcerpt: donorExcerpt,
+      rationale: "Порядок частей отличается от подтверждённого образца.",
+      suggestedChange: "Перестроить порядок слов.",
+      affectedPropositionIds: [],
+    }],
+  });
+
+  const fenced = await runStyleCritic({
+    sourceText, candidateText, inventory, donorBaseline: baseline,
+    adapter: { async review() { return "```json\n" + validPayload + "\n```"; } },
+  });
+  assert(fenced.issues.length === 1 && fenced.issues[0].id === "issue-md",
+    "critic must parse JSON wrapped in markdown fences");
+
+  const withBom = await runStyleCritic({
+    sourceText, candidateText, inventory, donorBaseline: baseline,
+    adapter: { async review() { return `\uFEFF${validPayload}`; } },
+  });
+  assert(withBom.issues.length === 1 && withBom.issues[0].id === "issue-md",
+    "critic must parse JSON prefixed with UTF-8 BOM");
+
+  const malformed = await runStyleCritic({
+    sourceText, candidateText, inventory, donorBaseline: baseline,
+    adapter: { async review() { return "{broken"; } },
+  }).then(() => false).catch(() => true);
+  assert(malformed, "critic must reject malformed JSON");
+
+  const empty = await runStyleCritic({
+    sourceText, candidateText, inventory, donorBaseline: baseline,
+    adapter: { async review() { return "   "; } },
+  }).then(() => false).catch(() => true);
+  assert(empty, "critic must reject empty model responses");
+
+  const wrongShape = await runStyleCritic({
+    sourceText, candidateText, inventory, donorBaseline: baseline,
+    adapter: { async review() { return "[]"; } },
+  }).then(() => false).catch(() => true);
+  assert(wrongShape, "critic must still reject non-object JSON payloads");
+  names.push("resilient JSON parsing with strict structural validation");
+
   return { passed: names.length, names };
 }

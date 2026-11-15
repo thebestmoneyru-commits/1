@@ -19,8 +19,11 @@ export interface PropositionCoverageReport {
 /**
  * Conservative deterministic coverage check. Every sentence and every
  * semicolon-delimited clause must intersect at least one validated proposition
- * span. This detects completely unrepresented source regions; it does not
- * prove that a proposition captures every meaning inside an intersecting span.
+ * span. Clause spans exclude leading/trailing whitespace and terminal sentence
+ * punctuation ([.!?…]+$) while keeping internal punctuation, closing quotes/
+ * brackets and exact UTF-16 offsets. This detects completely unrepresented
+ * source regions; it does not prove that a proposition captures every meaning
+ * inside an intersecting span.
  */
 export function checkPropositionSourceCoverage(
   sourceText: string,
@@ -43,9 +46,13 @@ export function checkPropositionSourceCoverage(
           cursor += part.length + (partIndex < parts.length - 1 ? 1 : 0);
           return;
         }
-        const trimmed = part.trimEnd();
+        const trimmed = part.trimEnd().replace(/[.!?…]+$/u, "").trimEnd();
         const start = cursor + leading;
         const end = cursor + trimmed.length;
+        if (end <= start) {
+          cursor += part.length + (partIndex < parts.length - 1 ? 1 : 0);
+          return;
+        }
         const segment = sourceText.slice(start, end);
         if (!/\p{L}|\p{N}/u.test(segment)) {
           cursor += part.length + (partIndex < parts.length - 1 ? 1 : 0);

@@ -55,5 +55,98 @@ export function runRepairVerificationSelfTests(): { passed: number; names: strin
   assert(fingerprintGuard, "verification rejects a profile from another text revision");
   names.push("exact repaired-profile binding");
 
+  const spanText = "В 1912 году произошло важное событие";
+  const modifiedSource = `${corpus()} ${spanText}.`;
+  const beforeRepairedText = modifiedSource;
+  const afterRepairedText = `${corpus()} В 1912 году случилось памятное происшествие.`;
+  const beforeFactInventory = buildFactInventory(modifiedSource);
+  const propInventory = {
+    ...beforeFactInventory,
+    propositions: [{
+      id: "p-repair-1",
+      summary: "В 1912 году произошло важное событие.",
+      sourceSpan: {
+        start: modifiedSource.indexOf(spanText),
+        end: modifiedSource.indexOf(spanText) + spanText.length,
+        text: spanText,
+      },
+      subject: "событие",
+      predicate: "произошло",
+      object: "в 1912 году",
+      polarity: "positive" as const,
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    }],
+  };
+  const beforePropProfile = analyzeStyleDNA(beforeRepairedText, {
+    minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+  });
+  const afterPropProfile = analyzeStyleDNA(afterRepairedText, {
+    minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+  });
+
+  const staleEvidenceAfterRepair = verifyRepairedCandidate({
+    candidateId: "repair-stale-evidence",
+    sourceText: modifiedSource,
+    beforeText: beforeRepairedText,
+    repairedText: afterRepairedText,
+    inventory: propInventory,
+    beforeAssessments: [{
+      propositionId: "p-repair-1",
+      status: "preserved",
+      outputEvidence: [spanText],
+      rationale: "Фраза присутствует до правки.",
+      confidence: 0.96,
+    }],
+    repairedAssessments: [{
+      propositionId: "p-repair-1",
+      status: "preserved",
+      outputEvidence: [spanText],
+      rationale: "Устаревшая цитата из текста до правки.",
+      confidence: 0.96,
+    }],
+    donorBaseline: baseline,
+    beforeProfile: beforePropProfile,
+    repairedProfile: afterPropProfile,
+  }, { minimumStyleScore: 0, minimumStyleConfidence: 0 });
+  assert(
+    !staleEvidenceAfterRepair.passed &&
+    !staleEvidenceAfterRepair.after.semanticReport.passed &&
+    staleEvidenceAfterRepair.after.disposition === "rejected" &&
+    staleEvidenceAfterRepair.after.semanticReport.issues.some((issue) => issue.code === "INVALID_ASSESSMENT"),
+    "post-repair verification must reject outputEvidence missing from repairedText",
+  );
+
+  const groundedAfterRepair = verifyRepairedCandidate({
+    candidateId: "repair-grounded-evidence",
+    sourceText: modifiedSource,
+    beforeText: beforeRepairedText,
+    repairedText: afterRepairedText,
+    inventory: propInventory,
+    beforeAssessments: [{
+      propositionId: "p-repair-1",
+      status: "preserved",
+      outputEvidence: [spanText],
+      rationale: "Фраза присутствует до правки.",
+      confidence: 0.96,
+    }],
+    repairedAssessments: [{
+      propositionId: "p-repair-1",
+      status: "preserved",
+      outputEvidence: ["В 1912 году случилось памятное происшествие"],
+      rationale: "Фраза присутствует в исправленном тексте.",
+      confidence: 0.96,
+    }],
+    donorBaseline: baseline,
+    beforeProfile: beforePropProfile,
+    repairedProfile: afterPropProfile,
+  }, { minimumStyleScore: 0, minimumStyleConfidence: 0 });
+  assert(
+    groundedAfterRepair.passed && groundedAfterRepair.after.semanticReport.passed,
+    "post-repair verification must accept outputEvidence grounded in repairedText",
+  );
+  names.push("post-repair evidence must match repairedText");
+
   return { passed: names.length, names };
 }

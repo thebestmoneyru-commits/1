@@ -28,6 +28,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
   const router = createStyleTransferApiRouter({
     service: service as never,
     authenticate,
+    rateLimit,
     prepareRequest: async ({ requestId, sourceText }) => {
       prepareCalls++;
       return {
@@ -91,7 +92,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     });
     assert(valid.status === 200, "valid authenticated request must reach the service");
     assert(rateLimitCalls === rateLimitBeforeValid + 1, "authenticated requests must pass through the host rate limiter");
-    assert(prepareCalls === 1 && executeCalls === 1, "valid request must be prepared and executed exactly once");
+    assert(Number(prepareCalls) === 1 && Number(executeCalls) === 1, "valid request must be prepared and executed exactly once");
     names.push("apply host rate limiting before preparation and execution");
 
     return { passed: names.length, names };

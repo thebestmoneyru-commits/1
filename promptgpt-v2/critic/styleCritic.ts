@@ -2,6 +2,7 @@ import type { FactInventory, TextSpan } from "../types";
 import { fingerprintSource } from "../semantic/factInventory";
 import { verifyDonorStyleBaseline } from "../style/donorBaseline";
 import type { DonorStyleBaseline, StyleEvidence } from "../style/styleTypes";
+import { parseJsonUnknown } from "../infrastructure/jsonValidation";
 
 export type StyleViolationType =
   | "syntax-mismatch"
@@ -169,9 +170,10 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
   const raw = await input.adapter.review(buildStyleCriticPrompt({ ...input, options }), input.signal);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Style critic returned invalid JSON.");
+    parsed = parseJsonUnknown(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "unknown parse error";
+    throw new Error(`Style critic returned invalid JSON: ${detail}`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Style critic response must be a JSON object.");

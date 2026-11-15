@@ -98,5 +98,42 @@ export async function runSurgicalRepairSelfTests(): Promise<{ passed: number; na
   assert(overlap, "overlapping patches are rejected");
   names.push("overlapping patch rejection");
 
+  const validPatches = JSON.stringify([
+    { issueId: "issue-1", expectedText: "Автор ", replacement: "И тогда автор " },
+  ]);
+
+  const fencedRepair = await repairCandidateSurgically({
+    sourceText, candidateText, inventory, criticReport: report, donorBaseline: baseline,
+    adapter: { async repair() { return "```json\n" + validPatches + "\n```"; } },
+  });
+  assert(fencedRepair.applied && fencedRepair.patchesApplied === 1,
+    "repair must parse JSON wrapped in markdown fences");
+
+  const bomRepair = await repairCandidateSurgically({
+    sourceText, candidateText, inventory, criticReport: report, donorBaseline: baseline,
+    adapter: { async repair() { return `\uFEFF${validPatches}`; } },
+  });
+  assert(bomRepair.applied && bomRepair.patchesApplied === 1,
+    "repair must parse JSON prefixed with UTF-8 BOM");
+
+  const malformedRepair = await repairCandidateSurgically({
+    sourceText, candidateText, inventory, criticReport: report, donorBaseline: baseline,
+    adapter: { async repair() { return "[{broken"; } },
+  }).then(() => false).catch(() => true);
+  assert(malformedRepair, "repair must reject malformed JSON");
+
+  const emptyRepair = await repairCandidateSurgically({
+    sourceText, candidateText, inventory, criticReport: report, donorBaseline: baseline,
+    adapter: { async repair() { return ""; } },
+  }).then(() => false).catch(() => true);
+  assert(emptyRepair, "repair must reject empty model responses");
+
+  const wrongShapeRepair = await repairCandidateSurgically({
+    sourceText, candidateText, inventory, criticReport: report, donorBaseline: baseline,
+    adapter: { async repair() { return '{"issueId":"issue-1"}'; } },
+  }).then(() => false).catch(() => true);
+  assert(wrongShapeRepair, "repair must still reject non-array JSON payloads");
+  names.push("resilient JSON parsing with strict structural validation");
+
   return { passed: names.length, names };
 }

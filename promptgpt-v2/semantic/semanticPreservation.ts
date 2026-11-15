@@ -61,7 +61,12 @@ export function evaluateSemanticPreservation(input: SemanticPreservationInput): 
     }
   }
 
-  const propositionResult = verifyPropositionAssessments(inventory.propositions, propositionAssessments, policy);
+  const propositionResult = verifyPropositionAssessments(
+    inventory.propositions,
+    propositionAssessments,
+    policy,
+    outputText,
+  );
   issues.push(...propositionResult.issues);
 
   if (
