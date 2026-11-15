@@ -30,7 +30,7 @@ const donor = Array.from({ length: 40 }, (_, i) =>
 export async function runRequestPreparationSelfTests(): Promise<{ passed: number; names: string[] }> {
   const names: string[] = [];
   const routes = { semanticExtraction: { preferredModel: "extractor" } };
-  const prepare = createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1", "p2"])), routes, {
+  const prepare = createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1", "p2"])), routes, {
     analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
   });
   const result = await prepare({ requestId: "test", sourceText: source, donorText: donor });
@@ -45,7 +45,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     qualifications: [], relations: [], mandatory: true,
   };
   const audited = await createStyleTransferRequestPreparer(
-    fakeRouter(validExtraction, { missingPropositions: [omitted] }, interpretationAudit(["p1", "p2", "p3"]), structureAudit(["p1", "p2", "p3"])), routes,
+    fakeRouter(validExtraction, { missingPropositions: [omitted], missingRelations: [] }, interpretationAudit(["p1", "p2", "p3"]), structureAudit(["p1", "p2", "p3"])), routes,
     { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
   )({ requestId: "audit", sourceText: source, donorText: donor });
   assert(audited.inventory.propositions.length === 3, "omission audit must add validated missing propositions");
@@ -67,7 +67,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   };
   let invalidAuditSpanRejected = false;
   try {
-    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [invalidAuditSpan] }), routes, {
+    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [invalidAuditSpan], missingRelations: [] }), routes, {
       analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
     })({ requestId: "bad-audit-span", sourceText: source, donorText: donor });
   } catch (error) { invalidAuditSpanRejected = String(error).includes("Semantic completeness audit failed source-bound validation"); }
@@ -83,7 +83,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   };
   try {
     await createStyleTransferRequestPreparer(
-      fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"], [attributionIssue])),
+      fakeRouter(validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"], [attributionIssue])),
       routes,
       { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
     )({ requestId: "misattribution", sourceText: source, donorText: donor });
@@ -94,7 +94,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   let incompleteInterpretationRejected = false;
   try {
     await createStyleTransferRequestPreparer(
-      fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1"])),
+      fakeRouter(validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1"])),
       routes,
       { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
     )({ requestId: "incomplete-interpretation", sourceText: source, donorText: donor });
@@ -108,7 +108,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     await createStyleTransferRequestPreparer(
       fakeRouter(
         validExtraction,
-        { missingPropositions: [] },
+        { missingPropositions: [], missingRelations: [] },
         interpretationAudit(["p1", "p2"]),
         structureAudit(["p1", "p2"], [{
           kind: "temporal-order", propositionIds: ["p1", "p2"],
@@ -128,7 +128,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   let incompleteStructureRejected = false;
   try {
     await createStyleTransferRequestPreparer(
-      fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1"])),
+      fakeRouter(validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1"])),
       routes,
       { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
     )({ requestId: "incomplete-structure", sourceText: source, donorText: donor });
@@ -140,7 +140,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
 
   let uncoveredSourceRejected = false;
   try {
-    await createStyleTransferRequestPreparer(fakeRouter([validExtraction[0]], { missingPropositions: [] }, interpretationAudit(["p1"]), structureAudit(["p1"])), routes, {
+    await createStyleTransferRequestPreparer(fakeRouter([validExtraction[0]], { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1"]), structureAudit(["p1"])), routes, {
       analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
     })({ requestId: "uncovered", sourceText: source, donorText: donor });
   } catch (error) { uncoveredSourceRejected = String(error).includes("source segment(s) without any proposition coverage"); }
@@ -171,7 +171,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
 
   let donorRejected = false;
   try {
-    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1", "p2"])), routes)({
+    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1", "p2"])), routes)({
       requestId: "short-donor", sourceText: source, donorText: "Короткий образец.",
     });
   } catch (error) { donorRejected = String(error).includes("Donor corpus is insufficient"); }
@@ -221,7 +221,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   const anchored = await createStyleTransferRequestPreparer(
     fakeRouter(
       shiftedExtraction,
-      { missingPropositions: [] },
+      { missingPropositions: [], missingRelations: [] },
       interpretationAudit(["p1", "p2"]),
       { checkedPropositionIds: ["p1", "p2"], checkedRelationKeys: spacedRelationKeys, issues: [] },
     ),
@@ -245,7 +245,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     fakeRouter(
       imperfectQuote,
       repairedSpans,
-      { missingPropositions: [] },
+      { missingPropositions: [], missingRelations: [] },
       interpretationAudit(["p1", "p2"]),
       structureAudit(["p1", "p2"]),
     ),
@@ -284,7 +284,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   };
   const falsePositivePrepared = await createStyleTransferRequestPreparer(
     fakeRouter(
-      validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]),
+      validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]),
       structureAudit(["p1", "p2"], [falsePositiveRelation]),
       { decisions: [{ issueIndex: 0, classification: "already-represented", explanation: "Связь уже представлена в содержании пропозиций." }] },
     ), routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
@@ -296,7 +296,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   try {
     await createStyleTransferRequestPreparer(
       fakeRouter(
-        validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]),
+        validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]),
         structureAudit(["p1", "p2"], [falsePositiveRelation]),
         { decisions: [{ issueIndex: 0, classification: "genuine-missing", explanation: "Явная связь между самостоятельными утверждениями отсутствует в relations." }] },
       ), routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
@@ -309,7 +309,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   try {
     await createStyleTransferRequestPreparer(
       fakeRouter(
-        validExtraction, { missingPropositions: [] }, interpretationAudit(["p1", "p2"]),
+        validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]),
         structureAudit(["p1", "p2"], [falsePositiveRelation]),
         { decisions: [] },
       ), routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
@@ -372,6 +372,53 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(idempotent.inventory.propositions.find((item) => item.id === "p1")?.relations.length === 1,
     "reprocessing an existing relation must not append a duplicate");
   names.push("make repeated relation recovery idempotent");
+
+  let leadingMarkerAccepted = false;
+  try {
+    const leadingSource = "Поскольку дождь пошёл, путники укрылись.";
+    const rainStart = leadingSource.indexOf("дождь"), travelersStart = leadingSource.indexOf("путники");
+    const leadingExtraction = [
+      { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: rainStart, end: leadingSource.indexOf(","), text: leadingSource.slice(rainStart, leadingSource.indexOf(",")) }, subject: "дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+      { id: "p2", summary: "Путники укрылись", sourceSpan: { start: travelersStart, end: leadingSource.length, text: leadingSource.slice(travelersStart) }, subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+    ];
+    const leadingResult = await createStyleTransferRequestPreparer(
+      fakeRouter(leadingExtraction, { missingPropositions: [], missingRelations: [{ kind: "cause", from: "p1", to: "p2", expression: "Поскольку" }] }),
+      routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "leading-marker", sourceText: leadingSource, donorText: donor });
+    leadingMarkerAccepted = leadingResult.inventory.propositions.some((item) => item.relations.some((relation) => relation.expression === "Поскольку"));
+  } catch { leadingMarkerAccepted = false; }
+  assert(leadingMarkerAccepted, "a connective before the first proposition is valid when it is in the same sentence");
+  names.push("accept a relation marker at the beginning of the endpoint sentence");
+
+  let unrelatedSentenceMarkerRejected = false;
+  try {
+    const distantSource = "Однако. Дождь пошёл, путники укрылись.";
+    const p1Start = distantSource.indexOf("Дождь пошёл"), p2Start = distantSource.indexOf("путники укрылись");
+    const distantExtraction = [
+      { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: p1Start, end: p1Start + "Дождь пошёл".length, text: "Дождь пошёл" }, subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+      { id: "p2", summary: "Путники укрылись", sourceSpan: { start: p2Start, end: distantSource.length, text: distantSource.slice(p2Start) }, subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+    ];
+    await createStyleTransferRequestPreparer(
+      fakeRouter(distantExtraction, { missingPropositions: [], missingRelations: [{ kind: "contrast", from: "p1", to: "p2", expression: "Однако" }] }),
+      routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "unrelated-sentence-marker", sourceText: distantSource, donorText: donor });
+  } catch (error) {
+    unrelatedSentenceMarkerRejected = String(error).includes("expression не находится в предложении одной из связанных пропозиций");
+  }
+  assert(unrelatedSentenceMarkerRejected, "a marker in an unrelated sentence must not justify a relation");
+  names.push("reject relation markers in unrelated sentences");
+
+  let missingMarkerRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(relationExtraction, { missingPropositions: [], missingRelations: [{ kind: "cause", from: "p1", to: "p2" }] }),
+      routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "missing-marker", sourceText: relationSource, donorText: donor });
+  } catch (error) {
+    missingMarkerRejected = String(error).includes("expression обязателен");
+  }
+  assert(missingMarkerRejected, "recovered relations must include exact textual evidence");
+  names.push("require verbatim evidence for every recovered relation");
 
   return { passed: names.length, names };
 }
