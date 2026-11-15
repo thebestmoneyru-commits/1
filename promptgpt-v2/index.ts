@@ -8,3 +8,4 @@ export * from "./style";
 export * from "./critic";
 export * from "./repair";
 export * from "./infrastructure";
+export * from "./application";
