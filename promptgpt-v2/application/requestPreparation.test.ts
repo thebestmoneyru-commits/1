@@ -124,6 +124,42 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(audited.inventory.propositions.some((item) => item.id === "p3"), "audited omission must be retained");
   names.push("recover source-grounded omissions found by independent audit");
 
+  let unsupportedOmissionRejected = false;
+  const unsupportedOmission = {
+    ...omitted,
+    summary: "Он прославился многочисленными чудесами",
+    predicate: "прославился многочисленными чудесами",
+    object: undefined,
+  };
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        omissionExtraction,
+        { missingPropositions: [unsupportedOmission], missingRelations: [] },
+        interpretationAudit(["p1", "p2", "p3"], [{
+          propositionId: "p3",
+          field: "predicate",
+          evidenceSpan: {
+            start: omissionThirdStart,
+            end: omissionSource.length,
+            text: omissionSource.slice(omissionThirdStart),
+          },
+          explanation: "Предикат не соответствует буквальному содержанию исходного фрагмента.",
+        }]),
+        structureAudit(["p1", "p2", "p3"]),
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "reject-unsupported-omission", sourceText: omissionSource, donorText: donor });
+  } catch (error) {
+    unsupportedOmissionRejected = String(error).includes("potential source-interpretation error");
+  }
+  assert(
+    unsupportedOmissionRejected,
+    "a literal source span must not legitimize an invented proposition when the interpretation audit flags its meaning",
+  );
+  names.push("reject semantically unsupported propositions recovered by the completeness audit");
+
   let malformedAuditRejected = false;
   try {
     await createStyleTransferRequestPreparer(fakeRouter(validExtraction, []), routes, {
