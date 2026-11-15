@@ -1,3 +1,4 @@
+import { Type } from "@google/genai";
 import type { ModelRouter, ModelTask } from "../infrastructure/modelRouter";
 import { parseJsonUnknown, isRecord, isNonEmptyString, isFiniteNumberInRange } from "../infrastructure/jsonValidation";
 import type { PropositionAssessment } from "../types";
@@ -8,6 +9,115 @@ import type { SemanticVerifier } from "./applicationTypes";
 import { getLogicalRelationAuditKey } from "../semantic/semanticStructureAudit";
 import type { LogicalRelationAssessment } from "../semantic/logicalRelationPreservation";
 import type { ApplicationModelRoutes } from "./applicationTypes";
+
+const PROPOSITION_ASSESSMENT_ARRAY_SCHEMA = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      propositionId: { type: Type.STRING },
+      status: { type: Type.STRING, enum: ["preserved", "changed", "omitted", "uncertain"] },
+      outputEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
+      rationale: { type: Type.STRING },
+      confidence: { type: Type.NUMBER },
+    },
+    required: ["propositionId", "status", "outputEvidence", "rationale", "confidence"],
+  },
+};
+
+const RELATION_ASSESSMENT_ARRAY_SCHEMA = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      relationKey: { type: Type.STRING },
+      status: { type: Type.STRING, enum: ["preserved", "changed", "omitted", "uncertain"] },
+      outputEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
+      rationale: { type: Type.STRING },
+      confidence: { type: Type.NUMBER },
+    },
+    required: ["relationKey", "status", "outputEvidence", "rationale", "confidence"],
+  },
+};
+
+const COMBINED_VERIFICATION_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    propositionAssessments: PROPOSITION_ASSESSMENT_ARRAY_SCHEMA,
+    relationAssessments: RELATION_ASSESSMENT_ARRAY_SCHEMA,
+  },
+  required: ["propositionAssessments", "relationAssessments"],
+};
+
+const CRITIC_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    styleFidelityScore: { type: Type.NUMBER },
+    naturalnessScore: { type: Type.NUMBER },
+    issues: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          id: { type: Type.STRING },
+          type: {
+            type: Type.STRING,
+            enum: [
+              "syntax-mismatch",
+              "rhythm-mismatch",
+              "punctuation-mismatch",
+              "connector-mismatch",
+              "lexical-overfitting",
+              "paragraph-structure",
+              "unnatural-construction",
+              "unsupported-style-claim",
+            ],
+          },
+          severity: { type: Type.STRING, enum: ["blocking", "warning", "info"] },
+          outputSpan: {
+            type: Type.OBJECT,
+            properties: {
+              start: { type: Type.INTEGER },
+              end: { type: Type.INTEGER },
+              text: { type: Type.STRING },
+            },
+            required: ["start", "end", "text"],
+          },
+          donorFeatureId: { type: Type.STRING },
+          donorEvidenceExcerpt: { type: Type.STRING },
+          rationale: { type: Type.STRING },
+          suggestedChange: { type: Type.STRING },
+          affectedPropositionIds: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: [
+          "id",
+          "type",
+          "severity",
+          "outputSpan",
+          "donorFeatureId",
+          "donorEvidenceExcerpt",
+          "rationale",
+          "suggestedChange",
+          "affectedPropositionIds",
+        ],
+      },
+    },
+  },
+  required: ["styleFidelityScore", "naturalnessScore", "issues"],
+};
+
+const REPAIR_RESPONSE_SCHEMA = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      issueId: { type: Type.STRING },
+      expectedText: { type: Type.STRING },
+      replacement: { type: Type.STRING },
+    },
+    required: ["issueId", "expectedText", "replacement"],
+  },
+};
 
 function routeFor(routes: ApplicationModelRoutes, task: ModelTask) {
   switch (task) {
@@ -24,6 +134,7 @@ async function invoke(
   task: ModelTask,
   prompt: string,
   signal?: AbortSignal,
+  responseSchema?: unknown,
 ): Promise<string> {
   const route = routeFor(routes, task);
   const result = await router.generate({
@@ -31,6 +142,7 @@ async function invoke(
     preferredModel: route.preferredModel,
     fallbackModels: route.fallbackModels,
     prompt,
+    responseSchema,
     signal,
     timeoutMs: task === "candidate-generation" ? 90_000 : 45_000,
     maxAttemptsPerModel: 2,
@@ -71,10 +183,10 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
       generate: ({ prompt, signal }) => invoke(router, routes, "candidate-generation", prompt, signal),
     },
     critic: {
-      review: (prompt, signal) => invoke(router, routes, "style-critique", prompt, signal),
+      review: (prompt, signal) => invoke(router, routes, "style-critique", prompt, signal, CRITIC_RESPONSE_SCHEMA),
     },
     repair: {
-      repair: (prompt, signal) => invoke(router, routes, "surgical-repair", prompt, signal),
+      repair: (prompt, signal) => invoke(router, routes, "surgical-repair", prompt, signal, REPAIR_RESPONSE_SCHEMA),
     },
     semanticVerifier: {
       async assessCombined({ sourceText, candidateText, propositions, signal }) {
@@ -93,7 +205,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "", "SOURCE PROPOSITIONS JSON:", JSON.stringify(propositions),
           "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal);
+        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, COMBINED_VERIFICATION_SCHEMA);
         const parsed = parseJsonUnknown(raw);
         if (!isRecord(parsed) || !validateAssessments(parsed.propositionAssessments) ||
             !validateRelationAssessments(parsed.relationAssessments)) {
@@ -121,7 +233,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "SOURCE PROPOSITIONS JSON:",
           JSON.stringify(propositions),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal);
+        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, PROPOSITION_ASSESSMENT_ARRAY_SCHEMA);
         const parsed = parseJsonUnknown(raw);
         if (!validateAssessments(parsed)) {
           throw new Error("Semantic verifier returned an invalid assessment array.");
@@ -144,7 +256,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "", "CANDIDATE JSON:", JSON.stringify(candidateText),
           "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal);
+        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, RELATION_ASSESSMENT_ARRAY_SCHEMA);
         const parsed = parseJsonUnknown(raw);
         if (!validateRelationAssessments(parsed)) throw new Error("Semantic structure verifier returned an invalid relation assessment array.");
         return parsed;

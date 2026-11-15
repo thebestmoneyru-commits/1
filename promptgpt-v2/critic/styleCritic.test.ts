@@ -144,5 +144,36 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
   assert(wrongShape, "critic must still reject non-object JSON payloads");
   names.push("resilient JSON parsing with strict structural validation");
 
+  const shiftedSpanResult = await runStyleCritic({
+    sourceText, candidateText, inventory, donorBaseline: baseline,
+    adapter: {
+      async review() {
+        return JSON.stringify({
+          styleFidelityScore: 85,
+          naturalnessScore: 88,
+          issues: [{
+            id: "issue-shifted",
+            type: "syntax-mismatch",
+            severity: "warning",
+            outputSpan: { start: 12, end: 20, text: "описал событие" },
+            donorFeatureId: feature!.id,
+            donorEvidenceExcerpt: donorExcerpt,
+            rationale: "Порядок слов отличается от донорского.",
+            suggestedChange: "Переставить обстоятельства.",
+            affectedPropositionIds: [],
+          }],
+        });
+      },
+    },
+  });
+  const expectedOffset = candidateText.indexOf("описал событие");
+  assert(
+    shiftedSpanResult.issues.length === 1 &&
+    shiftedSpanResult.issues[0].outputSpan.start === expectedOffset &&
+    shiftedSpanResult.issues[0].outputSpan.end === expectedOffset + "описал событие".length,
+    "critic must anchor verbatim candidate quotes even when model offsets are imprecise",
+  );
+  names.push("anchor verbatim critic span offsets");
+
   return { passed: names.length, names };
 }

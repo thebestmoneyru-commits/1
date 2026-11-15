@@ -187,5 +187,55 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(cancelled, "pre-cancelled requests must stop before model extraction");
   names.push("stop before extraction when request is cancelled");
 
+  const anchoredSource = "Дождь пошёл, поэтому путники укрылись.";
+  const shiftedExtraction = [
+    {
+      id: 1,
+      summary: "Дождь пошёл",
+      sourceSpan: { start: 99, end: 110, text: "Дождь пошёл" },
+      subject: "Дождь",
+      predicate: "пошёл",
+      object: null,
+      polarity: "positive",
+      modality: null,
+      qualifications: [],
+      relations: [{ kind: "cause", from: 1, to: 2, expression: null }],
+      mandatory: true,
+    },
+    {
+      id: 2,
+      summary: "Путники укрылись",
+      sourceSpan: { start: 0, end: 5, text: "путники укрылись." },
+      subject: "путники",
+      predicate: "укрылись",
+      polarity: "positive",
+      qualifications: [],
+      relations: [{ kind: "cause", from: 1, to: 2, expression: "поэтому" }],
+      mandatory: true,
+    },
+  ];
+  const spacedRelationKeys = [
+    "[\"cause\", \"p1\", \"p2\", \"\"]",
+    "[\"cause\", \"p1\", \"p2\", \"поэтому\"]",
+  ];
+  const anchored = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      shiftedExtraction,
+      { missingPropositions: [] },
+      interpretationAudit(["p1", "p2"]),
+      { checkedPropositionIds: ["p1", "p2"], checkedRelationKeys: spacedRelationKeys, issues: [] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "anchored", sourceText: anchoredSource, donorText: donor });
+  assert(
+    anchored.inventory.propositions.length === 2 &&
+    anchored.inventory.propositions[0].id === "p1" &&
+    anchored.inventory.propositions[0].sourceSpan.start === 0 &&
+    anchored.inventory.propositions[1].sourceSpan.start === anchoredSource.indexOf("путники укрылись."),
+    "verbatim extraction spans, numeric IDs and spaced relation keys must normalize cleanly",
+  );
+  names.push("anchor verbatim spans and normalize LLM IDs/nulls during preparation");
+
   return { passed: names.length, names };
 }

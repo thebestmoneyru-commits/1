@@ -3,6 +3,7 @@ import { fingerprintSource } from "../semantic/factInventory";
 import { verifyDonorStyleBaseline } from "../style/donorBaseline";
 import type { DonorStyleBaseline, StyleEvidence } from "../style/styleTypes";
 import { parseJsonUnknown } from "../infrastructure/jsonValidation";
+import { resolveVerbatimSpan } from "../semantic/spanAnchor";
 
 export type StyleViolationType =
   | "syntax-mismatch"
@@ -206,7 +207,8 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
     if (!VIOLATION_TYPES.has(issue.type as StyleViolationType) || !SEVERITIES.has(issue.severity as CriticSeverity)) {
       throw new Error(`Style critic issue ${issue.id} has an unsupported type or severity.`);
     }
-    if (!validSpan(issue.outputSpan, input.candidateText)) {
+    const anchoredSpan = resolveVerbatimSpan(input.candidateText, issue.outputSpan);
+    if (!validSpan(anchoredSpan, input.candidateText)) {
       throw new Error(`Style critic issue ${issue.id} references an invalid candidate span.`);
     }
     const feature = features.get(String(issue.donorFeatureId));
@@ -226,7 +228,7 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
       id: issue.id,
       type: issue.type as StyleViolationType,
       severity: issue.severity as CriticSeverity,
-      outputSpan: issue.outputSpan,
+      outputSpan: anchoredSpan,
       donorFeatureId: String(issue.donorFeatureId),
       donorEvidenceExcerpt: issue.donorEvidenceExcerpt,
       rationale: issue.rationale,
