@@ -14,3 +14,5 @@ export * from "./infrastructure";
 export * from "./application";
 
 export * from "./api";
+
+export * from "./semantic/semanticStructureAudit";
