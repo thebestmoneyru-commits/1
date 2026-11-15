@@ -3,7 +3,7 @@ import { verifyDonorStyleBaseline } from "../style/donorBaseline";
 import { generateCandidates, type CandidateModelAdapter } from "../style/candidateGenerator";
 import { evaluateCandidate } from "../style/candidateEvaluator";
 import { runCriticRepairPipeline } from "../repair/criticRepairPipeline";
-import { runStyleCritic, type StyleCriticAdapter } from "../critic/styleCritic";
+import type { StyleCriticAdapter } from "../critic/styleCritic";
 import type { SurgicalRepairAdapter } from "../repair/surgicalRepair";
 import type { DonorStyleBaseline } from "../style/styleTypes";
 import type {
