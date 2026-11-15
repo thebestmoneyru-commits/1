@@ -98,5 +98,32 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
   assert(attachedRelation.valid, "a relation connecting its owning proposition to another known proposition must pass");
   names.push("accept correctly attached logical relations");
 
+  const inventedExpression = validatePropositionExtraction(source, [{
+    ...base, relations: [{ kind: "cause", from: "p1", to: "p2", expression: "несуществующий маркер" }],
+  }], new Set(["p2"]));
+  assert(!inventedExpression.valid && inventedExpression.errors.some((error) => error.includes("expression логического отношения отсутствует")),
+    "relation expressions must be literal source evidence");
+  names.push("reject logical-relation expressions absent from the source");
+
+  const literalExpression = validatePropositionExtraction(source, [{
+    ...base, relations: [{ kind: "cause", from: "p1", to: "p2", expression: "потому что" }],
+  }], new Set(["p2"]));
+  assert(literalExpression.valid, "a literal relation marker must pass");
+  names.push("accept verbatim logical-relation expressions");
+
+  const differentModality = validatePropositionExtraction(source, [
+    base,
+    { ...base, id: "p2", modality: { kind: "possibility", value: "возможно", scope: "не пришёл" } },
+  ]);
+  assert(differentModality.valid, "claims with different modality must not be treated as exact duplicates");
+  names.push("include modality in semantic duplicate identity");
+
+  const differentQualification = validatePropositionExtraction(source, [
+    { ...base, qualifications: [{ kind: "condition", value: "если заболел" }] },
+    { ...base, id: "p2", qualifications: [{ kind: "exception", value: "если заболел" }] },
+  ]);
+  assert(differentQualification.valid, "claims with different qualification kinds must not be treated as duplicates");
+  names.push("include qualification kind in semantic duplicate identity");
+
   return { passed: names.length, names };
 }
