@@ -6,6 +6,7 @@ import type { DonorStyleBaseline, StyleFeature } from "./styleTypes";
 export interface CandidateModelRequest {
   prompt: string;
   candidateIndex: number;
+  signal?: AbortSignal;
 }
 export interface CandidateModelAdapter {
   generate(request: CandidateModelRequest): Promise<string>;
@@ -189,6 +190,7 @@ export async function generateCandidates(input: {
   donorBaseline: DonorStyleBaseline;
   adapter: CandidateModelAdapter;
   options?: Partial<CandidateGenerationOptions>;
+  signal?: AbortSignal;
 }): Promise<CandidateGenerationResult> {
   const options = normalizeOptions(input.options ?? {});
   const sourceFingerprint = fingerprintSource(input.sourceText);
@@ -218,7 +220,8 @@ export async function generateCandidates(input: {
       customInstructions: options.customInstructions,
     });
     try {
-      const text = (await input.adapter.generate({ prompt, candidateIndex })).trim();
+      if (input.signal?.aborted) throw new Error("Candidate generation was cancelled.");
+      const text = (await input.adapter.generate({ prompt, candidateIndex, signal: input.signal })).trim();
       if (!text) throw new Error("Модель вернула пустой текст.");
       return {
         candidateId: `candidate-${candidateIndex + 1}`,
