@@ -3,6 +3,8 @@ import { runStyleCritic, type StyleCriticAdapter, type StyleCriticReport, type S
 import { repairCandidateSurgically, type SurgicalRepairAdapter, type SurgicalRepairOptions, type SurgicalRepairResult } from "./surgicalRepair";
 import { verifyRepairedCandidate, type RepairVerificationOptions, type RepairVerificationReport } from "./repairVerification";
 import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
+import type { LogicalRelationAssessment } from "../semantic/logicalRelationPreservation";
+import { validateLogicalRelationAssessments } from "../semantic/logicalRelationPreservation";
 
 export interface IndependentSemanticVerifier {
   assess(input: {
@@ -11,6 +13,12 @@ export interface IndependentSemanticVerifier {
     propositions: readonly Proposition[];
     signal?: AbortSignal;
   }): Promise<PropositionAssessment[]>;
+  assessRelations(input: {
+    sourceText: string;
+    candidateText: string;
+    propositions: readonly Proposition[];
+    signal?: AbortSignal;
+  }): Promise<LogicalRelationAssessment[]>;
 }
 export interface IndependentStyleProfiler {
   analyze(text: string): Promise<StyleDNAProfile> | StyleDNAProfile;
@@ -51,7 +59,7 @@ export async function runCriticRepairPipeline(
   input: CriticRepairPipelineInput,
   options: CriticRepairPipelineOptions = {},
 ): Promise<CriticRepairPipelineResult> {
-  const [criticReport, beforeAssessments, beforeProfile] = await Promise.all([
+  const [criticReport, beforeAssessments, beforeRelationAssessments, beforeProfile] = await Promise.all([
     runStyleCritic({
       sourceText: input.sourceText,
       candidateText: input.candidateText,
@@ -62,6 +70,12 @@ export async function runCriticRepairPipeline(
       signal: input.signal,
     }),
     input.semanticVerifier.assess({
+      sourceText: input.sourceText,
+      candidateText: input.candidateText,
+      propositions: input.inventory.propositions,
+      signal: input.signal,
+    }),
+    input.semanticVerifier.assessRelations({
       sourceText: input.sourceText,
       candidateText: input.candidateText,
       propositions: input.inventory.propositions,
@@ -82,8 +96,14 @@ export async function runCriticRepairPipeline(
   });
 
   const finalText = repairResult.repairedText;
-  const [repairedAssessments, repairedProfile] = await Promise.all([
+  const [repairedAssessments, repairedRelationAssessments, repairedProfile] = await Promise.all([
     input.semanticVerifier.assess({
+      sourceText: input.sourceText,
+      candidateText: finalText,
+      propositions: input.inventory.propositions,
+      signal: input.signal,
+    }),
+    input.semanticVerifier.assessRelations({
       sourceText: input.sourceText,
       candidateText: finalText,
       propositions: input.inventory.propositions,
@@ -106,7 +126,27 @@ export async function runCriticRepairPipeline(
     semanticPolicy: input.semanticPolicy,
   }, options.verification);
 
+  const beforeStructure = validateLogicalRelationAssessments(
+    input.candidateText, input.inventory.propositions, beforeRelationAssessments,
+  );
+  const afterStructure = validateLogicalRelationAssessments(
+    finalText, input.inventory.propositions, repairedRelationAssessments,
+  );
+  if (!afterStructure.passed) {
+    verification.after.semanticReport.passed = false;
+    verification.after.semanticReport.issues.push({
+      code: "LOGICAL_RELATION_NOT_PRESERVED", severity: "error",
+      message: afterStructure.issues.join(" "),
+    });
+    verification.after.disposition = "rejected";
+    verification.after.admissible = false;
+    verification.after.rejectionReasons.push("После точечной правки логическая структура исходника не сохранена.");
+    verification.passed = false;
+    verification.rejectionReasons.push("Исправленный текст не сохранил логические связи оригинала.");
+  }
+
   const warnings = [
+    ...(!beforeStructure.passed ? ["До исправления обнаружены нарушения логической структуры."] : []),
     ...criticReport.warnings,
     ...repairResult.warnings,
     ...verification.warnings,
