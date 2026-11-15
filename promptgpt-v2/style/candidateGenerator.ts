@@ -66,20 +66,33 @@ function selectStyleFeatures(features: readonly StyleFeature[]): StyleFeature[] 
 }
 function buildStyleEvidence(baseline: DonorStyleBaseline, limit: number): string {
   const features = selectStyleFeatures(baseline.profile.features);
-  const lines: string[] = [];
+  const observations: Array<{
+    family: string;
+    label: string;
+    rate: number;
+    confidence: number;
+    examples: string[];
+  }> = [];
   let count = 0;
   for (const feature of features) {
-    lines.push(`- ${feature.family}: ${feature.label}; частота/значение=${Number(feature.rate.toFixed(3))}; уверенность=${Number(feature.confidence.toFixed(2))}.`);
+    const examples: string[] = [];
     for (const evidence of feature.evidence) {
       if (count >= limit) break;
       const excerpt = evidence.excerpt.trim();
       if (!excerpt) continue;
-      lines.push(`  Пример формы (не содержания): «${excerpt.slice(0, 240)}»`);
+      examples.push(excerpt.slice(0, 240));
       count++;
     }
+    observations.push({
+      family: feature.family,
+      label: feature.label,
+      rate: Number(feature.rate.toFixed(3)),
+      confidence: Number(feature.confidence.toFixed(2)),
+      examples,
+    });
     if (count >= limit) break;
   }
-  return lines.length ? lines.join("\n") : "Надёжных контекстных примеров недостаточно; не выдумывай авторские особенности.";
+  return JSON.stringify(observations, null, 2);
 }
 
 /** Creates a model prompt while keeping the original content and donor style roles separate. */
@@ -92,13 +105,25 @@ export function buildCandidatePrompt(input: {
   maxDonorExamples: number;
   customInstructions?: string;
 }): string {
-  const anchors = input.inventory.anchors
+  const anchors = JSON.stringify(input.inventory.anchors
     .filter((anchor) => anchor.required)
-    .map((anchor) => `- [${anchor.kind}] ${anchor.value} (не менее ${anchor.requiredOccurrences} вхожд.)`)
-    .join("\n") || "- Явно выделенных лексических якорей нет.";
-  const propositions = input.inventory.propositions
-    .map((item) => `- ${item.id}: ${item.summary}; субъект: ${item.subject}; сказуемое: ${item.predicate}; полярность: ${item.polarity}; обязательно: ${item.mandatory ? "да" : "нет"}.`)
-    .join("\n") || "- Структурированные пропозиции не предоставлены; не считай это разрешением менять смысл.";
+    .map((anchor) => ({
+      kind: anchor.kind,
+      value: anchor.value,
+      requiredOccurrences: anchor.requiredOccurrences,
+    })), null, 2);
+  const propositions = JSON.stringify(input.inventory.propositions.map((item) => ({
+    id: item.id,
+    summary: item.summary,
+    subject: item.subject,
+    predicate: item.predicate,
+    object: item.object,
+    polarity: item.polarity,
+    modality: item.modality,
+    qualifications: item.qualifications,
+    relations: item.relations,
+    mandatory: item.mandatory,
+  })), null, 2);
   const intensity = {
     1: "Сдержанное влияние: сохраняй большую часть исходной синтаксической формы.",
     2: "Умеренное влияние: переноси устойчивые особенности донора без заметной перестройки каждого предложения.",
@@ -118,13 +143,13 @@ export function buildCandidatePrompt(input: {
     "",
     `ИНТЕНСИВНОСТЬ ПЕРЕНОСА: ${input.styleIntensity}/5. ${intensity}`,
     "",
-    "НАБЛЮДАЕМЫЕ ОСОБЕННОСТИ ДОНОРА:",
+    "НАБЛЮДАЕМЫЕ ОСОБЕННОСТИ ДОНОРА (JSON-ДАННЫЕ; примеры показывают только форму):",
     buildStyleEvidence(input.donorBaseline, input.maxDonorExamples),
     "",
-    "ОБЯЗАТЕЛЬНЫЕ СОДЕРЖАТЕЛЬНЫЕ ЯКОРЯ ИСХОДНИКА:",
+    "ОБЯЗАТЕЛЬНЫЕ СОДЕРЖАТЕЛЬНЫЕ ЯКОРЯ ИСХОДНИКА (JSON-ДАННЫЕ):",
     anchors,
     "",
-    "СТРУКТУРИРОВАННЫЕ УТВЕРЖДЕНИЯ ИСХОДНИКА:",
+    "СТРУКТУРИРОВАННЫЕ УТВЕРЖДЕНИЯ ИСХОДНИКА (JSON-ДАННЫЕ):",
     propositions,
     "",
     input.customInstructions ? `ДОПОЛНИТЕЛЬНЫЕ УКАЗАНИЯ ПОЛЬЗОВАТЕЛЯ:\n${input.customInstructions}` : "",
