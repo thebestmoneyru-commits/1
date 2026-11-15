@@ -20,6 +20,7 @@ import { runPropositionSchemaSelfTests } from "./semantic/propositionSchema.test
 import { runPropositionConsistencySelfTests } from "./semantic/propositionConsistency.test";
 import { runPropositionInterpretationAuditSelfTests } from "./semantic/propositionInterpretationAudit.test";
 import { runSemanticStructureAuditSelfTests } from "./semantic/semanticStructureAudit.test";
+import { runLogicalRelationPreservationSelfTests } from "./semantic/logicalRelationPreservation.test";
 import { runStyleTransferApiSelfTests } from "./api/styleTransferRouter.test";
 
 export interface SelfTestGroupResult {
@@ -57,6 +58,7 @@ export async function runV2SelfTestSuite(): Promise<SelfTestSuiteResult> {
     { group: "semantic-proposition-consistency", run: runPropositionConsistencySelfTests },
     { group: "semantic-proposition-interpretation-audit", run: runPropositionInterpretationAuditSelfTests },
     { group: "semantic-structure-audit", run: runSemanticStructureAuditSelfTests },
+    { group: "semantic-logical-relation-preservation", run: runLogicalRelationPreservationSelfTests },
     { group: "api-style-transfer-router", run: runStyleTransferApiSelfTests },
   ];
   const results: SelfTestGroupResult[] = [];
