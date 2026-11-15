@@ -1,6 +1,7 @@
 import type { FactInventory, Proposition } from "../types";
 import { buildFactInventory, type FactInventoryOptions } from "./factInventory";
 import { validatePropositionExtraction } from "./propositionSchema";
+import { detectPotentialPropositionContradictions } from "./propositionConsistency";
 
 export interface InventoryBuildResult {
   valid: boolean;
@@ -24,9 +25,11 @@ export function buildSemanticInventory(
   }
 
   const literalInventory = buildFactInventory(sourceText, options);
+  const consistency = detectPotentialPropositionContradictions(extracted.propositions);
   const inventory: FactInventory = {
     ...literalInventory,
     propositions: extracted.propositions as Proposition[],
+    warnings: [...literalInventory.warnings, ...consistency.warnings],
   };
 
   return { valid: true, inventory, errors: [] };
