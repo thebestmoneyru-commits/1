@@ -13,7 +13,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     if (req.header("x-test-auth") !== "allowed") return res.status(401).json({ error: "unauthorized" });
     next();
   };
-  const service = {
+  let rateLimitCalls = 0;\n  const rateLimit: RequestHandler = (_req, _res, next) => { rateLimitCalls++; next(); };\n  const service = {
     async execute(request: { requestId: string; sourceText: string; signal?: AbortSignal }) {
       executeCalls++;
       return {
@@ -52,7 +52,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
       body: JSON.stringify({ sourceText: "Исходный текст", donorText: "Текст автора" }),
     });
     assert(unauthorized.status === 401, "authentication middleware must reject unauthenticated requests");
-    assert(prepareCalls === 0 && executeCalls === 0, "unauthenticated requests must not reach preparation or service");
+    assert(prepareCalls === 0 && executeCalls === 0 && rateLimitCalls === 0, "unauthenticated requests must not reach rate limiter, preparation or service");
     names.push("enforce host authentication before processing");
 
     const invalid = await fetch(base, {
