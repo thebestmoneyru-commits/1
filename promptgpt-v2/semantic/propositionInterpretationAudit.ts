@@ -58,6 +58,7 @@ export function validatePropositionInterpretationAudit(
   sourceText: string,
   propositions: readonly Proposition[],
   input: unknown,
+  options: { allowOutOfSpanSubjectPredicateEvidence?: boolean } = {},
 ): PropositionInterpretationAuditValidation {
   const errors: string[] = [];
   if (!isRecord(input) || !Array.isArray(input.checkedPropositionIds) || !Array.isArray(input.issues)) {
@@ -108,7 +109,10 @@ export function validatePropositionInterpretationAudit(
     const span = raw.evidenceSpan;
     const overlaps = (span.start as number) < proposition.sourceSpan.end &&
       (span.end as number) > proposition.sourceSpan.start;
-    if (!overlaps) {
+    const mayUseSentenceScopedEvidence =
+      options.allowOutOfSpanSubjectPredicateEvidence === true &&
+      (field === "subject" || field === "predicate");
+    if (!overlaps && !mayUseSentenceScopedEvidence) {
       errors.push(`Замечание аудита #${index + 1} указывает на фрагмент вне исходного свидетельства пропозиции ${propositionId}.`);
       continue;
     }
