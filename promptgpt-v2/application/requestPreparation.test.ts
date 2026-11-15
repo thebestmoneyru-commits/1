@@ -266,7 +266,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     subject: "Это", predicate: "неизбежно происходит", polarity: "positive",
     qualifications: [], relations: [], mandatory: true,
   }];
-  const modalityIssue = {
+  const parallelModalityIssue = {
     propositionId: "p1", field: "modality",
     evidenceSpan: { start: modalitySource.indexOf("неизбежно"), end: modalitySource.indexOf("неизбежно") + "неизбежно".length, text: "неизбежно" },
     explanation: "Не отражена модальность необходимости.",
@@ -892,7 +892,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     evidenceSpan: { start: concurrentSource.indexOf("Возможно"), end: concurrentSource.indexOf("Возможно") + "Возможно".length, text: "Возможно" },
     explanation: "Проверить сохранение значения возможности.",
   };
-  const sharedSubjectIssue = {
+  const parallelSharedSubjectIssue = {
     propositionId: "p2", field: "subject",
     evidenceSpan: { start: concurrentSource.indexOf("учитель"), end: concurrentSource.indexOf("учитель") + "учитель".length, text: "учитель" },
     explanation: "Общее подлежащее находится за пределами узкого sourceSpan второй пропозиции.",
@@ -900,7 +900,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   const concurrentOutputs = [
     concurrentExtraction,
     { missingPropositions: [], missingRelations: [] },
-    interpretationAudit(["p1", "p2"], [modalityIssue, sharedSubjectIssue]),
+    interpretationAudit(["p1", "p2"], [parallelModalityIssue, parallelSharedSubjectIssue]),
     { decisions: [{ issueIndex: 0, classification: "already-preserved", explanation: "Модальность сохранена в смысловом представлении." }] },
     { decisions: [{ issueIndex: 1, classification: "already-grounded-in-sentence", explanation: "Подлежащее синтаксически относится к обоим однородным сказуемым." }] },
     structureAudit(["p1", "p2"]),
