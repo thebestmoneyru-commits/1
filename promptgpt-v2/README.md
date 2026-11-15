@@ -46,7 +46,6 @@ The dependency-free regression checks can be invoked from the repository root wi
 
 - Natural-language proposition extraction and independent model-backed semantic verification.
 - Full author-style parsing, including reliable Russian morphology and clause structure.
-- Full automated test suite and build configuration.
 - Hardened model routing and API integration.
 - Full automated test suite and build configuration.
 
