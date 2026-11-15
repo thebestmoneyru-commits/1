@@ -134,7 +134,7 @@ export async function safePostJsonToRemote(
   const validated = validateRemoteEndpoint(options.remoteOrigin, { allowedOrigins: options.allowedOrigins });
   const url = new URL(validated.endpoint);
   const startedAt = Date.now();
-  const hostname = url.hostname.replace(/^\\[|\\]$/g, "");
+  const hostname = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
   let abortListener: (() => void) | undefined;
   let pinned: { address: string; family: 4 | 6 };
   try {
