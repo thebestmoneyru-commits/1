@@ -74,6 +74,46 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
   }
 
   {
+    const { sourceText, request } = fixture();
+    const end = sourceText.indexOf(".") + 1;
+    const inventory = buildSemanticInventory(sourceText, [{
+      id: "mandatory-1",
+      summary: "Священник пришёл к людям.",
+      sourceSpan: { start: 0, end, text: sourceText.slice(0, end) },
+      subject: "священник",
+      predicate: "пришёл",
+      object: "к людям",
+      polarity: "positive",
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    }]);
+    assert(inventory.valid && inventory.inventory, "semantic failure fixture inventory must be valid");
+    let criticCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: { async generate() { return sourceText; } },
+      critic: {
+        async review() {
+          criticCalls++;
+          return JSON.stringify({ styleFidelityScore: 100, naturalnessScore: 100, issues: [] });
+        },
+      },
+      repair: { async repair() { throw new Error("style repair must not run after semantic failure"); } },
+      semanticVerifier: { async assess() { return []; } },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({ ...request, inventory: inventory.inventory });
+    assert(result.status === "rejected", "missing mandatory proposition assessment must reject candidate");
+    assert(criticCalls === 0, "style critic must not run after the hard semantic gate fails");
+    assert(result.candidates.length === 1 && !result.candidates[0].repaired, "semantically invalid candidate must remain unmodified");
+    names.push("block style repair after mandatory semantic gate failure");
+  }
+
+  {
     const { request } = fixture();
     let generationCalls = 0;
     const mismatched = {
