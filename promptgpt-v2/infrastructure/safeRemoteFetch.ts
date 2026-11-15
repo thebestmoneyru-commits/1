@@ -127,7 +127,7 @@ export async function safePostJsonToRemote(
   const timeoutMs = Math.max(1000, Math.min(60_000, options.timeoutMs ?? 15_000));
   const maxRequestBytes = Math.max(1, Math.min(5_000_000, options.maxRequestBytes ?? 1_000_000));
   const maxResponseBytes = Math.max(1, Math.min(5_000_000, options.maxResponseBytes ?? 2_000_000));
-  if (typeof options.jsonBody !== "string" || Buffer.byteLength(options.jsonBody, "utf8") > maxRequestBytes) {
+  if (typeof options.jsonBody !== "string" || !options.jsonBody.trim() || Buffer.byteLength(options.jsonBody, "utf8") > maxRequestBytes) {
     throw new Error("Remote request body is empty or exceeds the configured byte limit.");
   }
   if (options.signal?.aborted) throw new Error("Remote request was cancelled before dispatch.");
