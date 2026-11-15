@@ -33,6 +33,10 @@ export function countNormalizedWholePhrase(text: string, phrase: string): number
 /** Ground a verifier-supplied excerpt despite harmless whitespace/typography changes. */
 export function evidenceExistsInText(text: string, evidence: string): boolean {
   const normalizedEvidence = normalizeEvidenceText(evidence);
-  return normalizedEvidence.length > 0 &&
-    normalizeEvidenceText(text).includes(normalizedEvidence);
+  if (!normalizedEvidence) return false;
+  const pattern = new RegExp(
+    "(?<![\\p{L}\\p{N}_])" + escapeRegExp(normalizedEvidence) + "(?![\\p{L}\\p{N}_])",
+    "u",
+  );
+  return pattern.test(normalizeEvidenceText(text));
 }
