@@ -67,6 +67,7 @@ export class StyleTransferService {
         donorBaseline: request.donorBaseline,
         adapter: this.deps.candidateGenerator,
         options: request.generation,
+        signal: request.signal,
       });
       warnings.push(...generation.warnings);
       const outcomes: CandidateOutcome[] = [];
@@ -120,6 +121,7 @@ export class StyleTransferService {
             },
             styleProfiler: this.deps.styleProfiler,
             semanticPolicy: request.semanticPolicy,
+            signal: request.signal,
           }, {
             critic: request.critic,
             repair: request.repair,
