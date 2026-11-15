@@ -45,5 +45,22 @@ export function validateModelCatalog(config: ModelCatalogConfig): ModelCatalogCo
       }
     }
   }
+  if (config.routes.semanticAudit) {
+    const route = config.routes.semanticAudit;
+    if (!route.preferredModel?.trim()) {
+      throw new Error("Missing preferred model for route semanticAudit.");
+    }
+    if (route.preferredModel === config.routes.semanticExtraction.preferredModel) {
+      throw new Error("The semanticAudit preferred model must differ from semanticExtraction for an independent audit.");
+    }
+    for (const id of [route.preferredModel, ...(route.fallbackModels ?? [])]) {
+      const model = config.models.find((item) => item.id === id);
+      if (!model) throw new Error(`Route semanticAudit references model ${id}, which is not in the allowlist.`);
+      if (!model.enabled) throw new Error(`Route semanticAudit references disabled model ${id}.`);
+      if (!model.tasks.includes("semantic-extraction")) {
+        throw new Error(`Model ${id} is not enabled for task semantic-extraction required by route semanticAudit.`);
+      }
+    }
+  }
   return config;
 }
