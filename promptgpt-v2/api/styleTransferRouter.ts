@@ -22,7 +22,7 @@ export interface StyleTransferApiOptions {
   service: StyleTransferService;
   prepareRequest: StyleTransferRequestPreparer;
   /** Authentication/authorization is mandatory and supplied by the host app. */
-  authenticate: RequestHandler;
+  authenticate: RequestHandler;\n  /** Host-supplied rate limiter; use a shared store in multi-instance deployments. */\n  rateLimit: RequestHandler;
   maxSourceCharacters?: number;
   maxDonorCharacters?: number;
   onError?: (error: unknown) => void;
@@ -67,8 +67,8 @@ function readBody(value: unknown, options: Required<Pick<StyleTransferApiOptions
  */
 export function createStyleTransferApiRouter(options: StyleTransferApiOptions): Router {
   if (!options || typeof options.prepareRequest !== "function" ||
-      typeof options.authenticate !== "function" || !options.service) {
-    throw new Error("Style-transfer API requires a service, server-side preparer and authentication middleware.");
+      typeof options.authenticate !== "function" || typeof options.rateLimit !== "function" || !options.service) {
+    throw new Error("Style-transfer API requires a service, server-side preparer, authentication middleware and rate limiter.");
   }
 
   const maxSourceCharacters = options.maxSourceCharacters ?? 30_000;
