@@ -11,12 +11,12 @@ const model = (id: string, tasks: ModelDefinition["tasks"]): ModelDefinition => 
 });
 
 export function runApplicationSelfTests(): { passed: number; names: string[] } {
-  const tasks = ["candidate-generation", "style-critique", "surgical-repair", "semantic-verification"] as const;
+  const tasks = ["candidate-generation", "style-critique", "surgical-repair", "semantic-verification", "semantic-extraction"] as const;
   const routes = {
     candidateGeneration: { preferredModel: "gen", fallbackModels: ["backup"] },
     styleCritique: { preferredModel: "critic" },
     surgicalRepair: { preferredModel: "repair" },
-    semanticVerification: { preferredModel: "semantic" },
+    semanticVerification: { preferredModel: "semantic" },\n    semanticExtraction: { preferredModel: "extractor" },
   };
   const valid = validateModelCatalog({
     models: [
@@ -24,11 +24,11 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
       model("backup", ["candidate-generation"]),
       model("critic", ["style-critique"]),
       model("repair", ["surgical-repair"]),
-      model("semantic", ["semantic-verification"]),
+      model("semantic", ["semantic-verification"]),\n      model("extractor", ["semantic-extraction"]),
     ],
     routes,
   });
-  assert(valid.models.length === 5, "valid explicit catalog must be returned");
+  assert(valid.models.length === 6, "valid explicit catalog must be returned");
   let missingModelRejected = false;
   try {
     validateModelCatalog({ models: [model("gen", tasks)], routes });
