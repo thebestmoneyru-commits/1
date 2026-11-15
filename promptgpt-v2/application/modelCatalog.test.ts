@@ -56,6 +56,17 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
     });
   } catch { sameAuditModelRejected = true; }
   assert(sameAuditModelRejected, "independent audit route must not reuse the extraction preferred model");
+  let sharedAuditFallbackRejected = false;
+  try {
+    validateModelCatalog({
+      models: [model("gen", ["candidate-generation"]), model("backup", ["candidate-generation"]),
+        model("critic", ["style-critique"]), model("repair", ["surgical-repair"]),
+        model("semantic", ["semantic-verification"]), model("extractor", ["semantic-extraction"]),
+        model("auditor", ["semantic-extraction"])],
+      routes: { ...routes, semanticAudit: { preferredModel: "auditor", fallbackModels: ["extractor"] } },
+    });
+  } catch { sharedAuditFallbackRejected = true; }
+  assert(sharedAuditFallbackRejected, "audit fallback must not silently reuse extraction model");
   let disabledRejected = false;
   try {
     validateModelCatalog({
@@ -72,5 +83,5 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
     });
   } catch { disabledRejected = true; }
   assert(disabledRejected, "disabled route model must be rejected");
-  return { passed: 5, names: ["accept explicit allowlist", "reject model outside allowlist", "reject task capability mismatch", "reject disabled route model", "require distinct model for independent audit"] };
+  return { passed: 6, names: ["accept explicit allowlist", "reject model outside allowlist", "reject task capability mismatch", "reject disabled route model", "require distinct model for independent audit", "reject shared extraction fallback in audit route"] };
 }
