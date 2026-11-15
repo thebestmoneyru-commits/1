@@ -32,6 +32,16 @@ This directory is an isolated modernization track. Existing production files are
 - Public exports in `style/index.ts`.
 - Analyzer, scorer, baseline, candidate-generation, candidate-gate, critic, surgical-repair, repair-verification, orchestration, model-router, cache, JSON-validation and remote-endpoint-policy regression checks in their corresponding `*.test.ts` files.
 
+## Running the v2 regression checks
+
+The complete dependency-free regression suite is collected in `runSelfTests.ts`. From the repository root, run:
+
+```bash
+npx tsx -e "import { runV2SelfTestSuite } from './promptgpt-v2/runSelfTests.ts'; const result = await runV2SelfTestSuite(); console.log(JSON.stringify(result, null, 2));"
+```
+
+The runner executes each group sequentially and stops on the first thrown assertion. A successful run returns the total number of passed checks and the per-module results. This command has been documented but has not yet been executed in the current development session.
+
 ## Style analyzer limitations
 
 The analyzer records measurable signals and source excerpts, but does not claim full grammatical parsing. Russian participle and gerund detection uses approximate suffix heuristics and can produce false positives or miss forms. Sentence segmentation handles common abbreviations and personal initials, but still needs broader corpus-based testing.
