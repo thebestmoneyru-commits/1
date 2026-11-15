@@ -33,19 +33,20 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
   assert(results.length === 4 && results.every((item) => item.usedModel === "primary"), "queued calls all complete");
   names.push("router-wide per-model concurrency cap");
 
+  let quotaPrimaryCalls = 0;
   const fallbackRouter = new ModelRouter({
     models,
-    maxAttemptsPerModel: 1,
+    maxAttemptsPerModel: 3,
     cooldownMs: { "rate-limit": 10000 },
     adapter: { async invoke(request) {
-      if (request.modelId === "primary") throw { status: 429, message: "rate limit" };
+      if (request.modelId === "primary") { quotaPrimaryCalls++; throw { status: 429, message: "rate limit" }; }
       return "fallback-result";
     } },
   });
   const fallback = await fallbackRouter.generate({
     task: "candidate-generation", preferredModel: "primary", fallbackModels: ["fallback"], prompt: "test",
   });
-  assert(fallback.usedModel === "fallback" && fallback.fallbackOccurred, "rate-limited primary falls back to next eligible model");
+  assert(fallback.usedModel === "fallback" && fallback.fallbackOccurred && quotaPrimaryCalls === 1, "rate-limited primary falls back immediately without retrying the exhausted model");
   assert(fallbackRouter.getModelStatus().find((item) => item.modelId === "primary")!.cooldownUntil > 0,
     "rate-limited model enters cooldown");
   names.push("fallback and cooldown");
