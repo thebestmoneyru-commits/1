@@ -60,5 +60,27 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
   assert(!paddedId.valid, "IDs with leading or trailing whitespace must be rejected");
   names.push("reject non-canonical proposition IDs");
 
+  const duplicateClaim = validatePropositionExtraction(source, [
+    base,
+    { ...base, id: "p2" },
+  ]);
+  assert(!duplicateClaim.valid && duplicateClaim.errors.some((error) => error.includes("смысловой дубль")),
+    "identical semantic claims tied to the same source span must be rejected");
+  names.push("reject duplicate semantic claims on the same source span");
+
+  const punctuationSpan = validatePropositionExtraction(source, [{
+    ...base,
+    sourceSpan: { start: 12, end: 13, text: "," },
+  }]);
+  assert(!punctuationSpan.valid, "punctuation-only spans must not support a proposition");
+  names.push("reject punctuation-only proposition spans");
+
+  const selfRelation = validatePropositionExtraction(source, [{
+    ...base, relations: [{ kind: "cause", from: "p1", to: "p1" }],
+  }]);
+  assert(!selfRelation.valid && selfRelation.errors.some((error) => error.includes("саму себя")),
+    "self-referential logical relations must be rejected");
+  names.push("reject self-referential logical relations");
+
   return { passed: names.length, names };
 }
