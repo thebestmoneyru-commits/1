@@ -66,7 +66,20 @@ export interface StyleProfiler {
   analyze(text: string): StyleDNAProfile;
 }
 
+export interface SemanticVerificationBundle {
+  propositionAssessments: PropositionAssessment[];
+  relationAssessments: LogicalRelationAssessment[];
+}
+
 export interface SemanticVerifier {
+  /** One provider call returning two separately validated semantic reports when supported. */
+  assessCombined?(input: {
+    sourceText: string;
+    candidateText: string;
+    propositions: readonly Proposition[];
+    signal?: AbortSignal;
+  }): Promise<SemanticVerificationBundle>;
+  /** Compatibility fallback for adapters that have not implemented combined verification. */
   assess(input: {
     sourceText: string;
     candidateText: string;
