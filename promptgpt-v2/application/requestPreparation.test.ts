@@ -72,6 +72,15 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(invalidAuditSpanRejected, "audit omissions must be tied to exact source spans");
   names.push("reject audit omissions without exact source evidence");
 
+  let uncoveredSourceRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(fakeRouter([validExtraction[0]], { missingPropositions: [] }), routes, {
+      analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
+    })({ requestId: "uncovered", sourceText: source, donorText: donor });
+  } catch (error) { uncoveredSourceRejected = String(error).includes("source segment(s) without any proposition coverage"); }
+  assert(uncoveredSourceRejected, "every source sentence must be represented after the omission audit");
+  names.push("reject source sentences left uncovered after completeness audit");
+
   const invalid = validExtraction.map((item, index) => ({ ...item, id: index ? "p1" : item.id }));
   let duplicateRejected = false;
   try {
