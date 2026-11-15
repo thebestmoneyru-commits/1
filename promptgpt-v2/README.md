@@ -86,9 +86,9 @@ The offline regression checks can be invoked from the repository root with a Typ
 
 - More reliable natural-language proposition extraction and calibrated independent semantic verification; both interpretation and cross-proposition structure audits are implemented, but their detection quality still requires adversarial corpus evaluation, and the current default may reuse the extraction model unless a distinct `semanticAudit` route is configured.
 - Full author-style parsing, including reliable Russian morphology and clause structure.
-- Deployment-specific API mounting, authentication and distributed rate-limit implementation, plus end-to-end provider verification.
-- Integration of the new safe remote transport into the existing production route (the current production server is intentionally untouched).
-- Automated CI workflow and a separately verified end-to-end production build/deployment pipeline.
+- Live Gemini-provider behavior and quality calibration on representative donor/source pairs; offline tests use mocks and do not consume API quota.
+- Distributed rate limiting for multi-instance deployments. The current host integration uses a bounded per-process limiter and is intended for a single server instance.
+- Integration of the new safe remote transport into unrelated legacy remote-fetch routes; this transport remains a separate library component.
 
 ## Important design boundaries
 
@@ -98,14 +98,18 @@ Those higher-level checks require structured propositions and independent assess
 
 Style features are measurements, not instructions to mechanically insert frequent words or constructions. The next scoring layer must compare feature distributions and contexts against the donor corpus, account for sample size, and penalize unsupported overfitting.
 
-## Integration rule
+## Production integration
 
-Do not connect this directory to the production API until:
-1. the semantic extractor and verifier have tests;
-2. all required propositions are accounted for;
-3. the style scorer uses a fixed donor baseline and confidence-aware comparisons;
-4. candidate admission is based on the immutable original source;
-5. frontend response contracts are preserved;
-6. server and frontend builds are checked separately.
+The repository host now mounts the prepared v2 router at `POST /api/v2/style-transfer` without replacing the legacy `/api/style-dna-transfer` route or changing the other detector APIs.
 
-The existing application remains untouched during this foundation phase. The application service and an isolated Express router factory are injectable library components only; the router is not mounted on the legacy server. A host application must supply authentication and rate-limit middleware before exposing it; the prepared-router factory supplies the server-side extraction and baseline preparation pipeline.
+- The frontend exposes a separate PROMPTGPT v2 launch button in the existing Style DNA screen. The original V5 button and endpoint remain available.
+- The request accepts only `donorText` and `sourceText`; proposition extraction, source coverage checks, semantic audits and donor-baseline creation run on the server.
+- The host requires `PROMPTGPT_V2_ACCESS_KEY` and checks the `X-PromptGPT-V2-Key` header with a timing-safe comparison. The UI keeps the entered key in component memory only; it is not written to local storage or history.
+- A bounded per-process rate limiter allows up to 8 requests per 15 minutes per client IP. Use a shared rate-limit store before deploying multiple server instances.
+- The model defaults to `gemini-3.1-flash-lite`; override with `PROMPTGPT_V2_MODEL` only when that model supports the required JSON-schema, thinking and task capabilities.
+- The donor profile is strict by default: at least 500 words and 25 sentences. Short samples are rejected rather than silently treated as reliable.
+- The new endpoint returns the v2 structured response. The frontend displays a result only when its status is `accepted`; `needs-review` and `rejected` results are not silently presented as approved text.
+
+Configure `GEMINI_API_KEY` and a strong, private `PROMPTGPT_V2_ACCESS_KEY` in the server environment. Never commit a real key to Git. The example variable names are in the repository root `.env.example`.
+
+The offline v2 suite still tests the engine with mocks. A production build check is run separately in CI; no live Gemini request is made by CI, so provider credentials and real generation quality must be verified in the deployed environment.
