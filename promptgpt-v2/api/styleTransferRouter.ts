@@ -91,11 +91,37 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
       if (!parsed.ok) return res.status(400).json({ error: { code: "INVALID_REQUEST", message: parsed.message } });
 
       const controller = new AbortController();
-      const abortOnDisconnect = () => {
-        if (!res.writableEnded) controller.abort(new Error("Client disconnected."));
+      const requestStartedAt = Date.now();
+      const logConnectionState = (event: "request-aborted" | "response-close" | "response-finish") => {
+        const state = {
+          event,
+          requestId: parsed.body.requestId ?? null,
+          elapsedMs: Date.now() - requestStartedAt,
+          requestComplete: req.complete,
+          responseHeadersSent: res.headersSent,
+          responseWritableEnded: res.writableEnded,
+          responseWritableFinished: res.writableFinished,
+          socketDestroyed: req.socket.destroyed,
+          socketBytesRead: req.socket.bytesRead,
+          socketBytesWritten: req.socket.bytesWritten,
+        };
+        if (event === "response-finish") {
+          console.info("[PROMPTGPT v2 API] Request response finished.", state);
+          return;
+        }
+        console.warn("[PROMPTGPT v2 API] Client connection interrupted.", state);
+        if (!res.writableFinished && !controller.signal.aborted) {
+          controller.abort(new Error(`Client connection interrupted: ${event}.`));
+        }
       };
-      req.once("aborted", abortOnDisconnect);
-      res.once("close", abortOnDisconnect);
+      const onRequestAborted = () => logConnectionState("request-aborted");
+      const onResponseClose = () => {
+        if (!res.writableFinished) logConnectionState("response-close");
+      };
+      const onResponseFinish = () => logConnectionState("response-finish");
+      req.once("aborted", onRequestAborted);
+      res.once("close", onResponseClose);
+      res.once("finish", onResponseFinish);
 
       try {
         const prepared = await options.prepareRequest({
@@ -123,8 +149,9 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
           });
         }
       } finally {
-        req.removeListener("aborted", abortOnDisconnect);
-        res.removeListener("close", abortOnDisconnect);
+        req.removeListener("aborted", onRequestAborted);
+        res.removeListener("close", onResponseClose);
+        res.removeListener("finish", onResponseFinish);
       }
     },
   );
