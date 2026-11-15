@@ -2,6 +2,7 @@ import { fingerprintSource } from "../semantic/factInventory";
 import { verifyDonorStyleBaseline } from "../style/donorBaseline";
 import { generateCandidates, type CandidateModelAdapter } from "../style/candidateGenerator";
 import { evaluateCandidate } from "../style/candidateEvaluator";
+import { validateLogicalRelationAssessments } from "../semantic/logicalRelationPreservation";
 import { runCriticRepairPipeline } from "../repair/criticRepairPipeline";
 import type { StyleCriticAdapter } from "../critic/styleCritic";
 import type { SurgicalRepairAdapter } from "../repair/surgicalRepair";
@@ -80,12 +81,24 @@ export class StyleTransferService {
         let assessments: PropositionAssessment[];
         let profile: StyleDNAProfile;
         try {
-          assessments = await this.deps.semanticVerifier.assess({
-            sourceText: request.sourceText,
-            candidateText: candidate.text,
-            propositions: request.inventory.propositions,
-            signal: request.signal,
-          });
+          const [propositionAssessments, relationAssessments] = await Promise.all([
+            this.deps.semanticVerifier.assess({
+              sourceText: request.sourceText,
+              candidateText: candidate.text,
+              propositions: request.inventory.propositions,
+              signal: request.signal,
+            }),
+            this.deps.semanticVerifier.assessRelations({
+              sourceText: request.sourceText,
+              candidateText: candidate.text,
+              propositions: request.inventory.propositions,
+              signal: request.signal,
+            }),
+          ]);
+          assessments = propositionAssessments;
+          const structureReport = validateLogicalRelationAssessments(
+            candidate.text, request.inventory.propositions, relationAssessments,
+          );
           if (request.signal?.aborted) break;
           profile = this.deps.styleProfiler.analyze(candidate.text);
         } catch (error) {
@@ -106,6 +119,17 @@ export class StyleTransferService {
           minimumStyleConfidence: request.minimumStyleConfidence,
           semanticPolicy: request.semanticPolicy,
         });
+
+        if (!structureReport.passed) {
+          initial.semanticReport.passed = false;
+          initial.semanticReport.issues.push({
+            code: "LOGICAL_RELATION_NOT_PRESERVED", severity: "error",
+            message: structureReport.issues.join(" "),
+          });
+          initial.disposition = "rejected";
+          initial.admissible = false;
+          initial.rejectionReasons.push("Кандидат не сохранил исходную логическую структуру.");
+        }
 
         if (initial.disposition === "accepted") {
           outcomes.push({
@@ -139,6 +163,8 @@ export class StyleTransferService {
             semanticVerifier: {
               assess: ({ sourceText, candidateText, propositions }) =>
                 this.deps.semanticVerifier.assess({ sourceText, candidateText, propositions, signal: request.signal }),
+              assessRelations: ({ sourceText, candidateText, propositions }) =>
+                this.deps.semanticVerifier.assessRelations({ sourceText, candidateText, propositions, signal: request.signal }),
             },
             styleProfiler: this.deps.styleProfiler,
             semanticPolicy: request.semanticPolicy,
