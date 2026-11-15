@@ -7,3 +7,4 @@ export * from "./semantic/semanticPreservation";
 export * from "./style";
 export * from "./critic";
 export * from "./repair";
+export * from "./infrastructure";
