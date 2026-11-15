@@ -19,6 +19,15 @@ export function runStyleDNAAnalyzerSelfTests(): { passed: number; names: string[
   assert(abbreviationProfile.corpus.sentences === 2, "common abbreviation does not create a false sentence boundary");
   names.push("Russian abbreviation handling");
 
+  const initialsProfile = analyzeStyleDNA("А. С. Пушкин пришёл. М. Ю. Лермонтов ушёл.");
+  assert(initialsProfile.corpus.sentences === 2, "personal initials do not create false sentence boundaries");
+  names.push("Russian personal initials");
+
+  const subordinateProfile = analyzeStyleDNA("Поскольку он пришёл, мы начали работу.");
+  const subordinateFeature = subordinateProfile.features.find((item) => item.id === "syntax.subordinate-markers");
+  assert(!!subordinateFeature && subordinateFeature.count === 1, "Cyrillic clause markers are recognized with Unicode boundaries");
+  names.push("Cyrillic syntax markers");
+
   assert(countWords("Один, два и три.") === 4, "word tokenizer counts words");
   names.push("word tokenization");
 
