@@ -22,7 +22,9 @@ export interface StyleTransferApiOptions {
   service: StyleTransferService;
   prepareRequest: StyleTransferRequestPreparer;
   /** Authentication/authorization is mandatory and supplied by the host app. */
-  authenticate: RequestHandler;\n  /** Host-supplied rate limiter; use a shared store in multi-instance deployments. */\n  rateLimit: RequestHandler;
+  authenticate: RequestHandler;
+  /** Host-supplied rate limiter; use a shared store in multi-instance deployments. */
+  rateLimit: RequestHandler;
   maxSourceCharacters?: number;
   maxDonorCharacters?: number;
   onError?: (error: unknown) => void;
