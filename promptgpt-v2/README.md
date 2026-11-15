@@ -39,7 +39,7 @@ This directory is an isolated modernization track. Existing production files are
 The complete offline regression suite (it does not call the live Gemini API) is collected in `runSelfTests.ts`. From the repository root, run:
 
 ```bash
-npx tsx --eval "import { runV2SelfTestSuite } from './promptgpt-v2/runSelfTests.ts'; runV2SelfTestSuite().then(result => console.log(JSON.stringify(result, null, 2))).catch(error => { console.error(error); process.exitCode = 1; });"
+npx tsx promptgpt-v2/runSelfTests.cli.ts
 ```
 
 The runner executes each group sequentially and stops on the first thrown assertion. A successful run returns the total number of passed checks and the per-module results. This command has been documented but has not yet been executed in the current development session.
