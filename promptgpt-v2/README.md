@@ -65,7 +65,7 @@ The runner executes each group sequentially and stops on the first thrown assert
 
 ## Style analyzer limitations
 
-The analyzer records measurable signals and source excerpts, but does not claim full grammatical parsing. Russian participle and gerund detection uses approximate suffix heuristics and can produce false positives or miss forms. Sentence segmentation handles common abbreviations and personal initials, but still needs broader corpus-based testing.
+The analyzer records measurable signals and source excerpts, but does not claim full grammatical parsing. Russian participle and gerund detection uses approximate suffix heuristics and can produce false positives or miss forms. Sentence segmentation handles common abbreviations, Orthodox titles (for example, прп., свт., прот.) and personal initials, but still needs broader corpus-based testing.
 
 Short samples are explicitly marked limited or insufficient. Their apparent frequent patterns must not be treated as stable authorial traits. The current analyzer is a feature extractor, not a complete author-style fingerprint. The scorer compares measured feature rates and distributions against the donor profile, uses family weights and confidence discounts, and explicitly refuses to score insufficient or version-incompatible profiles. Candidate-only repeated markers are treated as possible overfitting rather than automatic style matches.
 
