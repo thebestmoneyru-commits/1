@@ -67,6 +67,18 @@ export async function runSurgicalRepairSelfTests(): Promise<{ passed: number; na
   assert(invalidPatch, "patch with a mismatched expected span is rejected");
   names.push("expected-text integrity");
 
+  const fabricatedEvidence = await repairCandidateSurgically({
+    sourceText, candidateText, inventory,
+    criticReport: {
+      ...report,
+      issues: [{ ...issue, donorEvidenceExcerpt: "этого нет в корпусе донора" }],
+    },
+    donorBaseline: baseline,
+    adapter: { async repair() { throw new Error("must not call model"); } },
+  }).then(() => false).catch(() => true);
+  assert(fabricatedEvidence, "repair rejects critic issues with invented donor evidence");
+  names.push("donor evidence provenance check");
+
   const overlappingReport: StyleCriticReport = {
     ...report,
     issues: [
