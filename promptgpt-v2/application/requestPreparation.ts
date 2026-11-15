@@ -1,7 +1,7 @@
 import { Type } from "@google/genai";
-import type { FactInventory } from "../types";
+import type { FactInventory, LogicalRelation } from "../types";
 import { buildSemanticInventory } from "../semantic/buildInventory";
-import { validatePropositionExtraction } from "../semantic/propositionSchema";
+import { LOGICAL_RELATION_KINDS, validatePropositionExtraction } from "../semantic/propositionSchema";
 import { checkPropositionSourceCoverage } from "../semantic/propositionCoverage";
 import { validatePropositionInterpretationAudit } from "../semantic/propositionInterpretationAudit";
 import { getLogicalRelationAuditKey, validateSemanticStructureAudit } from "../semantic/semanticStructureAudit";
@@ -64,26 +64,20 @@ const PROPOSITION_ITEM_SCHEMA = {
         required: ["kind", "value"],
       },
     },
-    relations: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          kind: {
-            type: Type.STRING,
-            enum: ["cause", "effect", "contrast", "concession", "condition", "purpose", "sequence", "comparison", "attribution", "other"],
-          },
-          from: { type: Type.STRING },
-          to: { type: Type.STRING },
-          expression: { type: Type.STRING },
-        },
-        required: ["kind", "from", "to"],
-      },
-    },
+    relations: { type: Type.ARRAY, items: RELATION_ITEM_SCHEMA },
     mandatory: { type: Type.BOOLEAN },
   },
   required: ["id", "summary", "sourceSpan", "subject", "predicate", "polarity", "qualifications", "relations", "mandatory"],
 };
+
+const RELATION_ITEM_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    kind: { type: Type.STRING, enum: ["cause", "effect", "contrast", "concession", "condition", "purpose", "sequence", "comparison", "attribution", "other"] },
+    from: { type: Type.STRING }, to: { type: Type.STRING }, expression: { type: Type.STRING },
+  },
+  required: ["kind", "from", "to"],
+} as const;
 
 const SPAN_REPAIR_RESPONSE_SCHEMA = {
   type: Type.ARRAY,
@@ -105,10 +99,8 @@ const EXTRACTION_RESPONSE_SCHEMA = {
 const COMPLETENESS_AUDIT_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
-    missingPropositions: {
-      type: Type.ARRAY,
-      items: PROPOSITION_ITEM_SCHEMA,
-    },
+    missingPropositions: { type: Type.ARRAY, items: PROPOSITION_ITEM_SCHEMA },
+    missingRelations: { type: Type.ARRAY, items: RELATION_ITEM_SCHEMA },
   },
   required: ["missingPropositions"],
 };
@@ -208,6 +200,47 @@ export interface RequestPreparationOptions {
   structureAuditTimeoutMs?: number;
 }
 
+function normalizeAndValidateMissingRelations(raw: unknown, sourceText: string, knownIds: ReadonlySet<string>): LogicalRelation[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error("Semantic completeness audit returned an invalid missingRelations array.");
+  const normalizeEndpoint = (value: unknown): unknown => {
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+      const plain = String(value);
+      return knownIds.has(plain) ? plain : `p${value}`;
+    }
+    return value;
+  };
+  return raw.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: ожидался объект.`);
+    }
+    const item = entry as Record<string, unknown>;
+    const kind = item.kind;
+    const from = normalizeEndpoint(item.from);
+    const to = normalizeEndpoint(item.to);
+    const expression = item.expression === null ? undefined : item.expression;
+    if (typeof kind !== "string" || !LOGICAL_RELATION_KINDS.has(kind)) {
+      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: недопустимый тип связи.`);
+    }
+    if (typeof from !== "string" || !from.trim() || from !== from.trim() ||
+        typeof to !== "string" || !to.trim() || to !== to.trim()) {
+      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: некорректный ID пропозиции.`);
+    }
+    if (!knownIds.has(from) || !knownIds.has(to)) {
+      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: отношение ссылается на неизвестную пропозицию.`);
+    }
+    if (from === to) throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: логическое отношение не может ссылаться на саму себя.`);
+    if (expression !== undefined && typeof expression !== "string") {
+      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: expression должен быть строкой.`);
+    }
+    const marker = typeof expression === "string" ? expression.trim() : "";
+    if (marker && !sourceText.includes(marker)) {
+      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: expression отсутствует в исходном тексте.`);
+    }
+    return { kind: kind as LogicalRelation["kind"], from, to, ...(marker ? { expression: marker } : {}) };
+  });
+}
+
 /**
  * Server-side trust boundary: extracts propositions from the exact source,
  * validates their literal spans, builds the immutable inventory, and snapshots
@@ -233,7 +266,7 @@ export function createStyleTransferRequestPreparer(
       "Не объединяй независимые утверждения. Не добавляй сведений, которых нет в исходнике. Не создавай две одинаковые пропозиции для одного и того же исходного фрагмента, субъекта, предиката, объекта, полярности, модальности и уточнений.",
       "Разделяй однородные сказуемые, если они выражают самостоятельные действия/события; не дроби единый составной предикат и смысловые уточнения.",
       "В сложных предложениях отдельно фиксируй самостоятельные утверждения главной и придаточной частей, если каждая сообщает отдельный факт; условия и следствия связывай отношением condition.",
-      "Сохраняй уступительные, причинные, целевые и временные части как отдельные пропозиции, когда в них есть самостоятельное утверждение; фиксируй вид связи.",
+      "Сохраняй уступительные, причинные, следственные, целевые, противопоставительные и временные части как отдельные пропозиции, когда в них есть самостоятельное утверждение; проверяй явные маркеры («поэтому», «вследствие чего», «так как», «поскольку», «тем не менее», «однако», «хотя», «несмотря на», «если», «чтобы») и записывай отношения {kind, from, to, expression} в relations.",
       "Прямую речь представляй как утверждение говорящего с явной атрибуцией; не превращай мнение или цитату в установленный факт автора исходного текста.",
       "Местоимения связывай с антецедентом только если он однозначно устанавливается из текста; сохраняй исходную формулировку субъекта и записывай разрешение местоимения в qualification.",
       "Не теряй отрицания, ограничители, приблизительность, числа, даты, последовательность событий, сравнения и противопоставления. Не повышай степень уверенности и не превращай возможность в факт.",
@@ -360,7 +393,7 @@ export function createStyleTransferRequestPreparer(
       if (signal?.aborted) throw new Error("Request preparation was cancelled.");
       const auditRoute = routes.semanticAudit ?? routes.semanticExtraction;
       const auditPrompt = [
-        "Выполни независимый аудит полноты извлечения пропозиций из исходного текста.",
+        "Выполни независимый аудит полноты извлечения пропозиций и межпропозиционных связей из исходного текста.",
         "Твоя задача — найти только самостоятельные смысловые утверждения, которые присутствуют в SOURCE TEXT, но отсутствуют в EXTRACTED PROPOSITIONS.",
         "Проверь каждое предложение и каждую смысловую часть сложного предложения. Особое внимание удели отрицанию, субъектам, действиям, объектам, числам, датам, причинности, условиям, исключениям, атрибуции, модальности, последовательности и противопоставлениям.",
         "Не возвращай переформулировки или точные смысловые дубли уже учтённых утверждений для того же исходного фрагмента. Не добавляй выводы, фоновые знания или утверждения, которых буквально/смыслово нет в исходнике.",
@@ -370,9 +403,10 @@ export function createStyleTransferRequestPreparer(
         "Для каждого пропуска используй ту же структуру пропозиции, что и в исходном извлечении. sourceSpan.text обязан быть дословной подстрокой SOURCE TEXT; индексы UTF-16.",
         "Допустимые qualifications.kind: condition, exception, restriction, approximation, attribution, time, place, degree, other. Допустимые relations.kind: cause, effect, contrast, concession, condition, purpose, sequence, comparison, attribution, other.",
         "Допустимые modality.kind: certainty, possibility, necessity, obligation, permission, desire, reported-speech, other; value и scope обязательны и не могут быть пустыми.",
-        "ID новых пропозиций должны быть уникальными строками и не совпадать с уже существующими. Для новых пропозиций укажи relations как пустые массивы; не создавай связи с уже извлечёнными утверждениями.",
-        "Если пропусков нет, верни пустой массив missingPropositions.",
-        "Верни только JSON-объект вида: {missingPropositions:[{id,summary,sourceSpan:{start,end,text},subject,predicate,object?,polarity,modality?:{kind,value,scope},qualifications:[{kind,value}],relations:[{kind,from,to,expression?}],mandatory}]}",
+        "ID новых пропозиций должны быть уникальными строками и не совпадать с уже существующими. Связи новых пропозиций могут ссылаться на уже существующие ID; один конец каждой связи должен совпадать с ID пропозиции, в которой связь записана.",
+        "Отдельно проверь явные языковые маркеры связей между существующими и/или новыми пропозициями. Если связь отсутствует в relations, верни её в missingRelations как {kind,from,to,expression?}. expression, если указан, должен быть дословной подстрокой SOURCE TEXT. Не выдумывай маркеры и не создавай связь без ясного текстового основания.",
+        "Если пропусков нет, верни missingPropositions: [] и missingRelations: [].",
+        "Верни только JSON-объект вида: {missingPropositions:[{id,summary,sourceSpan:{start,end,text},subject,predicate,object?,polarity,modality?:{kind,value,scope},qualifications:[{kind,value}],relations:[{kind,from,to,expression?}],mandatory}],missingRelations:[{kind,from,to,expression?}]}",
         "",
         "SOURCE TEXT:",
         JSON.stringify(sourceText),
@@ -404,42 +438,58 @@ export function createStyleTransferRequestPreparer(
           !Array.isArray((auditParsed as Record<string, unknown>).missingPropositions)) {
         throw new Error("Semantic completeness audit returned an invalid missingPropositions object.");
       }
+      const existingIds = new Set(completePropositions.map((item) => item.id));
       const normalizedMissing = normalizeModelExtractedPropositions(
         sourceText,
         (auditParsed as { missingPropositions: unknown }).missingPropositions,
       );
-      const missing = validatePropositionExtraction(
-        sourceText,
-        normalizedMissing,
-      );
-      if (!missing.valid) {
-        throw new Error(`Semantic completeness audit failed source-bound validation: ${missing.errors.join(" ")}`);
-      }
-      const existingIds = new Set(completePropositions.map((item) => item.id));
-      const existingKeys = new Set(completePropositions.map((item) =>
-        [item.sourceSpan.start, item.sourceSpan.end, item.subject.toLocaleLowerCase("ru-RU"),
-          item.predicate.toLocaleLowerCase("ru-RU"), item.object?.toLocaleLowerCase("ru-RU") ?? "",
-          item.polarity].join("|"),
-      ));
+      const missing = validatePropositionExtraction(sourceText, normalizedMissing, existingIds);
+      if (!missing.valid) throw new Error(`Semantic completeness audit failed source-bound validation: ${missing.errors.join(" ")}`);
       for (const item of missing.propositions) {
-        const key = [item.sourceSpan.start, item.sourceSpan.end, item.subject.toLocaleLowerCase("ru-RU"),
-          item.predicate.toLocaleLowerCase("ru-RU"), item.object?.toLocaleLowerCase("ru-RU") ?? "",
-          item.polarity].join("|");
-        if (existingIds.has(item.id)) {
-          throw new Error(`Semantic completeness audit reused an existing proposition ID: ${item.id}.`);
-        }
-        if (existingKeys.has(key)) {
-          throw new Error(`Semantic completeness audit duplicated an already extracted proposition: ${item.id}.`);
-        }
+        if (existingIds.has(item.id)) throw new Error(`Semantic completeness audit reused an existing proposition ID: ${item.id}.`);
         existingIds.add(item.id);
-        existingKeys.add(key);
       }
-      if (missing.propositions.length) {
-        const combined = validatePropositionExtraction(sourceText, [...completePropositions, ...missing.propositions]);
-        if (!combined.valid) {
-          throw new Error(`Combined proposition inventory failed validation: ${combined.errors.join(" ")}`);
+
+      const recoveredRelations = normalizeAndValidateMissingRelations(
+        (auditParsed as Record<string, unknown>).missingRelations, sourceText, existingIds,
+      );
+      if (missing.propositions.length || recoveredRelations.length) {
+        const merged = [...completePropositions, ...missing.propositions].map((item) => ({
+          ...item, relations: item.relations.map((relation) => ({ ...relation })),
+        }));
+        const byId = new Map(merged.map((item) => [item.id, item]));
+        let changedRelations = false;
+        for (const relation of recoveredRelations) {
+          let existing: LogicalRelation | undefined;
+          for (const proposition of merged) {
+            existing = proposition.relations.find((candidate) =>
+              candidate.kind === relation.kind && candidate.from === relation.from && candidate.to === relation.to,
+            );
+            if (existing) break;
+          }
+          if (!existing) {
+            const owner = byId.get(relation.from);
+            if (!owner) throw new Error("Recovered logical relation has no valid owning proposition.");
+            owner.relations.push({ ...relation });
+            changedRelations = true;
+            continue;
+          }
+          const oldMarker = existing.expression?.trim() ?? "";
+          const newMarker = relation.expression?.trim() ?? "";
+          if (oldMarker && newMarker && oldMarker !== newMarker) {
+            throw new Error(`Semantic completeness audit returned conflicting evidence for relation ${relation.kind} (${relation.from} -> ${relation.to}): «${oldMarker}» vs «${newMarker}».`);
+          }
+          if (!oldMarker && newMarker) {
+            existing.expression = newMarker;
+            changedRelations = true;
+          }
+          // Identical edges are idempotent: no second copy is appended.
         }
-        completePropositions = combined.propositions;
+        if (missing.propositions.length || changedRelations) {
+          const combined = validatePropositionExtraction(sourceText, merged);
+          if (!combined.valid) throw new Error(`Combined proposition inventory failed validation: ${combined.errors.join(" ")}`);
+          completePropositions = combined.propositions;
+        }
       }
     }
 
