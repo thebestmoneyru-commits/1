@@ -114,6 +114,7 @@ const DEFAULT_COOLDOWNS: Record<ModelErrorKind, number> = {
   "safety-block": 0,
   "empty-response": 0,
   unknown: 0,
+  cancelled: 0,
 };
 
 function errorText(error: unknown): string {
@@ -212,16 +213,18 @@ export class ModelRouter {
       state.queue.push(wake);
       signal.addEventListener("abort", abort, { once: true });
     });
-    if (signal.aborted) throw new ModelRouterError("Model request aborted while waiting for capacity.", "timeout", model.id);
-    state.active++;
+    if (signal.aborted) {
+      this.release(model.id);
+      throw new ModelRouterError("Model request aborted while waiting for capacity.", "cancelled", model.id);
+    }
     return () => this.release(model.id);
   }
 
   private release(modelId: string): void {
     const state = this.states.get(modelId)!;
-    state.active = Math.max(0, state.active - 1);
     const next = state.queue.shift();
     if (next) next();
+    else state.active = Math.max(0, state.active - 1);
   }
 
   async generate(request: ModelRouterRequest): Promise<ModelRouterResult> {
@@ -268,7 +271,7 @@ export class ModelRouter {
           };
         } catch (error) {
           lastError = error;
-          const kind = error instanceof ModelRouterError ? error.kind : classifyModelError(error);
+          const kind = request.signal?.aborted ? "cancelled" : (error instanceof ModelRouterError ? error.kind : classifyModelError(error));
           attempts.push({ modelId, attempt, errorKind: kind, durationMs: Math.max(0, this.now() - started) });
           if (kind === "rate-limit" || kind === "quota-exhausted" || kind === "unavailable" || kind === "timeout" || kind === "network") {
             state.cooldownUntil = Math.max(state.cooldownUntil, this.now() + (this.cooldowns[kind] ?? 0));
@@ -279,7 +282,11 @@ export class ModelRouter {
           timer.dispose();
         }
       }
-      if (lastError && !retryable(lastError instanceof ModelRouterError ? lastError.kind : classifyModelError(lastError))) break;
+      if (lastError) {
+        const lastKind = lastError instanceof ModelRouterError ? lastError.kind : classifyModelError(lastError);
+        if (lastKind === "cancelled" || lastKind === "invalid-auth" ||
+            lastKind === "invalid-request" || lastKind === "safety-block" || lastKind === "unknown") break;
+      }
     }
     const kind = lastError instanceof ModelRouterError ? lastError.kind : classifyModelError(lastError);
     throw new ModelRouterError(
