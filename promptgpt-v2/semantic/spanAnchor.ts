@@ -80,6 +80,27 @@ export function resolveVerbatimSpan(
     typeof text === "string" &&
     fullText.slice(start as number, end as number) === text
   ) {
+    if (
+      !preferredRange ||
+      ((start as number) < preferredRange.end && (end as number) > preferredRange.start)
+    ) {
+      return { start: start as number, end: end as number, text };
+    }
+    const overlapping = findExactOccurrences(fullText, text).filter(
+      (item) => item.start < preferredRange.end && item.end > preferredRange.start,
+    );
+    if (overlapping.length > 0) {
+      let best = overlapping[0];
+      let bestDistance = Math.abs(best.start - (start as number));
+      for (let i = 1; i < overlapping.length; i++) {
+        const distance = Math.abs(overlapping[i].start - (start as number));
+        if (distance < bestDistance) {
+          best = overlapping[i];
+          bestDistance = distance;
+        }
+      }
+      return { start: best.start, end: best.end, text: fullText.slice(best.start, best.end) };
+    }
     return { start: start as number, end: end as number, text };
   }
 
