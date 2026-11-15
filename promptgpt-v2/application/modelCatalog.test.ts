@@ -18,6 +18,7 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
     surgicalRepair: { preferredModel: "repair" },
     semanticVerification: { preferredModel: "semantic" },
     semanticExtraction: { preferredModel: "extractor" },
+    semanticAudit: { preferredModel: "auditor" },
   };
   const valid = validateModelCatalog({
     models: [
@@ -27,10 +28,11 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
       model("repair", ["surgical-repair"]),
       model("semantic", ["semantic-verification"]),
       model("extractor", ["semantic-extraction"]),
+      model("auditor", ["semantic-extraction"]),
     ],
     routes,
   });
-  assert(valid.models.length === 6, "valid explicit catalog must be returned");
+  assert(valid.models.length === 7, "valid explicit catalog must be returned");
   let missingModelRejected = false;
   try {
     validateModelCatalog({ models: [model("gen", tasks)], routes });
@@ -44,6 +46,16 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
     });
   } catch { taskMismatchRejected = true; }
   assert(taskMismatchRejected, "route model with incompatible task must be rejected");
+  let sameAuditModelRejected = false;
+  try {
+    validateModelCatalog({
+      models: [model("gen", ["candidate-generation"]), model("backup", ["candidate-generation"]),
+        model("critic", ["style-critique"]), model("repair", ["surgical-repair"]),
+        model("semantic", ["semantic-verification"]), model("extractor", ["semantic-extraction"])],
+      routes: { ...routes, semanticAudit: { preferredModel: "extractor" } },
+    });
+  } catch { sameAuditModelRejected = true; }
+  assert(sameAuditModelRejected, "independent audit route must not reuse the extraction preferred model");
   let disabledRejected = false;
   try {
     validateModelCatalog({
@@ -59,5 +71,5 @@ export function runApplicationSelfTests(): { passed: number; names: string[] } {
     });
   } catch { disabledRejected = true; }
   assert(disabledRejected, "disabled route model must be rejected");
-  return { passed: 4, names: ["accept explicit allowlist", "reject model outside allowlist", "reject task capability mismatch", "reject disabled route model"] };
+  return { passed: 5, names: ["accept explicit allowlist", "reject model outside allowlist", "reject task capability mismatch", "reject disabled route model", "require distinct model for independent audit"] };
 }
