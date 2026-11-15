@@ -120,7 +120,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
       { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
     )({ requestId: "structure-issue", sourceText: source, donorText: donor });
   } catch (error) {
-    structuralIssueRejected = String(error).includes("potential structural issue");
+    structuralIssueRejected = String(error).includes("confirmed structural issue");
   }
   assert(structuralIssueRejected, "a validated structural finding must stop preparation");
   names.push("stop preparation when independent audit finds a structural issue");
