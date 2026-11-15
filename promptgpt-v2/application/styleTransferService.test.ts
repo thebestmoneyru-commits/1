@@ -1,4 +1,5 @@
 import { buildSemanticInventory } from "../semantic/buildInventory";
+import { getLogicalRelationAuditKey } from "../semantic/semanticStructureAudit";
 import { analyzeStyleDNA } from "../style/styleDNAAnalyzer";
 import { createDonorStyleBaseline } from "../style/donorBaseline";
 import { StyleTransferService } from "./styleTransferService";
@@ -72,6 +73,55 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(criticCalls === 0, "an already accepted candidate should bypass critic and repair");
     assert(result.trace.some((event) => event.stage === "completed"), "successful execution should be traced");
     names.push("accept semantically valid candidate and skip unnecessary repair");
+  }
+
+  {
+    const { sourceText, request } = fixture();
+    const firstEnd = sourceText.indexOf(".") + 1;
+    const secondStart = sourceText.indexOf("После службы");
+    const secondEnd = sourceText.indexOf(".", secondStart) + 1;
+    const relation = { kind: "sequence" as const, from: "p1", to: "p2", expression: "После службы" };
+    const inventory = buildSemanticInventory(sourceText, [
+      {
+        id: "p1", summary: "Священник пришёл и совершил молитву.",
+        sourceSpan: { start: 0, end: firstEnd, text: sourceText.slice(0, firstEnd) },
+        subject: "священник", predicate: "пришёл и совершил", object: "молитву",
+        polarity: "positive", qualifications: [], relations: [relation], mandatory: true,
+      },
+      {
+        id: "p2", summary: "Священник беседовал с людьми.",
+        sourceSpan: { start: secondStart, end: secondEnd, text: sourceText.slice(secondStart, secondEnd) },
+        subject: "священник", predicate: "беседовал", object: "с каждым человеком",
+        polarity: "positive", qualifications: [], relations: [relation], mandatory: true,
+      },
+    ]);
+    assert(inventory.valid && inventory.inventory, "relation fixture inventory must be valid");
+    let criticCalls = 0;
+    const key = getLogicalRelationAuditKey(relation);
+    const service = new StyleTransferService({
+      candidateGenerator: { async generate() { return sourceText; } },
+      critic: { async review() { criticCalls++; throw new Error("critic must not run after relation failure"); } },
+      repair: { async repair() { throw new Error("repair must not run after relation failure"); } },
+      semanticVerifier: {
+        async assess() {
+          return [
+            { propositionId: "p1", status: "preserved" as const, outputEvidence: [sourceText.slice(0, firstEnd)], rationale: "Сохранено.", confidence: 0.99 },
+            { propositionId: "p2", status: "preserved" as const, outputEvidence: [sourceText.slice(secondStart, secondEnd)], rationale: "Сохранено.", confidence: 0.99 },
+          ];
+        },
+        async assessRelations() {
+          return [{ relationKey: key, status: "changed" as const, outputEvidence: ["После службы"], rationale: "Временная связь изменена.", confidence: 0.99 }];
+        },
+      },
+      styleProfiler: {
+        analyze(text) { return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 }); },
+      },
+    });
+    const result = await service.execute({ ...request, inventory: inventory.inventory });
+    assert(result.status === "rejected", "changed logical relation must reject a candidate even when both propositions are preserved");
+    assert(criticCalls === 0, "critic and repair must not run after relation failure");
+    assert(result.candidates[0]?.initial.semanticReport.issues.some((issue) => issue.code === "LOGICAL_RELATION_NOT_PRESERVED"), "relation failure must be visible in semantic report");
+    names.push("reject changed logical relation when individual propositions survive");
   }
 
   {
