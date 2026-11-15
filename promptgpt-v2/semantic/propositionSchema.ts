@@ -21,17 +21,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * conditions are not collapsed into one claim.
  */
 export function getPropositionSemanticKey(proposition: Proposition): string {
-  const normalize = (value: string) => value.trim().replace(/\s+/gu, " ").toLocaleLowerCase("ru-RU");
-  return [
+  const normalize = (value: string) => value.trim().replace(/\\s+/gu, " ").toLocaleLowerCase("ru-RU");
+  const qualifications = proposition.qualifications
+    .map((item) => [item.kind, normalize(item.value)] as const)
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), "ru-RU"));
+
+  // JSON encoding prevents collisions when model text contains delimiter characters.
+  return JSON.stringify([
     proposition.sourceSpan.start, proposition.sourceSpan.end,
     normalize(proposition.subject), normalize(proposition.predicate),
-    proposition.object ? normalize(proposition.object) : "",
+    proposition.object === undefined ? "" : normalize(proposition.object),
     proposition.polarity,
-    proposition.modality
-      ? [proposition.modality.kind, normalize(proposition.modality.value), normalize(proposition.modality.scope)].join(":")
-      : "",
-    proposition.qualifications.map((item) => [item.kind, normalize(item.value)].join(":")).sort().join(";"),
-  ].join("|");
+    proposition.modality ? [proposition.modality.kind, normalize(proposition.modality.value), normalize(proposition.modality.scope)] : null,
+    qualifications,
+  ]);
 }
 
 /**
@@ -127,11 +130,12 @@ export function validatePropositionExtraction(
             (rawRelation.expression !== undefined && typeof rawRelation.expression !== "string")) {
           validRelations = false;
           errors.push(`Пропозиция ${id || "#" + (index + 1)}: некорректное логическое отношение #${relationIndex + 1}.`);
-        } else if (typeof rawRelation.expression === "string" &&
-                   rawRelation.expression.trim() &&
-                   !sourceText.includes(rawRelation.expression.trim())) {
+        } else if (rawRelation.expression !== undefined &&
+                   (typeof rawRelation.expression !== "string" ||
+                    !rawRelation.expression.trim() ||
+                    !sourceText.includes(rawRelation.expression))) {
           validRelations = false;
-          errors.push(`Пропозиция ${id || "#" + (index + 1)}: expression логического отношения отсутствует в исходном тексте.`);
+          errors.push(`Пропозиция ${id || "#" + (index + 1)}: expression логического отношения отсутствует в исходном тексте или не является непустой дословной подстрокой.`);
         }
       });
     } else {

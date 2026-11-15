@@ -111,6 +111,18 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
   assert(literalExpression.valid, "a literal relation marker must pass");
   names.push("accept verbatim logical-relation expressions");
 
+  const emptyExpression = validatePropositionExtraction(source, [{
+    ...base, relations: [{ kind: "cause", from: "p1", to: "p2", expression: "   " }],
+  }], new Set(["p2"]));
+  assert(!emptyExpression.valid, "provided relation expressions must not be empty");
+  names.push("reject empty logical-relation expressions");
+
+  const paddedExpression = validatePropositionExtraction(source, [{
+    ...base, relations: [{ kind: "cause", from: "p1", to: "p2", expression: "потому что  " }],
+  }], new Set(["p2"]));
+  assert(!paddedExpression.valid, "relation evidence must match the source exactly, including whitespace");
+  names.push("reject relation expressions with non-source whitespace");
+
   const differentModality = validatePropositionExtraction(source, [
     base,
     { ...base, id: "p2", modality: { kind: "possibility", value: "возможно", scope: "не пришёл" } },
@@ -124,6 +136,12 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
   ]);
   assert(differentQualification.valid, "claims with different qualification kinds must not be treated as duplicates");
   names.push("include qualification kind in semantic duplicate identity");
+
+  const delimiterCollisionA = { ...base, subject: "A|B", predicate: "C" };
+  const delimiterCollisionB = { ...base, id: "p2", subject: "A", predicate: "B|C" };
+  const delimiterCollision = validatePropositionExtraction(source, [delimiterCollisionA, delimiterCollisionB]);
+  assert(delimiterCollision.valid, "delimiter characters in different fields must not collide in semantic identity");
+  names.push("avoid semantic-key collisions from delimiter characters");
 
   return { passed: names.length, names };
 }

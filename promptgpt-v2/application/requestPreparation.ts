@@ -37,6 +37,15 @@ const RELATION_ITEM_SCHEMA = {
   required: ["kind", "from", "to"],
 } as const;
 
+const MISSING_RELATION_ITEM_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    kind: { type: Type.STRING, enum: ["cause", "effect", "contrast", "concession", "condition", "purpose", "sequence", "comparison", "attribution", "other"] },
+    from: { type: Type.STRING }, to: { type: Type.STRING }, expression: { type: Type.STRING },
+  },
+  required: ["kind", "from", "to", "expression"],
+} as const;
+
 const PROPOSITION_ITEM_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -100,9 +109,9 @@ const COMPLETENESS_AUDIT_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
     missingPropositions: { type: Type.ARRAY, items: PROPOSITION_ITEM_SCHEMA },
-    missingRelations: { type: Type.ARRAY, items: RELATION_ITEM_SCHEMA },
+    missingRelations: { type: Type.ARRAY, items: MISSING_RELATION_ITEM_SCHEMA },
   },
-  required: ["missingPropositions"],
+  required: ["missingPropositions", "missingRelations"],
 };
 
 const INTERPRETATION_AUDIT_RESPONSE_SCHEMA = {
@@ -200,9 +209,40 @@ export interface RequestPreparationOptions {
   structureAuditTimeoutMs?: number;
 }
 
-function normalizeAndValidateMissingRelations(raw: unknown, sourceText: string, knownIds: ReadonlySet<string>): LogicalRelation[] {
-  if (raw === undefined) return [];
+function getSentenceBounds(sourceText: string, position: number): { start: number; end: number } {
+  const safePosition = Math.max(0, Math.min(position, sourceText.length));
+  const previousBoundary = /[.!?…][)"'»”’]*\s+/gu;
+  let start = 0;
+  for (const match of sourceText.slice(0, safePosition).matchAll(previousBoundary)) {
+    start = (match.index ?? 0) + match[0].length;
+  }
+  const nextBoundary = /[.!?…][)"'»”’]*(?=\s|$)/u.exec(sourceText.slice(safePosition));
+  const end = nextBoundary ? safePosition + nextBoundary.index + nextBoundary[0].length : sourceText.length;
+  return { start, end };
+}
+
+function hasVerbatimOccurrenceInEndpointSentences(sourceText: string, expression: string, fromStart: number, toStart: number): boolean {
+  if (!expression) return false;
+  const endpointSentences = [getSentenceBounds(sourceText, fromStart), getSentenceBounds(sourceText, toStart)];
+  let searchFrom = 0;
+  while (searchFrom <= sourceText.length - expression.length) {
+    const occurrence = sourceText.indexOf(expression, searchFrom);
+    if (occurrence < 0) return false;
+    const occurrenceEnd = occurrence + expression.length;
+    if (endpointSentences.some((sentence) => occurrence >= sentence.start && occurrenceEnd <= sentence.end)) return true;
+    searchFrom = occurrence + 1;
+  }
+  return false;
+}
+
+function normalizeAndValidateMissingRelations(
+  raw: unknown,
+  sourceText: string,
+  knownPropositions: readonly { id: string; sourceSpan: { start: number; end: number } }[],
+): LogicalRelation[] {
   if (!Array.isArray(raw)) throw new Error("Semantic completeness audit returned an invalid missingRelations array.");
+  const propositionsById = new Map(knownPropositions.map((item) => [item.id, item]));
+  const knownIds = new Set(propositionsById.keys());
   const normalizeEndpoint = (value: unknown): unknown => {
     if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
       const plain = String(value);
@@ -211,34 +251,40 @@ function normalizeAndValidateMissingRelations(raw: unknown, sourceText: string, 
     return value;
   };
   return raw.map((entry, index) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: ожидался объект.`);
-    }
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: ожидался объект.`);
     const item = entry as Record<string, unknown>;
-    const kind = item.kind;
-    const from = normalizeEndpoint(item.from);
-    const to = normalizeEndpoint(item.to);
-    const expression = item.expression === null ? undefined : item.expression;
-    if (typeof kind !== "string" || !LOGICAL_RELATION_KINDS.has(kind)) {
-      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: недопустимый тип связи.`);
-    }
-    if (typeof from !== "string" || !from.trim() || from !== from.trim() ||
-        typeof to !== "string" || !to.trim() || to !== to.trim()) {
+    const kind = item.kind, from = normalizeEndpoint(item.from), to = normalizeEndpoint(item.to);
+    if (typeof kind !== "string" || !LOGICAL_RELATION_KINDS.has(kind)) throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: недопустимый тип связи.`);
+    if (typeof from !== "string" || !from.trim() || from !== from.trim() || typeof to !== "string" || !to.trim() || to !== to.trim()) {
       throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: некорректный ID пропозиции.`);
     }
-    if (!knownIds.has(from) || !knownIds.has(to)) {
-      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: отношение ссылается на неизвестную пропозицию.`);
-    }
+    if (!knownIds.has(from) || !knownIds.has(to)) throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: отношение ссылается на неизвестную пропозицию.`);
     if (from === to) throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: логическое отношение не может ссылаться на саму себя.`);
-    if (expression !== undefined && typeof expression !== "string") {
-      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: expression должен быть строкой.`);
+    if (typeof item.expression !== "string" || !item.expression.trim()) throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: expression обязателен и должен содержать текстовое свидетельство.`);
+    const expression = item.expression;
+    const fromProposition = propositionsById.get(from), toProposition = propositionsById.get(to);
+    if (!fromProposition || !toProposition) throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: невозможно определить исходные диапазоны пропозиций.`);
+    if (!sourceText.includes(expression)) throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: expression отсутствует в исходном тексте.`);
+    if (!hasVerbatimOccurrenceInEndpointSentences(sourceText, expression, fromProposition.sourceSpan.start, toProposition.sourceSpan.start)) {
+      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: expression не находится в предложении одной из связанных пропозиций.`);
     }
-    const marker = typeof expression === "string" ? expression.trim() : "";
-    if (marker && !sourceText.includes(marker)) {
-      throw new Error(`Semantic completeness audit returned invalid missingRelations #${index + 1}: expression отсутствует в исходном тексте.`);
-    }
-    return { kind: kind as LogicalRelation["kind"], from, to, ...(marker ? { expression: marker } : {}) };
+    return { kind: kind as LogicalRelation["kind"], from, to, expression };
   });
+}
+
+function validateRelationExpressionAnchors(sourceText: string, propositions: readonly {
+  id: string; sourceSpan: { start: number; end: number }; relations: readonly LogicalRelation[];
+}[]): void {
+  const byId = new Map(propositions.map((item) => [item.id, item]));
+  for (const proposition of propositions) for (const relation of proposition.relations) {
+    const expression = relation.expression;
+    if (expression === undefined) continue;
+    const from = byId.get(relation.from), to = byId.get(relation.to);
+    if (!from || !to) continue;
+    if (!sourceText.includes(expression) || !hasVerbatimOccurrenceInEndpointSentences(sourceText, expression, from.sourceSpan.start, to.sourceSpan.start)) {
+      throw new Error(`Logical relation ${relation.kind} (${relation.from} -> ${relation.to}) has expression not anchored to either endpoint sentence: «${expression}».`);
+    }
+  }
 }
 
 /**
@@ -387,6 +433,7 @@ export function createStyleTransferRequestPreparer(
     if (!validation.valid) {
       throw new Error(`Semantic extraction failed source-bound validation: ${validation.errors.join(" ")}`);
     }
+    validateRelationExpressionAnchors(sourceText, validation.propositions);
 
     let completePropositions = validation.propositions;
     if (options.completenessAudit !== false) {
@@ -404,9 +451,9 @@ export function createStyleTransferRequestPreparer(
         "Допустимые qualifications.kind: condition, exception, restriction, approximation, attribution, time, place, degree, other. Допустимые relations.kind: cause, effect, contrast, concession, condition, purpose, sequence, comparison, attribution, other.",
         "Допустимые modality.kind: certainty, possibility, necessity, obligation, permission, desire, reported-speech, other; value и scope обязательны и не могут быть пустыми.",
         "ID новых пропозиций должны быть уникальными строками и не совпадать с уже существующими. Связи новых пропозиций могут ссылаться на уже существующие ID; один конец каждой связи должен совпадать с ID пропозиции, в которой связь записана.",
-        "Отдельно проверь явные языковые маркеры связей между существующими и/или новыми пропозициями. Если связь отсутствует в relations, верни её в missingRelations как {kind,from,to,expression?}. expression, если указан, должен быть дословной подстрокой SOURCE TEXT. Не выдумывай маркеры и не создавай связь без ясного текстового основания.",
+        "Отдельно проверь явные языковые маркеры связей между существующими и/или новыми пропозициями. Если связь отсутствует в relations, верни её в missingRelations как {kind,from,to,expression}. expression обязателен: это точная, дословная подстрока SOURCE TEXT без добавленных или удалённых пробелов. Маркер должен находиться в том же предложении, что и одна из связанных пропозиций. Не выдумывай маркеры и не создавай связь без ясного текстового основания.",
         "Если пропусков нет, верни missingPropositions: [] и missingRelations: [].",
-        "Верни только JSON-объект вида: {missingPropositions:[{id,summary,sourceSpan:{start,end,text},subject,predicate,object?,polarity,modality?:{kind,value,scope},qualifications:[{kind,value}],relations:[{kind,from,to,expression?}],mandatory}],missingRelations:[{kind,from,to,expression?}]}",
+        "Верни только JSON-объект вида: {missingPropositions:[{id,summary,sourceSpan:{start,end,text},subject,predicate,object?,polarity,modality?:{kind,value,scope},qualifications:[{kind,value}],relations:[{kind,from,to,expression?}],mandatory}],missingRelations:[{kind,from,to,expression}]}",
         "",
         "SOURCE TEXT:",
         JSON.stringify(sourceText),
@@ -450,8 +497,9 @@ export function createStyleTransferRequestPreparer(
         existingIds.add(item.id);
       }
 
+      const allKnownPropositions = [...completePropositions, ...missing.propositions];
       const recoveredRelations = normalizeAndValidateMissingRelations(
-        (auditParsed as Record<string, unknown>).missingRelations, sourceText, existingIds,
+        (auditParsed as Record<string, unknown>).missingRelations, sourceText, allKnownPropositions,
       );
       if (missing.propositions.length || recoveredRelations.length) {
         const merged = [...completePropositions, ...missing.propositions].map((item) => ({
@@ -488,6 +536,7 @@ export function createStyleTransferRequestPreparer(
         if (missing.propositions.length || changedRelations) {
           const combined = validatePropositionExtraction(sourceText, merged);
           if (!combined.valid) throw new Error(`Combined proposition inventory failed validation: ${combined.errors.join(" ")}`);
+          validateRelationExpressionAnchors(sourceText, combined.propositions);
           completePropositions = combined.propositions;
         }
       }
