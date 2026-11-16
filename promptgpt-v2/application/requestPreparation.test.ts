@@ -841,6 +841,42 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   );
   names.push("apply relation-type and relation-inversion repairs to the same edge");
 
+  let conflictingSameEdgeRepairsRejected = false;
+  try {
+    const duplicateRelationTypeAudit = {
+      checkedPropositionIds: ["p1", "p2"],
+      checkedRelationKeys: [combinedAuditKey],
+      issues: [
+        { ...combinedAudit.issues[0] },
+        { ...combinedAudit.issues[0] },
+      ],
+    };
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        [{ ...inversionExtraction[0], relations: [combinedAuditRelation] }, inversionExtraction[1]],
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1", "p2"]),
+        duplicateRelationTypeAudit,
+        {
+          decisions: [
+            { issueIndex: 0, action: "change-kind", correctedKind: "cause", explanation: "Первое решение." },
+            { issueIndex: 1, action: "already-correct", explanation: "Противоречащее второе решение." },
+          ],
+        },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "conflicting-same-edge-repairs", sourceText: inversionSource, donorText: donor });
+  } catch (error) {
+    conflictingSameEdgeRepairsRejected = String(error).includes("invalid, duplicate or unexpected decision");
+  }
+  assert(
+    conflictingSameEdgeRepairsRejected,
+    "two contradictory adjudications must not target and mutate the same logical relation",
+  );
+  names.push("reject conflicting adjudications that target the same logical relation");
+
+
   const removedRelationResult = await createStyleTransferRequestPreparer(
     fakeRouter(
       [{ ...inversionExtraction[0], relations: [combinedAuditRelation] }, inversionExtraction[1]],
