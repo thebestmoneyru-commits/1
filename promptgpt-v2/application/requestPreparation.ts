@@ -1286,7 +1286,10 @@ export function createStyleTransferRequestPreparer(
         }
         validateRelationExpressionAnchors(sourceText, repairedStructure.propositions);
         completePropositions = repairedStructure.propositions;
-        confirmedStructureIssues = confirmedStructureIssues.filter((issue) => issue.kind !== "relation-type");
+        confirmedStructureIssues = confirmedStructureIssues.filter((issue) =>
+          issue.kind !== "relation-type" &&
+          !(issue.kind === "relation-inversion" && removedRelationKeys.has(issue.relationKey!)),
+        );
       }
 
       const inversionCandidates = structureAudit.issues.map((issue, index) => ({ issue, index }))
