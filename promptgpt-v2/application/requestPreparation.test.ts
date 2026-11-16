@@ -186,6 +186,47 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(invalidSelfRelationRepairRejected, "an invalid relation repair must still fail strict validation");
   names.push("reject a self-referential relation that survives the bounded repair pass");
 
+  const evidencePreservationSource = "Дождь пошёл, поэтому путники укрылись.";
+  const evidencePreservationExtraction = [
+    {
+      id: "p1", summary: "Дождь пошёл",
+      sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" },
+      subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [],
+      relations: [{ kind: "cause", from: "p1", to: "p1", expression: "поэтому" }], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Путники укрылись",
+      sourceSpan: { start: evidencePreservationSource.indexOf("путники"), end: evidencePreservationSource.length, text: "путники укрылись." },
+      subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [],
+      relations: [], mandatory: true,
+    },
+  ];
+  const evidencePreserved = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      evidencePreservationExtraction,
+      [
+        { id: "p1", relations: [{ kind: "cause", from: "p1", to: "p2" }] },
+        { id: "p2", relations: [] },
+      ],
+    ),
+    routes,
+    {
+      completenessAudit: false,
+      interpretationAudit: false,
+      structureAudit: false,
+      analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
+    },
+  )({ requestId: "preserve-relation-evidence", sourceText: evidencePreservationSource, donorText: donor });
+  assert(
+    evidencePreserved.inventory.propositions.find((item) => item.id === "p1")?.relations.some(
+      (relation) => relation.kind === "cause" && relation.from === "p1" &&
+        relation.to === "p2" && relation.expression === "поэтому",
+    ),
+    "a relation repair that omits an optional expression must preserve the original verbatim evidence",
+  );
+  names.push("preserve original relation evidence when a bounded repair omits the optional expression");
+
+
   const omissionSource = "Святитель пришёл в город. Он помог людям. Он основал обитель.";
   const omissionFirstEnd = omissionSource.indexOf(".") + 1;
   const omissionSecondStart = omissionSource.indexOf("Он помог");
