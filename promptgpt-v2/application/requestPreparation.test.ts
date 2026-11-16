@@ -800,6 +800,23 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   );
   names.push("apply relation-type and relation-inversion repairs to the same edge");
 
+  const removedRelationResult = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      [{ ...inversionExtraction[0], relations: [combinedAuditRelation] }, inversionExtraction[1]],
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      combinedAudit,
+      { decisions: [{ issueIndex: 0, action: "remove", explanation: "Это внутренняя конструкция, а не межпропозиционная связь." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "removed-relation-inversion", sourceText: inversionSource, donorText: donor });
+  assert(
+    removedRelationResult.inventory.propositions.every((item) => item.relations.length === 0),
+    "a relation confirmed for removal must not be reversed or keep a stale inversion finding",
+  );
+  names.push("discard stale inversion findings when the corresponding relation is confirmed for removal");
+
   const relationSource = "Дождь пошёл, поэтому путники укрылись.";
   const relationExtraction = [
     { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" }, subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [], mandatory: true },
