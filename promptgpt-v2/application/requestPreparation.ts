@@ -515,7 +515,45 @@ export function createStyleTransferRequestPreparer(
           throw new Error("Semantic relation repair returned an unknown/duplicate ID or an invalid relations array.");
         }
         repairedIds.add(id);
-        originalById.get(id)!.relations = repairItem.relations;
+        const original = originalById.get(id)!;
+        const originalRelations = Array.isArray(original.relations) ? original.relations : [];
+        const repairedRelations = repairItem.relations.map((rawRelation, relationIndex) => {
+          if (!rawRelation || typeof rawRelation !== "object" || Array.isArray(rawRelation)) {
+            return rawRelation;
+          }
+          const repairedRelation = rawRelation as Record<string, unknown>;
+          if (repairedRelation.expression !== undefined && repairedRelation.expression !== null) {
+            return rawRelation;
+          }
+
+          const originalAtIndex = originalRelations[relationIndex];
+          if (originalAtIndex && typeof originalAtIndex === "object" && !Array.isArray(originalAtIndex)) {
+            const originalRelation = originalAtIndex as Record<string, unknown>;
+            if (
+              originalRelation.kind === repairedRelation.kind &&
+              typeof originalRelation.expression === "string" &&
+              originalRelation.expression.trim()
+            ) {
+              return { ...repairedRelation, expression: originalRelation.expression };
+            }
+          }
+
+          const sameKindEvidence = originalRelations.some((candidate) =>
+            Boolean(candidate) &&
+            typeof candidate === "object" &&
+            !Array.isArray(candidate) &&
+            (candidate as Record<string, unknown>).kind === repairedRelation.kind &&
+            typeof (candidate as Record<string, unknown>).expression === "string" &&
+            Boolean(((candidate as Record<string, unknown>).expression as string).trim()),
+          );
+          if (sameKindEvidence) {
+            throw new Error(
+              "Semantic relation repair omitted existing source evidence for a retained relation; preparation stopped safely.",
+            );
+          }
+          return rawRelation;
+        });
+        original.relations = repairedRelations;
       }
       if (repairedIds.size !== originalById.size) {
         throw new Error("Semantic relation repair omitted one or more proposition IDs.");
@@ -1133,7 +1171,11 @@ export function createStyleTransferRequestPreparer(
       }>();
       for (const proposition of completePropositions) {
         for (const relation of proposition.relations) {
-          relationLocatorByAuditKey.set(getLogicalRelationAuditKey(relation), {
+          const relationKey = getLogicalRelationAuditKey(relation);
+          if (relationLocatorByAuditKey.has(relationKey)) {
+            throw new Error("Semantic structure audit cannot safely repair an ambiguous relation key.");
+          }
+          relationLocatorByAuditKey.set(relationKey, {
             ownerId: proposition.id,
             from: relation.from,
             to: relation.to,
@@ -1157,6 +1199,7 @@ export function createStyleTransferRequestPreparer(
         return matches.length === 1 ? matches[0] : undefined;
       };
       let confirmedStructureIssues = structureAudit.issues;
+      const removedRelationKeys = new Set<string>();
       const relationTypeCandidates = structureAudit.issues.map((issue, index) => ({ issue, index }))
         .filter(({ issue }) => issue.kind === "relation-type");
       if (relationTypeCandidates.length) {
@@ -1247,11 +1290,21 @@ export function createStyleTransferRequestPreparer(
 
         for (const [issueIndex, decision] of decisionByIndex) {
           const relationKey = relationKeyByIndex.get(issueIndex)!;
+          const locator = relationLocatorByAuditKey.get(relationKey);
+          if (!locator || !findRelationByLocator(locator)) {
+            throw new Error("Relation-type adjudication referenced a missing or ambiguous relation.");
+          }
           let matched = 0;
           completePropositions = completePropositions.map((proposition) => ({
             ...proposition,
             relations: proposition.relations.flatMap((relation) => {
-              if (getLogicalRelationAuditKey(relation) !== relationKey) return [relation];
+              if (
+                proposition.id !== locator.ownerId ||
+                relation.from !== locator.from ||
+                relation.to !== locator.to ||
+                (relation.expression ?? "") !== locator.expression ||
+                getLogicalRelationAuditKey(relation) !== relationKey
+              ) return [relation];
               matched += 1;
               if (decision.action === "remove") return [];
               if (decision.action === "change-kind") {
@@ -1260,7 +1313,10 @@ export function createStyleTransferRequestPreparer(
               return [relation];
             }),
           }));
-          if (!matched) throw new Error("Relation-type adjudication referenced a relation that no longer exists.");
+          if (matched !== 1) {
+            throw new Error("Relation-type adjudication must reference exactly one existing relation.");
+          }
+          if (decision.action === "remove") removedRelationKeys.add(relationKey);
         }
         const repairedStructure = validatePropositionExtraction(sourceText, completePropositions);
         if (!repairedStructure.valid) {
@@ -1268,11 +1324,14 @@ export function createStyleTransferRequestPreparer(
         }
         validateRelationExpressionAnchors(sourceText, repairedStructure.propositions);
         completePropositions = repairedStructure.propositions;
-        confirmedStructureIssues = confirmedStructureIssues.filter((issue) => issue.kind !== "relation-type");
+        confirmedStructureIssues = confirmedStructureIssues.filter((issue) =>
+          issue.kind !== "relation-type" &&
+          !(issue.kind === "relation-inversion" && removedRelationKeys.has(issue.relationKey!)),
+        );
       }
 
       const inversionCandidates = structureAudit.issues.map((issue, index) => ({ issue, index }))
-        .filter(({ issue }) => issue.kind === "relation-inversion");
+        .filter(({ issue }) => issue.kind === "relation-inversion" && !removedRelationKeys.has(issue.relationKey!));
       if (inversionCandidates.length) {
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
         const inversionPrompt = [
@@ -1293,7 +1352,10 @@ export function createStyleTransferRequestPreparer(
             evidenceSpan: issue.evidenceSpan,
             explanation: issue.explanation,
             propositions: issue.propositionIds.map((id) => completePropositions.find((item) => item.id === id)),
-            relation: completePropositions.flatMap((item) => item.relations).find((relation) => getLogicalRelationAuditKey(relation) === issue.relationKey),
+            relation: (() => {
+              const locator = relationLocatorByAuditKey.get(issue.relationKey!);
+              return locator ? findRelationByLocator(locator) : undefined;
+            })(),
           }))),
         ].join("\n");
         const inversionResponse = await router.generate({

@@ -186,6 +186,47 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(invalidSelfRelationRepairRejected, "an invalid relation repair must still fail strict validation");
   names.push("reject a self-referential relation that survives the bounded repair pass");
 
+  const evidencePreservationSource = "Дождь пошёл, поэтому путники укрылись.";
+  const evidencePreservationExtraction = [
+    {
+      id: "p1", summary: "Дождь пошёл",
+      sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" },
+      subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [],
+      relations: [{ kind: "cause", from: "p1", to: "p1", expression: "поэтому" }], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Путники укрылись",
+      sourceSpan: { start: evidencePreservationSource.indexOf("путники"), end: evidencePreservationSource.length, text: "путники укрылись." },
+      subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [],
+      relations: [], mandatory: true,
+    },
+  ];
+  const evidencePreserved = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      evidencePreservationExtraction,
+      [
+        { id: "p1", relations: [{ kind: "cause", from: "p1", to: "p2" }] },
+        { id: "p2", relations: [] },
+      ],
+    ),
+    routes,
+    {
+      completenessAudit: false,
+      interpretationAudit: false,
+      structureAudit: false,
+      analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
+    },
+  )({ requestId: "preserve-relation-evidence", sourceText: evidencePreservationSource, donorText: donor });
+  assert(
+    evidencePreserved.inventory.propositions.find((item) => item.id === "p1")?.relations.some(
+      (relation) => relation.kind === "cause" && relation.from === "p1" &&
+        relation.to === "p2" && relation.expression === "поэтому",
+    ),
+    "a relation repair that omits an optional expression must preserve the original verbatim evidence",
+  );
+  names.push("preserve original relation evidence when a bounded repair omits the optional expression");
+
+
   const omissionSource = "Святитель пришёл в город. Он помог людям. Он основал обитель.";
   const omissionFirstEnd = omissionSource.indexOf(".") + 1;
   const omissionSecondStart = omissionSource.indexOf("Он помог");
@@ -799,6 +840,59 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     "a relation must remain addressable after its kind is corrected so its direction can also be repaired",
   );
   names.push("apply relation-type and relation-inversion repairs to the same edge");
+
+  let conflictingSameEdgeRepairsRejected = false;
+  try {
+    const duplicateRelationTypeAudit = {
+      checkedPropositionIds: ["p1", "p2"],
+      checkedRelationKeys: [combinedAuditKey],
+      issues: [
+        { ...combinedAudit.issues[0] },
+        { ...combinedAudit.issues[0] },
+      ],
+    };
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        [{ ...inversionExtraction[0], relations: [combinedAuditRelation] }, inversionExtraction[1]],
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1", "p2"]),
+        duplicateRelationTypeAudit,
+        {
+          decisions: [
+            { issueIndex: 0, action: "change-kind", correctedKind: "cause", explanation: "Первое решение." },
+            { issueIndex: 1, action: "already-correct", explanation: "Противоречащее второе решение." },
+          ],
+        },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "conflicting-same-edge-repairs", sourceText: inversionSource, donorText: donor });
+  } catch (error) {
+    conflictingSameEdgeRepairsRejected = String(error).includes("invalid, duplicate or unexpected decision");
+  }
+  assert(
+    conflictingSameEdgeRepairsRejected,
+    "two contradictory adjudications must not target and mutate the same logical relation",
+  );
+  names.push("reject conflicting adjudications that target the same logical relation");
+
+
+  const removedRelationResult = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      [{ ...inversionExtraction[0], relations: [combinedAuditRelation] }, inversionExtraction[1]],
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      combinedAudit,
+      { decisions: [{ issueIndex: 0, action: "remove", explanation: "Это внутренняя конструкция, а не межпропозиционная связь." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "removed-relation-inversion", sourceText: inversionSource, donorText: donor });
+  assert(
+    removedRelationResult.inventory.propositions.every((item) => item.relations.length === 0),
+    "a relation confirmed for removal must not be reversed or keep a stale inversion finding",
+  );
+  names.push("discard stale inversion findings when the corresponding relation is confirmed for removal");
 
   const relationSource = "Дождь пошёл, поэтому путники укрылись.";
   const relationExtraction = [
