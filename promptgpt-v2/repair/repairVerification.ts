@@ -32,7 +32,7 @@ export interface RepairVerificationReport {
   warnings: string[];
 }
 const DEFAULT_OPTIONS: RepairVerificationOptions = {
-  minimumStyleScore: 70,
+  minimumStyleScore: 76,
   minimumStyleConfidence: 0.35,
   allowedStyleRegression: 1,
 };

@@ -154,6 +154,56 @@ export function resolveVerbatimSpan(
 }
 
 /**
+ * Resolves a model-supplied relation connective expression to an exact verbatim
+ * substring of `fullText` when it differs only by outer or internal whitespace
+ * (such as trailing spaces or line breaks), preferring occurrences inside the
+ * endpoint proposition sentences. Fabricated, paraphrased, or whitespace-only
+ * expressions are returned untouched so downstream validation rejects them.
+ */
+export function resolveVerbatimExpression(
+  fullText: string,
+  rawExpression: unknown,
+  endpointSentences?: readonly SpanRange[],
+): unknown {
+  if (typeof rawExpression !== "string") return rawExpression;
+  if (!/[\p{L}\p{N}]/u.test(rawExpression)) return rawExpression;
+  if (fullText.includes(rawExpression)) return rawExpression;
+
+  let matches = findExactOccurrences(fullText, rawExpression.trim());
+  if (matches.length === 0) {
+    matches = findWhitespaceFlexibleOccurrences(fullText, rawExpression);
+  }
+  if (matches.length === 0) {
+    return rawExpression;
+  }
+
+  let pool = matches;
+  if (endpointSentences && endpointSentences.length > 0) {
+    const inEndpoint = matches.filter((match) =>
+      endpointSentences.some((sentence) => match.start >= sentence.start && match.end <= sentence.end),
+    );
+    if (inEndpoint.length > 0) {
+      pool = inEndpoint;
+    }
+  }
+
+  const chosen = pool[0];
+  return fullText.slice(chosen.start, chosen.end);
+}
+
+function getSentenceBoundsRange(fullText: string, position: number): SpanRange {
+  const safePosition = Math.max(0, Math.min(position, fullText.length));
+  const previousBoundary = /[.!?…][)"'»”’]*\s+/gu;
+  let start = 0;
+  for (const match of fullText.slice(0, safePosition).matchAll(previousBoundary)) {
+    start = (match.index ?? 0) + match[0].length;
+  }
+  const nextBoundary = /[.!?…][)"'»”’]*(?=\s|$)/u.exec(fullText.slice(safePosition));
+  const end = nextBoundary ? safePosition + nextBoundary.index + nextBoundary[0].length : fullText.length;
+  return { start, end };
+}
+
+/**
  * Normalizes unambiguous LLM formatting quirks at the preparation boundary
  * before running strict schema validation:
  * - unwraps `{ propositions: [...] }` if wrapped by the model;
@@ -161,7 +211,8 @@ export function resolveVerbatimSpan(
  *   while preserving malformed strings (like `" p1 "`) for strict rejection;
  * - converts JSON `null` on optional fields (`object`, `modality`, `expression`)
  *   to `undefined`;
- * - resolves verbatim `sourceSpan.text` to exact UTF-16 offsets in `sourceText`.
+ * - resolves verbatim `sourceSpan.text` to exact UTF-16 offsets in `sourceText`;
+ * - anchors whitespace-variant `relation.expression` values to verbatim substrings.
  */
 export function normalizeModelExtractedPropositions(
   sourceText: string,
@@ -186,24 +237,13 @@ export function normalizeModelExtractedPropositions(
   };
 
   let cursorHint = 0;
-  return list.map((entry) => {
+  const normalizedList = list.map((entry) => {
     if (!isRecord(entry)) return entry;
     const copy: Record<string, unknown> = { ...entry };
     copy.id = normalizeId(copy.id);
 
     if (copy.object === null) delete copy.object;
     if (copy.modality === null) delete copy.modality;
-
-    if (Array.isArray(copy.relations)) {
-      copy.relations = copy.relations.map((rel) => {
-        if (!isRecord(rel)) return rel;
-        const relCopy: Record<string, unknown> = { ...rel };
-        relCopy.from = normalizeId(relCopy.from);
-        relCopy.to = normalizeId(relCopy.to);
-        if (relCopy.expression === null) delete relCopy.expression;
-        return relCopy;
-      });
-    }
 
     const resolvedSpan = resolveVerbatimSpan(sourceText, copy.sourceSpan, undefined, cursorHint);
     copy.sourceSpan = resolvedSpan;
@@ -216,6 +256,50 @@ export function normalizeModelExtractedPropositions(
       cursorHint = resolvedSpan.end as number;
     }
 
+    return copy;
+  });
+
+  const resolvedSentenceById = new Map<string, SpanRange>();
+  for (const entry of normalizedList) {
+    if (
+      isRecord(entry) &&
+      typeof entry.id === "string" &&
+      isRecord(entry.sourceSpan) &&
+      fullTextMatches(sourceText, entry.sourceSpan)
+    ) {
+      resolvedSentenceById.set(
+        entry.id,
+        getSentenceBoundsRange(sourceText, entry.sourceSpan.start as number),
+      );
+    }
+  }
+
+  return normalizedList.map((entry) => {
+    if (!isRecord(entry) || !Array.isArray(entry.relations)) return entry;
+    const copy: Record<string, unknown> = { ...entry };
+    copy.relations = entry.relations.map((rel) => {
+      if (!isRecord(rel)) return rel;
+      const relCopy: Record<string, unknown> = { ...rel };
+      relCopy.from = normalizeId(relCopy.from);
+      relCopy.to = normalizeId(relCopy.to);
+      if (relCopy.expression === null) {
+        delete relCopy.expression;
+      } else if (typeof relCopy.expression === "string") {
+        const endpointSentences: SpanRange[] = [];
+        if (typeof relCopy.from === "string" && resolvedSentenceById.has(relCopy.from)) {
+          endpointSentences.push(resolvedSentenceById.get(relCopy.from)!);
+        }
+        if (typeof relCopy.to === "string" && resolvedSentenceById.has(relCopy.to)) {
+          endpointSentences.push(resolvedSentenceById.get(relCopy.to)!);
+        }
+        relCopy.expression = resolveVerbatimExpression(
+          sourceText,
+          relCopy.expression,
+          endpointSentences,
+        );
+      }
+      return relCopy;
+    });
     return copy;
   });
 }

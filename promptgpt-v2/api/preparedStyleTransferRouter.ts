@@ -4,7 +4,7 @@ import type { RequestPreparationOptions } from "../application/requestPreparatio
 import { createStyleTransferRequestPreparer } from "../application/requestPreparation";
 import type { ModelRouter } from "../infrastructure/modelRouter";
 import type { StyleTransferService } from "../application/styleTransferService";
-import { createStyleTransferApiRouter } from "./styleTransferRouter";
+import { createStyleTransferApiRouter, type DefaultTransferOptions } from "./styleTransferRouter";
 
 export interface PreparedStyleTransferApiOptions {
   service: StyleTransferService;
@@ -15,6 +15,7 @@ export interface PreparedStyleTransferApiOptions {
   preparation?: RequestPreparationOptions;
   maxSourceCharacters?: number;
   maxDonorCharacters?: number;
+  defaultTransferOptions?: DefaultTransferOptions;
   onError?: (error: unknown) => void;
 }
 
@@ -36,6 +37,7 @@ export function createPreparedStyleTransferApiRouter(options: PreparedStyleTrans
     rateLimit: options.rateLimit,
     maxSourceCharacters: options.maxSourceCharacters,
     maxDonorCharacters: options.maxDonorCharacters,
+    defaultTransferOptions: options.defaultTransferOptions,
     onError: options.onError,
   });
 }

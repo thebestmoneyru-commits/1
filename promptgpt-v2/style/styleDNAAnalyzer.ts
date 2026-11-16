@@ -132,18 +132,42 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   const sentenceLengths = sentences.map((s) => s.words.length);
   const variance = sentenceLengths.length
     ? sentenceLengths.reduce((sum, n) => sum + Math.pow(n - stats.meanWordsPerSentence, 2), 0) / sentenceLengths.length : 0;
-  features.push(feature("rhythm.mean-sentence-length","rhythm","Средняя длина предложения",stats.meanWordsPerSentence,sentences.length,"mean",corpusConfidence,sentences.length,[], "Среднее число слов в предложении."));
-  features.push(feature("rhythm.sentence-length-variance","rhythm","Разброс длины предложений",variance,sentences.length,"mean",corpusConfidence,sentences.length,[], "Дисперсия длины предложений; большее значение означает более неоднородный ритм."));
-  features.push(feature("rhythm.median-sentence-length","rhythm","Медианная длина предложения",stats.medianWordsPerSentence,sentences.length,"mean",corpusConfidence,sentences.length,[], "Медиана числа слов в предложении."));
+  const byDistanceToMean = [...sentences].sort(
+    (a, b) => Math.abs(a.words.length - stats.meanWordsPerSentence) - Math.abs(b.words.length - stats.meanWordsPerSentence),
+  );
+  const byDistanceToMedian = [...sentences].sort(
+    (a, b) => Math.abs(a.words.length - stats.medianWordsPerSentence) - Math.abs(b.words.length - stats.medianWordsPerSentence),
+  );
+  const byLengthAsc = [...sentences].sort((a, b) => a.words.length - b.words.length);
+  const varianceSamples: Sentence[] = [];
+  for (let left = 0, right = byLengthAsc.length - 1; left <= right && varianceSamples.length < config.maxEvidencePerFeature; left++, right--) {
+    varianceSamples.push(byLengthAsc[left]);
+    if (right > left && varianceSamples.length < config.maxEvidencePerFeature) {
+      varianceSamples.push(byLengthAsc[right]);
+    }
+  }
+  features.push(feature("rhythm.mean-sentence-length","rhythm","Средняя длина предложения",stats.meanWordsPerSentence,sentences.length,"mean",corpusConfidence,sentences.length,evidenceFor(byDistanceToMean,config.maxEvidencePerFeature), "Среднее число слов в предложении."));
+  features.push(feature("rhythm.sentence-length-variance","rhythm","Разброс длины предложений",variance,sentences.length,"mean",corpusConfidence,sentences.length,evidenceFor(varianceSamples,config.maxEvidencePerFeature), "Дисперсия длины предложений; большее значение означает более неоднородный ритм."));
+  features.push(feature("rhythm.median-sentence-length","rhythm","Медианная длина предложения",stats.medianWordsPerSentence,sentences.length,"mean",corpusConfidence,sentences.length,evidenceFor(byDistanceToMedian,config.maxEvidencePerFeature), "Медиана числа слов в предложении."));
+  const bucketSentences = {
+    short: sentences.filter((s) => s.words.length <= 8),
+    medium: sentences.filter((s) => s.words.length >= 9 && s.words.length <= 20),
+    long: sentences.filter((s) => s.words.length >= 21 && s.words.length <= 35),
+    "very-long": sentences.filter((s) => s.words.length > 35),
+  } as const;
   for (const [bucket, label, item] of [
     ["short","Короткие (до 8 слов)",stats.sentenceLengthDistribution.short],
     ["medium","Средние (9–20 слов)",stats.sentenceLengthDistribution.medium],
     ["long","Длинные (21–35 слов)",stats.sentenceLengthDistribution.long],
     ["very-long","Очень длинные (более 35 слов)",stats.sentenceLengthDistribution.veryLong],
   ] as const) {
-    features.push(feature(`rhythm.length-distribution.${bucket}`,"rhythm",`Распределение длины: ${label}`,item.count,nSent,"share",corpusConfidence,item.count,[], "Доля предложений в соответствующем диапазоне длины.",1));
+    features.push(feature(`rhythm.length-distribution.${bucket}`,"rhythm",`Распределение длины: ${label}`,item.count,nSent,"share",corpusConfidence,item.count,evidenceFor([...bucketSentences[bucket]],config.maxEvidencePerFeature), "Доля предложений в соответствующем диапазоне длины.",1));
   }
-  features.push(feature("paragraphs.mean-sentences-per-paragraph","paragraphs","Среднее число предложений в абзаце",stats.meanSentencesPerParagraph,paragraphs.length,"mean",corpusConfidence,paragraphs.length,[], "Среднее число предложений в одном абзаце."));
+  const paragraphEvidence: StyleEvidence[] = paragraphs
+    .filter((p) => p.text.trim().length > 0)
+    .slice(0, config.maxEvidencePerFeature)
+    .map((p) => ({ span: { start: p.start, end: p.end, text: p.text }, excerpt: p.text.slice(0, 260) }));
+  features.push(feature("paragraphs.mean-sentences-per-paragraph","paragraphs","Среднее число предложений в абзаце",stats.meanSentencesPerParagraph,paragraphs.length,"mean",corpusConfidence,paragraphs.length,paragraphEvidence, "Среднее число предложений в одном абзаце."));
 
   const punctuation: Array<[string,string,RegExp]> = [
     ["dash","Тире",/—|–/gu],["semicolon","Точка с запятой",/;/gu],
@@ -153,7 +177,8 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   ];
   for (const [id,label,re] of punctuation) {
     const count = countPattern(text,re);
-    features.push(feature(`punctuation.${id}`,"punctuation",label,count,nWords,"per-1000-words",corpusConfidence,count,[],`Частота знака на 1000 слов.`,1000));
+    const matchingSentences = count > 0 ? sentences.filter((s) => countPattern(s.text, re) > 0) : [];
+    features.push(feature(`punctuation.${id}`,"punctuation",label,count,nWords,"per-1000-words",corpusConfidence,count,evidenceFor(matchingSentences,config.maxEvidencePerFeature),`Частота знака на 1000 слов.`,1000));
   }
 
   const commaSentences = sentences.filter((s)=>s.text.includes(","));

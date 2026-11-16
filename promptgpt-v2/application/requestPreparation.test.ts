@@ -387,6 +387,255 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(genuineModalityMismatchRejected, "a genuinely omitted modal meaning must remain blocking");
   names.push("retain fail-closed behavior when a modality mismatch is independently confirmed");
 
+  const misattachedSource = "Прежний тезис неверен. Обещая материальное преуспеяние, концепция, тем не менее, остаётся бессильной.";
+  const misattachedExtraction = [
+    {
+      id: "p16", summary: "Прежний тезис неверен",
+      sourceSpan: { start: 0, end: misattachedSource.indexOf(".") + 1, text: "Прежний тезис неверен." },
+      subject: "Прежний тезис", predicate: "неверен", polarity: "negative",
+      qualifications: [], relations: [], mandatory: true,
+    },
+    {
+      id: "p17", summary: "Концепция остаётся бессильной",
+      sourceSpan: { start: misattachedSource.indexOf("концепция"), end: misattachedSource.length, text: misattachedSource.slice(misattachedSource.indexOf("концепция")) },
+      subject: "концепция", predicate: "остаётся бессильной", polarity: "negative",
+      qualifications: [],
+      relations: [{ kind: "concession", from: "p16", to: "p17", expression: "тем не менее" }],
+      mandatory: true,
+    },
+  ];
+  const recoveredConcessionClause = {
+    id: "p22", summary: "Концепция обещает материальное преуспеяние",
+    sourceSpan: { start: misattachedSource.indexOf("Обещая"), end: misattachedSource.indexOf(", концепция"), text: "Обещая материальное преуспеяние" },
+    subject: "концепция", predicate: "обещает", object: "материальное преуспеяние", polarity: "positive",
+    qualifications: [], relations: [], mandatory: true,
+  };
+  const logicalRelationIssue = {
+    propositionId: "p17",
+    field: "logical-relation",
+    evidenceSpan: {
+      start: misattachedSource.indexOf("тем не менее"),
+      end: misattachedSource.indexOf("тем не менее") + "тем не менее".length,
+      text: "тем не менее",
+    },
+    explanation: "Отношение 'concession' ('тем не менее') связывает p22 и p17, а ссылка на p16 ошибочна.",
+  };
+  const repairedConcessionKey = JSON.stringify(["concession", "p22", "p17", "тем не менее"]);
+  const repairedLogicalRelation = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      misattachedExtraction,
+      { missingPropositions: [recoveredConcessionClause], missingRelations: [] },
+      interpretationAudit(["p16", "p17", "p22"], [logicalRelationIssue]),
+      {
+        decisions: [{
+          issueIndex: 0,
+          action: "replace-relations",
+          repairedRelations: [{ kind: "concession", from: "p22", to: "p17", expression: "тем не менее" }],
+          explanation: "Переподключена уступительная связь с p22 на p17.",
+        }],
+      },
+      { checkedPropositionIds: ["p16", "p17", "p22"], checkedRelationKeys: [repairedConcessionKey], issues: [] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "repair-logical-relation", sourceText: misattachedSource, donorText: donor });
+  const repairedP17 = repairedLogicalRelation.inventory.propositions.find((item) => item.id === "p17");
+  assert(
+    repairedP17?.relations.length === 1 &&
+    repairedP17.relations[0].from === "p22" &&
+    repairedP17.relations[0].to === "p17" &&
+    repairedP17.relations[0].expression === "тем не менее",
+    "logical-relation adjudication must repair misattached endpoints while keeping proposition content intact",
+  );
+  names.push("repair misattached logical-relation endpoints caught by interpretation audit");
+
+  let genuineLogicalRelationRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        misattachedExtraction,
+        { missingPropositions: [recoveredConcessionClause], missingRelations: [] },
+        interpretationAudit(["p16", "p17", "p22"], [logicalRelationIssue]),
+        { decisions: [{ issueIndex: 0, action: "genuine-mismatch", explanation: "Логическая связь противоречит исходнику." }] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "reject-genuine-logical-relation", sourceText: misattachedSource, donorText: donor });
+  } catch (error) {
+    genuineLogicalRelationRejected = String(error).includes("potential source-interpretation error");
+  }
+  assert(genuineLogicalRelationRejected, "confirmed logical-relation mismatches must stop preparation");
+  names.push("retain fail-closed behavior when logical-relation mismatch is confirmed");
+
+  let invalidRelationRepairRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        misattachedExtraction,
+        { missingPropositions: [recoveredConcessionClause], missingRelations: [] },
+        interpretationAudit(["p16", "p17", "p22"], [logicalRelationIssue]),
+        {
+          decisions: [{
+            issueIndex: 0,
+            action: "replace-relations",
+            repairedRelations: [{ kind: "concession", from: "p99", to: "p17", expression: "тем не менее" }],
+            explanation: "Неверная замена на неизвестный ID.",
+          }],
+        },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "reject-invalid-logical-relation-repair", sourceText: misattachedSource, donorText: donor });
+  } catch (error) {
+    invalidRelationRepairRejected = String(error).includes("неизвестную пропозицию");
+  }
+  assert(invalidRelationRepairRejected, "invalid logical-relation repairs must fail source-bound validation");
+  names.push("reject invalid logical-relation replacements from adjudication");
+
+  const sharedVerbSource = "Редукция влечет за собой упразднение моральной ответственности и превращение исторического процесса в механическую последовательность фактов.";
+  const sharedObject2Text = "превращение исторического процесса в механическую последовательность фактов.";
+  const sharedObject2Start = sharedVerbSource.indexOf(sharedObject2Text);
+  const sharedVerbExtraction = [
+    {
+      id: "p13",
+      summary: "Редукция влечет за собой упразднение моральной ответственности",
+      sourceSpan: { start: 0, end: sharedVerbSource.indexOf(" и превращение"), text: sharedVerbSource.slice(0, sharedVerbSource.indexOf(" и превращение")) },
+      subject: "Редукция", predicate: "влечет за собой", object: "упразднение моральной ответственности", polarity: "positive",
+      qualifications: [], relations: [], mandatory: true,
+    },
+    {
+      id: "p14",
+      summary: "Редукция влечет за собой превращение исторического процесса в механическую последовательность фактов",
+      sourceSpan: { start: sharedObject2Start, end: sharedVerbSource.length, text: sharedObject2Text },
+      subject: "Редукция", predicate: "влечет за собой", object: "превращение исторического процесса в механическую последовательность фактов", polarity: "positive",
+      qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const sharedVerbIssue = {
+    propositionId: "p14",
+    field: "predicate",
+    evidenceSpan: { start: sharedObject2Start, end: sharedVerbSource.length, text: sharedObject2Text },
+    explanation: "The predicate 'влечет за собой' is absent from the narrow object sourceSpan.",
+  };
+  const sharedPredicateAccepted = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      sharedVerbExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p13", "p14"], [sharedVerbIssue]),
+      { decisions: [{ issueIndex: 0, classification: "already-grounded-in-sentence", explanation: "Общий глагол «влечет за собой» находится в том же предложении и управляет обоими дополнениями." }] },
+      structureAudit(["p13", "p14"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "shared-predicate-grounded", sourceText: sharedVerbSource, donorText: donor });
+  assert(
+    sharedPredicateAccepted.inventory.propositions.find((item) => item.id === "p14")?.predicate === "влечет за собой",
+    "shared predicate present earlier in the same sentence must be accepted after independent adjudication",
+  );
+  names.push("accept shared sentence predicate governing a narrow homogeneous-object span");
+
+  let sharedVerbMismatchRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        sharedVerbExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p13", "p14"], [sharedVerbIssue]),
+        { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "Глагол в предложении относится к другому субъекту." }] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "shared-predicate-mismatch", sourceText: sharedVerbSource, donorText: donor });
+  } catch (error) {
+    sharedVerbMismatchRejected = String(error).includes("potential source-interpretation error");
+  }
+  assert(sharedVerbMismatchRejected, "a confirmed shared-constituent mismatch must still stop preparation");
+  names.push("retain fail-closed behavior when shared sentence constituent is unconfirmed");
+
+  const syntacticSplitSource = "В такой системе не остается места ни совести, ни этическому идеалу.";
+  const syntacticSplitSpanText = "места ни совести, ни этическому идеалу";
+  const syntacticSplitSpanStart = syntacticSplitSource.indexOf(syntacticSplitSpanText);
+  const syntacticSplitExtraction = [{
+    id: "m3",
+    summary: "В системе не остается места ни совести, ни этическому идеалу",
+    sourceSpan: { start: 0, end: syntacticSplitSource.length, text: syntacticSplitSource },
+    subject: syntacticSplitSpanText,
+    predicate: "не остается",
+    polarity: "negative",
+    qualifications: [{ kind: "place", value: "В такой системе" }],
+    relations: [],
+    mandatory: true,
+  }];
+  const syntacticSplitIssue = {
+    propositionId: "m3",
+    field: "subject",
+    evidenceSpan: {
+      start: syntacticSplitSpanStart,
+      end: syntacticSplitSpanStart + syntacticSplitSpanText.length,
+      text: syntacticSplitSpanText,
+    },
+    explanation: "Субъектом является слово «места», а «ни совести, ни этическому идеалу» — дополнения.",
+  };
+  const syntacticPreserved = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      syntacticSplitExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["m3"], [syntacticSplitIssue]),
+      { decisions: [{ issueIndex: 0, action: "semantic-preserved", explanation: "Смысл отрицательной бытийной конструкции полностью сохранён без подмены участников." }] },
+      structureAudit(["m3"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "syntactic-role-preserved", sourceText: syntacticSplitSource, donorText: donor });
+  assert(syntacticPreserved.inventory.propositions[0].subject === syntacticSplitSpanText, "semantic-preserved must accept harmless syntactic grouping without blocking");
+  names.push("dismiss in-span subject/predicate boundary disputes when meaning is preserved");
+
+  const syntacticReassigned = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      syntacticSplitExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["m3"], [syntacticSplitIssue]),
+      {
+        decisions: [{
+          issueIndex: 0,
+          action: "reassign-roles",
+          repairedSubject: "места",
+          repairedPredicate: "не остается",
+          repairedObject: "ни совести, ни этическому идеалу",
+          explanation: "Отделён субъект «места» от дополнения «ни совести, ни этическому идеалу».",
+        }],
+      },
+      structureAudit(["m3"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "syntactic-role-reassigned", sourceText: syntacticSplitSource, donorText: donor });
+  assert(
+    syntacticReassigned.inventory.propositions[0].subject === "места" &&
+    syntacticReassigned.inventory.propositions[0].object === "ни совести, ни этическому идеалу" &&
+    syntacticReassigned.inventory.propositions[0].sourceSpan.text === syntacticSplitSource,
+    "reassign-roles must cleanly update subject/predicate/object while keeping sourceSpan immutable",
+  );
+  names.push("reassign in-span subject/predicate/object boundaries after independent adjudication");
+
+  let syntacticMismatchRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        syntacticSplitExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["m3"], [syntacticSplitIssue]),
+        { decisions: [{ issueIndex: 0, action: "genuine-mismatch", explanation: "Искажены участники действия." }] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "syntactic-role-genuine-mismatch", sourceText: syntacticSplitSource, donorText: donor });
+  } catch (error) {
+    syntacticMismatchRejected = String(error).includes("potential source-interpretation error");
+  }
+  assert(syntacticMismatchRejected, "confirmed genuine role mismatches must still stop preparation");
+  names.push("retain fail-closed behavior for confirmed in-span subject/predicate mismatches");
+
   let incompleteInterpretationRejected = false;
   try {
     await createStyleTransferRequestPreparer(
@@ -397,6 +646,48 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   } catch (error) { incompleteInterpretationRejected = String(error).includes("не подтвердил проверку пропозиции p2"); }
   assert(incompleteInterpretationRejected, "interpretation audit must account for every proposition");
   names.push("reject interpretation audits that omit proposition IDs");
+
+  const outOfSpanAudit = interpretationAudit(["p1", "p2"], [{
+    propositionId: "p2",
+    field: "object",
+    evidenceSpan: { start: 0, end: 25, text: source.slice(0, 25) },
+    explanation: "Объект утверждения приписан по предыдущему предложению.",
+  }]);
+  let droppedIssueRepairRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        validExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        outOfSpanAudit,
+        interpretationAudit(["p1", "p2"], []),
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "reject-mutated-interpretation-repair", sourceText: source, donorText: donor });
+  } catch (error) {
+    droppedIssueRepairRejected = String(error).includes("changed the issue count");
+  }
+  assert(droppedIssueRepairRejected, "bounded interpretation repair must not silently drop findings");
+  names.push("reject bounded interpretation audit repairs that drop existing findings");
+
+  let persistentOutOfSpanRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        validExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        outOfSpanAudit,
+        outOfSpanAudit,
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "reject-unfixed-out-of-span", sourceText: source, donorText: donor });
+  } catch (error) {
+    persistentOutOfSpanRejected = String(error).includes("вне исходного свидетельства пропозиции p2");
+  }
+  assert(persistentOutOfSpanRejected, "unrepaired out-of-span interpretation citations must fail closed");
+  names.push("reject interpretation audits whose out-of-span citation survives bounded repair");
 
 
   let structuralIssueRejected = false;
@@ -766,6 +1057,45 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(falsePositivePrepared.inventory.propositions.length === 2, "an adjudicated internal modifier must not block preparation");
   names.push("dismiss relation-omission false positives when the meaning is already represented");
 
+  const participialSource = "Модель обнаруживает несостоятельность, неизбежно сталкиваясь с жаждой вечности.";
+  const participialComma = participialSource.indexOf(", неизбежно");
+  const participialSecondStart = participialSource.indexOf("неизбежно");
+  const participialExtraction = [
+    {
+      id: "p17", summary: "Модель обнаруживает несостоятельность",
+      sourceSpan: { start: 0, end: participialComma, text: participialSource.slice(0, participialComma) },
+      subject: "Модель", predicate: "обнаруживает", object: "несостоятельность",
+      polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+    {
+      id: "p18", summary: "Модель неизбежно сталкивается с жаждой вечности",
+      sourceSpan: { start: participialSecondStart, end: participialSource.length, text: participialSource.slice(participialSecondStart) },
+      subject: "Модель", predicate: "неизбежно сталкивается", object: "с жаждой вечности",
+      polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const participialOmissionDismissed = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      participialExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p17", "p18"]),
+      structureAudit(["p17", "p18"], [{
+        kind: "relation-omission",
+        propositionIds: ["p17", "p18"],
+        evidenceSpan: { start: 0, end: participialSource.length, text: participialSource },
+        explanation: "Деепричастный оборот 'неизбежно сталкиваясь с' выражает причину или проявление несостоятельности.",
+      }]),
+      { decisions: [{ issueIndex: 0, classification: "not-cross-proposition", explanation: "Деепричастный оборот без явного союза является сопутствующим обстоятельством, а не отдельной логической связкой." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "participial-not-cross-proposition", sourceText: participialSource, donorText: donor });
+  assert(
+    participialOmissionDismissed.inventory.propositions.length === 2,
+    "a bare participial modifier adjudicated as not-cross-proposition must not block preparation",
+  );
+  names.push("dismiss relation-omission on bare participial modifiers adjudicated as not-cross-proposition");
+
   let genuineOmissionRejected = false;
   try {
     await createStyleTransferRequestPreparer(
@@ -1078,6 +1408,225 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     "parallel adjudication must preserve the validated proposition inventory",
   );
   names.push("run independent modality and shared-constituent adjudications concurrently");
+
+  // Combined Pass-1 failure (imprecise sourceSpan + non-verbatim relation expression)
+  const combinedPass1Source = "Дождь пошёл, поэтому путники укрылись.";
+  const combinedPass1Extraction = [
+    {
+      id: "p1",
+      summary: "Дождь пошёл",
+      sourceSpan: { start: 0, end: 11, text: "Дождь пошел" },
+      subject: "Дождь",
+      predicate: "пошёл",
+      polarity: "positive",
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    },
+    {
+      id: "p2",
+      summary: "Путники укрылись",
+      sourceSpan: {
+        start: combinedPass1Source.indexOf("путники"),
+        end: combinedPass1Source.length,
+        text: "путники укрылись.",
+      },
+      subject: "путники",
+      predicate: "укрылись",
+      polarity: "positive",
+      qualifications: [],
+      relations: [{ kind: "cause", from: "p1", to: "p2", expression: "из-за этого" }],
+      mandatory: true,
+    },
+  ];
+  const combinedSpanRepaired = [
+    { id: "p1", sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" } },
+    {
+      id: "p2",
+      sourceSpan: {
+        start: combinedPass1Source.indexOf("путники"),
+        end: combinedPass1Source.length,
+        text: "путники укрылись.",
+      },
+    },
+  ];
+  const combinedRelationRepaired = [
+    { id: "p1", relations: [] },
+    { id: "p2", relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }] },
+  ];
+  const combinedPass1Prepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      combinedPass1Extraction,
+      combinedSpanRepaired,
+      combinedRelationRepaired,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      {
+        checkedPropositionIds: ["p1", "p2"],
+        checkedRelationKeys: [JSON.stringify(["cause", "p1", "p2", "поэтому"])],
+        issues: [],
+      },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "combined-pass1-span-and-relation-repair", sourceText: combinedPass1Source, donorText: donor });
+  assert(
+    combinedPass1Prepared.inventory.propositions[0].sourceSpan.text === "Дождь пошёл" &&
+    combinedPass1Prepared.inventory.propositions[1].relations[0]?.expression === "поэтому" &&
+    combinedPass1Prepared.inventory.propositions[0].subject === "Дождь" &&
+    combinedPass1Prepared.inventory.propositions[1].predicate === "укрылись",
+    "combined Pass-1 span and relation-expression defects must be repaired cleanly without mutating semantic fields",
+  );
+  names.push("repair combined Pass-1 sourceSpan and non-verbatim relation expression defects");
+
+  // Fail-closed when bounded relation repair returns another fabricated expression
+  let combinedFabricatedRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        combinedPass1Extraction,
+        combinedSpanRepaired,
+        [
+          { id: "p1", relations: [] },
+          { id: "p2", relations: [{ kind: "cause", from: "p1", to: "p2", expression: "выдуманный союз" }] },
+        ],
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "combined-pass1-fabricated-rejected", sourceText: combinedPass1Source, donorText: donor });
+  } catch (error) {
+    combinedFabricatedRejected = String(error).includes("Semantic extraction failed source-bound validation");
+  }
+  assert(combinedFabricatedRejected, "fabricated relation expressions surviving bounded repair must fail closed");
+  names.push("fail closed when Pass-1 relation repair retains fabricated expression");
+
+  // Unanchored Pass-1 relation expression (present elsewhere in sourceText, outside endpoint sentences)
+  const distantExprSource = "Однако утро было тихим. Дождь пошёл, поэтому путники укрылись.";
+  const distantExprExtraction = [
+    {
+      id: "p1",
+      summary: "Утро было тихим",
+      sourceSpan: { start: 0, end: "Однако утро было тихим.".length, text: "Однако утро было тихим." },
+      subject: "утро",
+      predicate: "было тихим",
+      polarity: "positive",
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    },
+    {
+      id: "p2",
+      summary: "Дождь пошёл",
+      sourceSpan: {
+        start: distantExprSource.indexOf("Дождь"),
+        end: distantExprSource.indexOf(", поэтому"),
+        text: "Дождь пошёл",
+      },
+      subject: "Дождь",
+      predicate: "пошёл",
+      polarity: "positive",
+      qualifications: [],
+      relations: [{ kind: "cause", from: "p2", to: "p3", expression: "Однако" }],
+      mandatory: true,
+    },
+    {
+      id: "p3",
+      summary: "Путники укрылись",
+      sourceSpan: {
+        start: distantExprSource.indexOf("путники"),
+        end: distantExprSource.length,
+        text: "путники укрылись.",
+      },
+      subject: "путники",
+      predicate: "укрылись",
+      polarity: "positive",
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    },
+  ];
+  const unanchoredRepaired = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      distantExprExtraction,
+      [
+        { id: "p1", relations: [] },
+        { id: "p2", relations: [{ kind: "cause", from: "p2", to: "p3", expression: "поэтому" }] },
+        { id: "p3", relations: [] },
+      ],
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2", "p3"]),
+      {
+        checkedPropositionIds: ["p1", "p2", "p3"],
+        checkedRelationKeys: [JSON.stringify(["cause", "p2", "p3", "поэтому"])],
+        issues: [],
+      },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "unanchored-pass1-expression-repair", sourceText: distantExprSource, donorText: donor });
+  assert(
+    unanchoredRepaired.inventory.propositions[1].relations[0]?.expression === "поэтому",
+    "Pass-1 relation expression anchored to another sentence must be repaired to the endpoint connective",
+  );
+  names.push("repair Pass-1 relation expressions anchored outside endpoint sentences");
+
+  // Symmetric relation stored on BOTH endpoints must pass structure audit & repair atomically
+  const symmetricRelation = { kind: "effect", from: "p2", to: "p1", expression: "поэтому" };
+  const symmetricKey = JSON.stringify(["effect", "p2", "p1", "поэтому"]);
+  const symmetricExtraction = [
+    { ...inversionExtraction[0], relations: [{ ...symmetricRelation }] },
+    { ...inversionExtraction[1], relations: [{ ...symmetricRelation }] },
+  ];
+  const symmetricStructureAudit = {
+    checkedPropositionIds: ["p1", "p2"],
+    checkedRelationKeys: [symmetricKey],
+    issues: [
+      {
+        kind: "relation-type",
+        propositionIds: ["p1", "p2"],
+        relationKey: symmetricKey,
+        evidenceSpan: {
+          start: inversionSource.indexOf("поэтому"),
+          end: inversionSource.indexOf("поэтому") + "поэтому".length,
+          text: "поэтому",
+        },
+        explanation: "Тип связи неверен.",
+      },
+      {
+        kind: "relation-inversion",
+        propositionIds: ["p1", "p2"],
+        relationKey: symmetricKey,
+        evidenceSpan: {
+          start: inversionSource.indexOf("поэтому"),
+          end: inversionSource.indexOf("поэтому") + "поэтому".length,
+          text: "поэтому",
+        },
+        explanation: "Направление перепутано.",
+      },
+    ],
+  };
+  const symmetricRepaired = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      symmetricExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      symmetricStructureAudit,
+      { decisions: [{ issueIndex: 0, action: "change-kind", correctedKind: "cause", explanation: "Это причина." }] },
+      { decisions: [{ issueIndex: 1, action: "reverse", explanation: "Дождь — причина." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "symmetric-relation-atomic-repair", sourceText: inversionSource, donorText: donor });
+  assert(
+    symmetricRepaired.inventory.propositions[0].relations[0]?.kind === "cause" &&
+    symmetricRepaired.inventory.propositions[0].relations[0]?.from === "p1" &&
+    symmetricRepaired.inventory.propositions[0].relations[0]?.to === "p2" &&
+    symmetricRepaired.inventory.propositions[1].relations[0]?.kind === "cause" &&
+    symmetricRepaired.inventory.propositions[1].relations[0]?.from === "p1" &&
+    symmetricRepaired.inventory.propositions[1].relations[0]?.to === "p2",
+    "symmetric relation copies on both endpoint propositions must both be updated atomically by structure audit repair",
+  );
+  names.push("support symmetric shared relation keys across endpoint propositions in structure audit repair");
 
   return { passed: names.length, names };
 }

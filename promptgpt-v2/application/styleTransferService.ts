@@ -14,6 +14,7 @@ import type {
   CandidateOutcome, SemanticVerifier, StyleProfiler, StyleTransferRequest,
   StyleTransferResponse, TransferTraceEvent,
 } from "./applicationTypes";
+import type { ModelInvocationTelemetry } from "./routerAdapters";
 
 export interface StyleTransferServiceDependencies {
   candidateGenerator: CandidateModelAdapter;
@@ -21,6 +22,7 @@ export interface StyleTransferServiceDependencies {
   repair: SurgicalRepairAdapter;
   semanticVerifier: SemanticVerifier;
   styleProfiler: StyleProfiler;
+  drainModelTelemetry?: (signal: AbortSignal) => ModelInvocationTelemetry[];
   now?: () => number;
 }
 
@@ -64,6 +66,25 @@ export class StyleTransferService {
         };
       }
 
+      const executionController = new AbortController();
+      const onParentAbort = () => executionController.abort(request.signal?.reason);
+      request.signal?.addEventListener("abort", onParentAbort, { once: true });
+      const executionSignal = executionController.signal;
+      const flushTelemetry = (stage: TransferTraceEvent["stage"], candidateId?: string) => {
+        const items = this.deps.drainModelTelemetry?.(executionSignal) ?? [];
+        for (const item of items) {
+          if (item.fallbackOccurred) {
+            const msg = `Задача ${item.task}: выполнен переход с ${item.requestedModel} на ${item.usedModel}.`;
+            warnings.push(msg);
+            mark(stage, msg, candidateId);
+          } else {
+            mark(stage, `Модель ${item.usedModel} выполнила этап ${item.task}.`, candidateId);
+          }
+          for (const routerWarning of item.warnings) warnings.push(routerWarning);
+        }
+      };
+
+      try {
       mark("generating-candidates", "Последовательное создание независимых вариантов; дополнительные варианты запрашиваются только при необходимости.");
       const generation: CandidateGenerationResult = {
         sourceFingerprint, donorBaselineId: baselineId, requested: 0, generated: 0,
@@ -72,12 +93,15 @@ export class StyleTransferService {
       const outcomes: CandidateOutcome[] = [];
       const adaptive = request.generation?.adaptive !== false;
       const candidateLimit = resolveCandidateCount(request.generation);
+      const excellenceStyleScore = request.minimumStyleScore === 0
+        ? 0
+        : Math.max(85, request.critic?.minimumStyleScore ?? 78);
       const candidateBatches: Array<number | null> = adaptive
         ? Array.from({ length: candidateLimit }, (_, index) => index)
         : [null];
 
       candidateLoop: for (const candidateIndex of candidateBatches) {
-        if (request.signal?.aborted) break;
+        if (executionSignal.aborted) break;
         const batch = await generateCandidates({
           sourceText: request.sourceText,
           inventory: request.inventory,
@@ -87,8 +111,9 @@ export class StyleTransferService {
             ? { ...request.generation, candidateCount: 1, concurrency: 1 }
             : request.generation,
           candidateStartIndex: candidateIndex ?? 0,
-          signal: request.signal,
+          signal: executionSignal,
         });
+        flushTelemetry("generating-candidates");
         generation.requested += batch.requested;
         generation.generated += batch.generated;
         generation.failed += batch.failed;
@@ -98,7 +123,7 @@ export class StyleTransferService {
 
         for (const candidate of batch.candidates) {
         if (candidate.status !== "generated" || !candidate.text) continue;
-        if (request.signal?.aborted) break;
+        if (executionSignal.aborted) break;
         mark("evaluating-candidates", "Независимая семантическая и стилевая оценка.", candidate.candidateId);
         let assessments: PropositionAssessment[];
         let relationAssessments: LogicalRelationAssessment[];
@@ -110,7 +135,7 @@ export class StyleTransferService {
               sourceText: request.sourceText,
               candidateText: candidate.text,
               propositions: request.inventory.propositions,
-              signal: request.signal,
+              signal: executionSignal,
             });
             assessments = combined.propositionAssessments;
             relationAssessments = combined.relationAssessments;
@@ -120,26 +145,28 @@ export class StyleTransferService {
                 sourceText: request.sourceText,
                 candidateText: candidate.text,
                 propositions: request.inventory.propositions,
-                signal: request.signal,
+                signal: executionSignal,
               }),
               this.deps.semanticVerifier.assessRelations({
                 sourceText: request.sourceText,
                 candidateText: candidate.text,
                 propositions: request.inventory.propositions,
-                signal: request.signal,
+                signal: executionSignal,
               }),
             ]);
             assessments = propositionAssessments;
             relationAssessments = checkedRelationAssessments;
           }
+          flushTelemetry("evaluating-candidates", candidate.candidateId);
           structureReport = validateLogicalRelationAssessments(
             candidate.text, request.inventory.propositions, relationAssessments,
             request.semanticPolicy?.minimumAssessmentConfidence ?? DEFAULT_SEMANTIC_POLICY.minimumAssessmentConfidence,
           );
-          if (request.signal?.aborted) break;
+          if (executionSignal.aborted) break;
           profile = this.deps.styleProfiler.analyze(candidate.text);
         } catch (error) {
-          if (request.signal?.aborted) break;
+          flushTelemetry("evaluating-candidates", candidate.candidateId);
+          if (executionSignal.aborted) break;
           warnings.push(`Кандидат ${candidate.candidateId} пропущен: ошибка независимой проверки — ${error instanceof Error ? error.message : "неизвестная ошибка"}.`);
           continue;
         }
@@ -196,10 +223,11 @@ export class StyleTransferService {
             const restoredText = (await this.deps.candidateGenerator.generate({
               prompt,
               candidateIndex: candidate.candidateIndex,
-              signal: request.signal,
+              signal: executionSignal,
             })).trim();
 
             if (!restoredText || restoredText === currentText) {
+              flushTelemetry("semantic-repair", candidate.candidateId);
               restorationWarnings.push("Восстановление содержания не изменило текст; исходный кандидат оставлен без изменений.");
             } else {
               let restoredAssessments: PropositionAssessment[];
@@ -209,7 +237,7 @@ export class StyleTransferService {
                   sourceText: request.sourceText,
                   candidateText: restoredText,
                   propositions: request.inventory.propositions,
-                  signal: request.signal,
+                  signal: executionSignal,
                 });
                 restoredAssessments = restored.propositionAssessments;
                 restoredRelations = restored.relationAssessments;
@@ -219,18 +247,19 @@ export class StyleTransferService {
                     sourceText: request.sourceText,
                     candidateText: restoredText,
                     propositions: request.inventory.propositions,
-                    signal: request.signal,
+                    signal: executionSignal,
                   }),
                   this.deps.semanticVerifier.assessRelations({
                     sourceText: request.sourceText,
                     candidateText: restoredText,
                     propositions: request.inventory.propositions,
-                    signal: request.signal,
+                    signal: executionSignal,
                   }),
                 ]);
                 restoredAssessments = propositionResult;
                 restoredRelations = relationResult;
               }
+              flushTelemetry("semantic-repair", candidate.candidateId);
 
               const restoredStructure = validateLogicalRelationAssessments(
                 restoredText, request.inventory.propositions, restoredRelations,
@@ -278,7 +307,12 @@ export class StyleTransferService {
           }
         }
 
-        if (currentEvaluation.disposition === "accepted") {
+        const alreadyHighExcellence =
+          currentEvaluation.disposition === "accepted" &&
+          (request.minimumStyleScore === 0 ||
+            (currentEvaluation.styleReport.score ?? 0) >= excellenceStyleScore);
+
+        if (alreadyHighExcellence) {
           outcomes.push({
             candidateId: candidate.candidateId,
             initial,
@@ -309,6 +343,7 @@ export class StyleTransferService {
           continue;
         }
 
+        const initiallyAcceptedBeforeCritic = currentEvaluation.disposition === "accepted";
         mark("critic-repair", "Одна ограниченная попытка точечной правки с независимой повторной проверкой.", candidate.candidateId);
         try {
           const pipeline = await runCriticRepairPipeline({
@@ -322,16 +357,16 @@ export class StyleTransferService {
             semanticVerifier: {
               ...(this.deps.semanticVerifier.assessCombined ? {
                 assessCombined: ({ sourceText, candidateText, propositions }) =>
-                  this.deps.semanticVerifier.assessCombined!({ sourceText, candidateText, propositions, signal: request.signal }),
+                  this.deps.semanticVerifier.assessCombined!({ sourceText, candidateText, propositions, signal: executionSignal }),
               } : {}),
               assess: ({ sourceText, candidateText, propositions }) =>
-                this.deps.semanticVerifier.assess({ sourceText, candidateText, propositions, signal: request.signal }),
+                this.deps.semanticVerifier.assess({ sourceText, candidateText, propositions, signal: executionSignal }),
               assessRelations: ({ sourceText, candidateText, propositions }) =>
-                this.deps.semanticVerifier.assessRelations({ sourceText, candidateText, propositions, signal: request.signal }),
+                this.deps.semanticVerifier.assessRelations({ sourceText, candidateText, propositions, signal: executionSignal }),
             },
             styleProfiler: this.deps.styleProfiler,
             semanticPolicy: request.semanticPolicy,
-            signal: request.signal,
+            signal: executionSignal,
             initialVerification: {
               propositionAssessments: currentAssessments,
               relationAssessments: currentRelationAssessments,
@@ -346,24 +381,51 @@ export class StyleTransferService {
               minimumStyleConfidence: request.minimumStyleConfidence ?? request.verification?.minimumStyleConfidence,
             },
           });
-          const finalEvaluation = pipeline.verification.after;
-          outcomes.push({
-            candidateId: candidate.candidateId,
-            initial,
-            finalText: pipeline.finalText,
-            finalEvaluation,
-            repaired: semanticRestorationApplied || pipeline.repairResult.applied,
-            repairPassed: pipeline.completed,
-            warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...pipeline.warnings])],
-          });
-          if (adaptive && pipeline.completed && finalEvaluation.disposition === "accepted") {
-            break candidateLoop;
+          flushTelemetry("critic-repair", candidate.candidateId);
+          const beforeStyle = currentEvaluation.styleReport.score ?? -1;
+          const afterStyle = pipeline.verification.after.styleReport.score ?? -1;
+          const polishImprovedOrMatched =
+            pipeline.completed &&
+            pipeline.verification.after.disposition === "accepted" &&
+            (!initiallyAcceptedBeforeCritic || afterStyle >= beforeStyle);
+
+          if (initiallyAcceptedBeforeCritic && !polishImprovedOrMatched) {
+            outcomes.push({
+              candidateId: candidate.candidateId,
+              initial,
+              finalText: currentText,
+              finalEvaluation: currentEvaluation,
+              repaired: semanticRestorationApplied,
+              repairPassed: semanticRestorationApplied ? true : undefined,
+              warnings: [...new Set([
+                ...initial.warnings,
+                ...restorationWarnings,
+                ...pipeline.warnings,
+                "Точечная правка не улучшила подтверждённый вариант; сохранён исходно принятый кандидат.",
+              ])],
+            });
+          } else {
+            const finalEvaluation = pipeline.verification.after;
+            outcomes.push({
+              candidateId: candidate.candidateId,
+              initial,
+              finalText: pipeline.finalText,
+              finalEvaluation,
+              repaired: semanticRestorationApplied || pipeline.repairResult.applied,
+              repairPassed: pipeline.completed,
+              warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...pipeline.warnings])],
+            });
+            if (adaptive && pipeline.completed && finalEvaluation.disposition === "accepted" &&
+                (finalEvaluation.styleReport.score ?? 0) >= excellenceStyleScore) {
+              break candidateLoop;
+            }
           }
         } catch (error) {
+          flushTelemetry("critic-repair", candidate.candidateId);
           outcomes.push({
             candidateId: candidate.candidateId, initial, finalText: currentText,
             finalEvaluation: currentEvaluation, repaired: semanticRestorationApplied,
-            repairPassed: false,
+            repairPassed: initiallyAcceptedBeforeCritic ? (semanticRestorationApplied ? true : undefined) : false,
             warnings: [...restorationWarnings, error instanceof Error ? error.message : "Critic/repair stage failed."],
           });
         }
@@ -371,7 +433,7 @@ export class StyleTransferService {
       }
       generation.warnings = [...new Set(generation.warnings)];
 
-      if (request.signal?.aborted) {
+      if (executionSignal.aborted) {
         mark("cancelled", "Запрос отменён; уже полученные результаты сохранены.");
         return {
           requestId: request.requestId, status: "cancelled", sourceFingerprint,
@@ -397,6 +459,9 @@ export class StyleTransferService {
         generation, candidates: outcomes, trace,
         warnings: [...new Set(warnings)],
       };
+      } finally {
+        request.signal?.removeEventListener("abort", onParentAbort);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown application error.";
       const cancelled = request.signal?.aborted === true;

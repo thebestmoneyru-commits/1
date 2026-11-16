@@ -217,23 +217,41 @@ const rateLimitV2: express.RequestHandler = (req, res, next) => {
   return next();
 };
 
+const V2_FALLBACK_MODELS = V2_MODEL_ID !== 'gemini-3.1-flash-lite'
+  ? ['gemini-3.1-flash-lite']
+  : [];
+
 const v2Catalog = {
-  models: [{
-    id: V2_MODEL_ID,
-    tasks: V2_MODEL_TASKS,
-    enabled: true,
-    maxConcurrency: 2,
-    maxQueueLength: 8,
-    supportsJsonSchema: true,
-    supportsThinking: true,
-    supportsSampling: true,
-  }],
+  models: [
+    {
+      id: V2_MODEL_ID,
+      tasks: V2_MODEL_TASKS,
+      enabled: true,
+      maxConcurrency: 2,
+      maxQueueLength: 8,
+      supportsJsonSchema: true,
+      supportsThinking: true,
+      supportsSampling: true,
+    },
+    ...(V2_FALLBACK_MODELS.length > 0
+      ? [{
+          id: 'gemini-3.1-flash-lite',
+          tasks: V2_MODEL_TASKS,
+          enabled: true,
+          maxConcurrency: 2,
+          maxQueueLength: 8,
+          supportsJsonSchema: true,
+          supportsThinking: true,
+          supportsSampling: true,
+        }]
+      : []),
+  ],
   routes: {
-    candidateGeneration: { preferredModel: V2_MODEL_ID },
-    styleCritique: { preferredModel: V2_MODEL_ID },
-    surgicalRepair: { preferredModel: V2_MODEL_ID },
-    semanticVerification: { preferredModel: V2_MODEL_ID },
-    semanticExtraction: { preferredModel: V2_MODEL_ID },
+    candidateGeneration: { preferredModel: V2_MODEL_ID, ...(V2_FALLBACK_MODELS.length ? { fallbackModels: V2_FALLBACK_MODELS } : {}) },
+    styleCritique: { preferredModel: V2_MODEL_ID, ...(V2_FALLBACK_MODELS.length ? { fallbackModels: V2_FALLBACK_MODELS } : {}) },
+    surgicalRepair: { preferredModel: V2_MODEL_ID, ...(V2_FALLBACK_MODELS.length ? { fallbackModels: V2_FALLBACK_MODELS } : {}) },
+    semanticVerification: { preferredModel: V2_MODEL_ID, ...(V2_FALLBACK_MODELS.length ? { fallbackModels: V2_FALLBACK_MODELS } : {}) },
+    semanticExtraction: { preferredModel: V2_MODEL_ID, ...(V2_FALLBACK_MODELS.length ? { fallbackModels: V2_FALLBACK_MODELS } : {}) },
   },
 };
 
@@ -241,8 +259,13 @@ if (process.env.GEMINI_API_KEY?.trim()) {
   const v2Runtime = createGeminiStyleTransferService({
     apiKey: process.env.GEMINI_API_KEY.trim(),
     catalog: v2Catalog,
-    styleProfiler: { analyze: (text) => analyzeStyleDNA(text) },
-    router: { defaultTimeoutMs: 60_000, queueTimeoutMs: 120_000, maxAttemptsPerModel: 3 },
+    styleProfiler: {
+      analyze: (text) => analyzeStyleDNA(text, {
+        minWordsForReliableProfile: 200,
+        minSentencesForReliableProfile: 8,
+      }),
+    },
+    router: { defaultTimeoutMs: 120_000, queueTimeoutMs: 180_000, maxAttemptsPerModel: 3 },
   });
 
   app.use('/api/v2/style-transfer', createPreparedStyleTransferApiRouter({
@@ -253,7 +276,23 @@ if (process.env.GEMINI_API_KEY?.trim()) {
     rateLimit: rateLimitV2,
     maxSourceCharacters: 30_000,
     maxDonorCharacters: 100_000,
-    preparation: { requireSufficientDonor: true },
+    preparation: {
+      requireSufficientDonor: true,
+      extractionTimeoutMs: 120_000,
+      completenessAuditTimeoutMs: 120_000,
+      interpretationAuditTimeoutMs: 120_000,
+      structureAuditTimeoutMs: 120_000,
+    },
+    defaultTransferOptions: {
+      generation: {
+        candidateCount: 3,
+        concurrency: 2,
+        styleIntensity: 5,
+        maxDonorExamples: 24,
+        adaptive: V2_MODEL_ID === 'gemini-4-hydrogen',
+      },
+      minimumStyleScore: 76,
+    },
     onError: (error) => console.error('[PROMPTGPT v2 API]', error),
   }));
 } else {
@@ -3600,6 +3639,7 @@ const server = app.listen(PORT, HOST, () => {
     `Server listening immediately on http://${HOST}:${PORT}`
   );
 });
+server.requestTimeout = 600_000;
 
 server.on('error', (err: any) => {
   console.error('[Server Listen Error]:', err);

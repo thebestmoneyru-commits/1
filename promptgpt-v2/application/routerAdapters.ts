@@ -119,6 +119,19 @@ const REPAIR_RESPONSE_SCHEMA = {
   },
 };
 
+export interface ModelInvocationTelemetry {
+  task: ModelTask;
+  requestedModel: string;
+  usedModel: string;
+  fallbackOccurred: boolean;
+  warnings: string[];
+  signal?: AbortSignal;
+}
+
+export interface RouterAdaptersOptions {
+  onModelResult?: (telemetry: ModelInvocationTelemetry) => void;
+}
+
 function routeFor(routes: ApplicationModelRoutes, task: ModelTask) {
   switch (task) {
     case "candidate-generation": return routes.candidateGeneration;
@@ -128,6 +141,24 @@ function routeFor(routes: ApplicationModelRoutes, task: ModelTask) {
     default: throw new Error(`No application route is configured for task ${task}.`);
   }
 }
+
+function thinkingForTask(task: ModelTask): "low" | "medium" | "high" {
+  switch (task) {
+    case "candidate-generation":
+    case "style-critique":
+    case "surgical-repair":
+    case "semantic-verification":
+    case "semantic-extraction":
+      return "high";
+    default:
+      return "medium";
+  }
+}
+
+function timeoutForTask(task: ModelTask): number {
+  return task === "candidate-generation" ? 120_000 : 90_000;
+}
+
 async function invoke(
   router: ModelRouter,
   routes: ApplicationModelRoutes,
@@ -135,6 +166,7 @@ async function invoke(
   prompt: string,
   signal?: AbortSignal,
   responseSchema?: unknown,
+  onModelResult?: (telemetry: ModelInvocationTelemetry) => void,
 ): Promise<string> {
   const route = routeFor(routes, task);
   const result = await router.generate({
@@ -143,9 +175,18 @@ async function invoke(
     fallbackModels: route.fallbackModels,
     prompt,
     responseSchema,
+    thinking: thinkingForTask(task),
     signal,
-    timeoutMs: task === "candidate-generation" ? 90_000 : 45_000,
+    timeoutMs: timeoutForTask(task),
     maxAttemptsPerModel: 3,
+  });
+  onModelResult?.({
+    task,
+    requestedModel: result.requestedModel,
+    usedModel: result.usedModel,
+    fallbackOccurred: result.fallbackOccurred,
+    warnings: [...result.warnings],
+    signal,
   });
   return result.text;
 }
@@ -172,21 +213,26 @@ function validateAssessments(value: unknown): value is PropositionAssessment[] {
 }
 
 /** Creates adapters backed by one shared router and its long-lived provider client. */
-export function createRouterAdapters(router: ModelRouter, routes: ApplicationModelRoutes): {
+export function createRouterAdapters(
+  router: ModelRouter,
+  routes: ApplicationModelRoutes,
+  options: RouterAdaptersOptions = {},
+): {
   candidateGenerator: CandidateModelAdapter;
   critic: StyleCriticAdapter;
   repair: SurgicalRepairAdapter;
   semanticVerifier: SemanticVerifier;
 } {
+  const onModelResult = options.onModelResult;
   return {
     candidateGenerator: {
-      generate: ({ prompt, signal }) => invoke(router, routes, "candidate-generation", prompt, signal),
+      generate: ({ prompt, signal }) => invoke(router, routes, "candidate-generation", prompt, signal, undefined, onModelResult),
     },
     critic: {
-      review: (prompt, signal) => invoke(router, routes, "style-critique", prompt, signal, CRITIC_RESPONSE_SCHEMA),
+      review: (prompt, signal) => invoke(router, routes, "style-critique", prompt, signal, CRITIC_RESPONSE_SCHEMA, onModelResult),
     },
     repair: {
-      repair: (prompt, signal) => invoke(router, routes, "surgical-repair", prompt, signal, REPAIR_RESPONSE_SCHEMA),
+      repair: (prompt, signal) => invoke(router, routes, "surgical-repair", prompt, signal, REPAIR_RESPONSE_SCHEMA, onModelResult),
     },
     semanticVerifier: {
       async assessCombined({ sourceText, candidateText, propositions, signal }) {
@@ -205,7 +251,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "", "SOURCE PROPOSITIONS JSON:", JSON.stringify(propositions),
           "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, COMBINED_VERIFICATION_SCHEMA);
+        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, COMBINED_VERIFICATION_SCHEMA, onModelResult);
         const parsed = parseJsonUnknown(raw);
         if (!isRecord(parsed) || !validateAssessments(parsed.propositionAssessments) ||
             !validateRelationAssessments(parsed.relationAssessments)) {
@@ -233,7 +279,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "SOURCE PROPOSITIONS JSON:",
           JSON.stringify(propositions),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, PROPOSITION_ASSESSMENT_ARRAY_SCHEMA);
+        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, PROPOSITION_ASSESSMENT_ARRAY_SCHEMA, onModelResult);
         const parsed = parseJsonUnknown(raw);
         if (!validateAssessments(parsed)) {
           throw new Error("Semantic verifier returned an invalid assessment array.");
@@ -256,7 +302,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "", "CANDIDATE JSON:", JSON.stringify(candidateText),
           "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, RELATION_ASSESSMENT_ARRAY_SCHEMA);
+        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, RELATION_ASSESSMENT_ARRAY_SCHEMA, onModelResult);
         const parsed = parseJsonUnknown(raw);
         if (!validateRelationAssessments(parsed)) throw new Error("Semantic structure verifier returned an invalid relation assessment array.");
         return parsed;

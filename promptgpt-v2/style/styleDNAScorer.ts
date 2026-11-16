@@ -198,7 +198,7 @@ export function scoreStyleDNA(
   for (const [id, donorFeature] of donorFeatures) {
     if (!isPortableStyleFeature(id)) continue;
     const isCorpusWideFeature =
-      id.startsWith("rhythm.") || id.startsWith("syntax.") ||
+      id.startsWith("rhythm.") || id.startsWith("paragraphs.") || id.startsWith("syntax.") ||
       id.startsWith("punctuation.") || id.startsWith("connectors.");
     if (!isCorpusWideFeature && donorFeature.observations < options.minimumDonorObservations) continue;
     const candidateFeature = candidateFeatures.get(id);
@@ -207,7 +207,9 @@ export function scoreStyleDNA(
     const reliability = featureReliability(donorFeature) * (candidateFeature ? featureReliability(candidateFeature) : clamp(candidate.confidence));
     const tolerance = toleranceFor(donorFeature, donorValue, options);
     const similarity = similarityFor(donorValue, candidateValue, tolerance, options.penaltyExponent);
-    const weight = (options.familyWeights[donorFeature.family] ?? 0) * featureWeight(donorFeature);
+    // Passive shared absence (0 vs 0) confirms non-overuse, not positive stylistic signature; keep full weight when candidate overuses an absent donor trait.
+    const passiveAbsenceFactor = donorValue === 0 && candidateValue === 0 ? 0.25 : 1;
+    const weight = (options.familyWeights[donorFeature.family] ?? 0) * featureWeight(donorFeature) * passiveAbsenceFactor;
     comparisons.push({
       featureId: id, family: donorFeature.family, label: donorFeature.label,
       donorValue, candidateValue, unit: donorFeature.unit, similarity, weight,

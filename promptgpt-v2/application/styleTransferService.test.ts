@@ -3,6 +3,8 @@ import { getLogicalRelationAuditKey } from "../semantic/semanticStructureAudit";
 import { analyzeStyleDNA } from "../style/styleDNAAnalyzer";
 import { createDonorStyleBaseline } from "../style/donorBaseline";
 import { StyleTransferService } from "./styleTransferService";
+import { createRouterAdapters } from "./routerAdapters";
+import { ModelRouter } from "../infrastructure/modelRouter";
 import type { StyleTransferRequest } from "./applicationTypes";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -561,6 +563,193 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(combinedCalls === 1, "combined semantic verifier should be invoked exactly once per candidate");
     assert(legacyCalls === 0, "combined verification must replace, not supplement, the two legacy calls");
     names.push("use one combined semantic-verification call per candidate");
+  }
+
+  {
+    const { request } = fixture();
+    const tweakedDonorText = Array.from({ length: 20 }, () =>
+      "В этот день священник пришёл к людям и совершил молитву; однако затем он беседовал с каждым человеком! И снова мысль возвращалась к главному."
+    ).join("\n\n");
+    const donorProfile = analyzeStyleDNA(tweakedDonorText, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+    const donorBaseline = createDonorStyleBaseline(donorProfile).baseline!;
+    const feature = donorBaseline.profile.features.find((item) => item.id === "punctuation.exclamation" && item.evidence.length > 0)!;
+    const targetPhrase = "После службы он беседовал с каждым человеком.";
+    const replacementPhrase = "После службы он беседовал с каждым человеком!";
+    const partialMatchCandidate = Array.from({ length: 20 }, () =>
+      "После службы он беседовал с каждым человеком. Затем люди разошлись."
+    ).join("\n\n");
+    const spanStart = partialMatchCandidate.indexOf(targetPhrase);
+
+    let criticCalls = 0;
+    let repairCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: { async generate() { return partialMatchCandidate; } },
+      critic: {
+        async review() {
+          criticCalls++;
+          return JSON.stringify({
+            styleFidelityScore: 72,
+            naturalnessScore: 86,
+            issues: [{
+              id: "issue-polish",
+              type: "punctuation-mismatch",
+              severity: "warning",
+              outputSpan: { start: spanStart, end: spanStart + targetPhrase.length, text: targetPhrase },
+              donorFeatureId: feature.id,
+              donorEvidenceExcerpt: feature.evidence[0].excerpt,
+              rationale: "Не хватает характерного восклицательного акцента.",
+              suggestedChange: "Передать экспрессию конца фразы восклицательным знаком.",
+              affectedPropositionIds: [],
+            }],
+          });
+        },
+      },
+      repair: {
+        async repair() {
+          repairCalls++;
+          return JSON.stringify([{
+            issueId: "issue-polish",
+            expectedText: targetPhrase,
+            replacement: replacementPhrase,
+          }]);
+        },
+      },
+      semanticVerifier: {
+        async assessCombined() { return { propositionAssessments: [], relationAssessments: [] }; },
+        async assess() { return []; },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const polished = await service.execute({
+      ...request,
+      donorBaseline,
+      minimumStyleScore: 55,
+      minimumStyleConfidence: 0,
+      generation: { candidateCount: 1, concurrency: 1, styleIntensity: 5, maxDonorExamples: 12, adaptive: true },
+    });
+    assert(criticCalls === 1 && repairCalls === 1,
+      "initially accepted candidate scoring below excellence threshold (<85) must still trigger StyleCritic and SurgicalRepair");
+    assert(polished.status === "accepted" && (polished.candidates[0]?.initial.styleReport.score ?? 0) < 85,
+      "polished run starts with initial score below 85 and finishes accepted");
+    assert(polished.selectedText?.includes(replacementPhrase),
+      "successful polish repair is adopted in final selectedText");
+    names.push("trigger critic and surgical repair when initially accepted candidate scores below excellence threshold");
+
+    // Monotonic preservation check: when critic/repair fails on an initially-accepted candidate, keep the verified initial candidate.
+    const monotonicService = new StyleTransferService({
+      candidateGenerator: { async generate() { return partialMatchCandidate; } },
+      critic: { async review() { throw new Error("transient critic error"); } },
+      repair: { async repair() { throw new Error("must not run"); } },
+      semanticVerifier: {
+        async assessCombined() { return { propositionAssessments: [], relationAssessments: [] }; },
+        async assess() { return []; },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const preserved = await monotonicService.execute({
+      ...request,
+      donorBaseline,
+      minimumStyleScore: 55,
+      minimumStyleConfidence: 0,
+    });
+    assert(preserved.status === "accepted" && preserved.selectedText === partialMatchCandidate,
+      "critic failure during optional polish preserves already-accepted initial candidate");
+    names.push("preserve verified initial candidate if optional excellence polish fails");
+  }
+
+  {
+    const capturedThinking: Array<{ task: string; thinking?: string; modelId: string }> = [];
+    const router = new ModelRouter({
+      models: [
+        {
+          id: "primary-model",
+          tasks: ["candidate-generation", "style-critique", "surgical-repair", "semantic-verification"],
+          enabled: true,
+          maxConcurrency: 2,
+          supportsJsonSchema: true,
+          supportsThinking: true,
+          supportsSampling: true,
+        },
+        {
+          id: "fallback-model",
+          tasks: ["candidate-generation", "style-critique", "surgical-repair", "semantic-verification"],
+          enabled: true,
+          maxConcurrency: 2,
+          supportsJsonSchema: true,
+          supportsThinking: true,
+          supportsSampling: true,
+        },
+      ],
+      adapter: {
+        async invoke(inv) {
+          capturedThinking.push({ task: inv.task, thinking: inv.thinking, modelId: inv.modelId });
+          if (inv.task === "candidate-generation" && inv.modelId === "primary-model") {
+            throw Object.assign(new Error("RESOURCE_EXHAUSTED: rate limit"), { status: 429 });
+          }
+          if (inv.task === "semantic-verification") {
+            return JSON.stringify({ propositionAssessments: [], relationAssessments: [] });
+          }
+          return "ok";
+        },
+      },
+      defaultTimeoutMs: 5000,
+    });
+    const { sourceText, request } = fixture();
+    const telemetryBySignal = new WeakMap<AbortSignal, Array<{
+      task: string; requestedModel: string; usedModel: string; fallbackOccurred: boolean; warnings: string[];
+    }>>();
+    const routed = createRouterAdapters(router, {
+      candidateGeneration: { preferredModel: "primary-model", fallbackModels: ["fallback-model"] },
+      styleCritique: { preferredModel: "primary-model", fallbackModels: ["fallback-model"] },
+      surgicalRepair: { preferredModel: "primary-model", fallbackModels: ["fallback-model"] },
+      semanticVerification: { preferredModel: "primary-model", fallbackModels: ["fallback-model"] },
+      semanticExtraction: { preferredModel: "primary-model", fallbackModels: ["fallback-model"] },
+    }, {
+      onModelResult(telemetry) {
+        if (!telemetry.signal) return;
+        const list = telemetryBySignal.get(telemetry.signal) ?? [];
+        list.push(telemetry);
+        telemetryBySignal.set(telemetry.signal, list);
+      },
+    });
+    const service = new StyleTransferService({
+      ...routed,
+      candidateGenerator: {
+        generate: async (req) => {
+          await routed.candidateGenerator.generate(req);
+          return sourceText;
+        },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+      drainModelTelemetry(signal) {
+        const list = telemetryBySignal.get(signal) ?? [];
+        telemetryBySignal.delete(signal);
+        return list as never;
+      },
+    });
+    const result = await service.execute(request);
+    assert(result.status === "accepted", "service executes with router telemetry and fallback");
+    assert(capturedThinking.some((item) => item.task === "candidate-generation" && item.thinking === "high"),
+      "candidate-generation sends thinking='high'");
+    assert(capturedThinking.some((item) => item.task === "semantic-verification" && item.thinking === "high"),
+      "semantic-verification sends thinking='high'");
+    assert(result.warnings.some((w) => w.includes("переход с primary-model на fallback-model")),
+      "model fallback telemetry is surfaced in execution warnings");
+    names.push("propagate thinking='high' and surface model fallback telemetry");
   }
 
   return { passed: names.length, names };

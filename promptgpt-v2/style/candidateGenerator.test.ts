@@ -95,5 +95,53 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   assert(!called, "invalid source inventory blocks provider calls");
   names.push("source inventory guard");
 
+  const richDonorCorpus = Array.from({ length: 14 }, (_, idx) =>
+    `И тогда автор — человек наблюдательный — пояснил детали; впрочем, смысл оставался прежним. ` +
+    `Однако позже он добавил: «Истина не меняется со временем», поскольку помнил давний урок (${idx + 1}). ` +
+    `Разве можно было сомневаться? Нет!`
+  ).join("\n\n");
+  const richDonor = analyzeStyleDNA(richDonorCorpus, {
+    minWordsForReliableProfile: 100,
+    minSentencesForReliableProfile: 10,
+    maxEvidencePerFeature: 4,
+  });
+  const richCreated = createDonorStyleBaseline(richDonor);
+  assert(richCreated.ok && !!richCreated.baseline, "rich donor baseline is created");
+  const richPrompt = buildCandidatePrompt({
+    sourceText,
+    inventory,
+    donorBaseline: richCreated.baseline!,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 12,
+  });
+  const marker = "НАБЛЮДАЕМЫЕ ОСОБЕННОСТИ ДОНОРА (JSON-ДАННЫЕ; примеры показывают только форму):\n";
+  const afterMarker = richPrompt.slice(richPrompt.indexOf(marker) + marker.length);
+  const jsonEnd = afterMarker.indexOf("\nОриентируйся на все семейства признаков из JSON:");
+  assert(jsonEnd > 0, "style JSON block is present and properly delimited");
+  const stylePayload = JSON.parse(afterMarker.slice(0, jsonEnd)) as {
+    corpusProfile: { meanWordsPerSentence: number; sentenceLengthDistribution: Record<string, unknown> };
+    features: Array<{ id: string; family: string; examples: string[] }>;
+    avoidOveruseTraits: Array<{ id: string }>;
+  };
+  const familiesTransferred = new Set(stylePayload.features.map((f) => f.family));
+  const totalExamples = stylePayload.features.reduce((sum, f) => sum + f.examples.length, 0);
+  const familiesWithExamples = new Set(stylePayload.features.filter((f) => f.examples.length > 0).map((f) => f.family));
+  assert(stylePayload.corpusProfile.meanWordsPerSentence > 0 && !!stylePayload.corpusProfile.sentenceLengthDistribution,
+    "corpusProfile rhythm and distribution stats are transferred");
+  assert(
+    familiesTransferred.has("rhythm") &&
+    familiesTransferred.has("paragraphs") &&
+    familiesTransferred.has("punctuation") &&
+    familiesTransferred.has("syntax") &&
+    familiesTransferred.has("connectors"),
+    "all active portable feature families are transferred even when maxDonorExamples=12",
+  );
+  assert(totalExamples <= 12 && familiesWithExamples.size >= 4,
+    "round-robin allocator respects maxDonorExamples=12 while covering at least 4 feature families with examples");
+  assert(stylePayload.avoidOveruseTraits.some((f) => f.id === "punctuation.ellipsis"),
+    "unused donor traits appear in avoidOveruseTraits");
+  names.push("full multi-family Style DNA transfer and round-robin example distribution");
+
   return { passed: names.length, names };
 }
