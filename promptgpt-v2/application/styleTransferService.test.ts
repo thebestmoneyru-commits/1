@@ -643,9 +643,13 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       ", repaired=" + polished.candidates[0]?.repaired +
       ", repairPassed=" + polished.candidates[0]?.repairPassed +
       ", warnings=" + JSON.stringify(polished.candidates[0]?.warnings));
-    assert(polished.selectedText?.includes(replacementPhrase),
-      "successful polish repair is adopted in final selectedText");
-    names.push("trigger critic and surgical repair when initially accepted candidate scores below excellence threshold");
+    assert(polished.selectedText === partialMatchCandidate,
+      "a repair that lowers the verified style score must not replace the accepted candidate");
+    assert(polished.candidates[0]?.finalEvaluation.styleReport.score !== null &&
+      (polished.candidates[0]?.finalEvaluation.styleReport.score ?? 0) >=
+      (polished.candidates[0]?.initial.styleReport.score ?? 0),
+      "the selected fallback must preserve the pre-repair style score");
+    names.push("run critic repair below excellence threshold and preserve candidate when repair regresses");
 
     // Monotonic preservation check: when critic/repair fails on an initially-accepted candidate, keep the verified initial candidate.
     const monotonicService = new StyleTransferService({
