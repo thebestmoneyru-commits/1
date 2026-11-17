@@ -80,7 +80,7 @@ export function runStyleDNAScorerSelfTests(): { passed: number; names: string[] 
     "candidate overuse of an absent donor trait keeps full penalty weight");
   names.push("exclude shared absence while retaining full absent-trait overuse penalty");
 
-  const oneParagraph = analyzeStyleDNA(donorText.replace(/\\n\\n/gu, " "), {
+  const oneParagraph = analyzeStyleDNA(donorText.split(String.fromCharCode(10, 10)).join(" "), {
     minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
   });
   const paragraphFeature = oneParagraph.features.find((item) => item.id === "paragraphs.mean-sentences-per-paragraph");
