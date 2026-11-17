@@ -53,7 +53,7 @@ export interface StyleScorerOptions {
   penaltyExponent: number;
 }
 
-export const STYLE_SCORING_VERSION = "2.1.0";
+export const STYLE_SCORING_VERSION = "2.0.1";
 
 export const DEFAULT_STYLE_SCORER_OPTIONS: Readonly<StyleScorerOptions> = {
   familyWeights: {
@@ -204,13 +204,12 @@ export function scoreStyleDNA(
     const candidateFeature = candidateFeatures.get(id);
     const donorValue = featureValue(donorFeature);
     const candidateValue = candidateFeature ? featureValue(candidateFeature) : 0;
-    // Shared absence is not evidence of a positive stylistic match. Keep absent
-    // donor traits in the comparison only when the candidate actually overuses them.
-    if (donorValue === 0 && candidateValue === 0) continue;
     const reliability = featureReliability(donorFeature) * (candidateFeature ? featureReliability(candidateFeature) : clamp(candidate.confidence));
     const tolerance = toleranceFor(donorFeature, donorValue, options);
     const similarity = similarityFor(donorValue, candidateValue, tolerance, options.penaltyExponent);
-    const weight = (options.familyWeights[donorFeature.family] ?? 0) * featureWeight(donorFeature);
+    // Passive shared absence (0 vs 0) confirms non-overuse, not positive stylistic signature; keep full weight when candidate overuses an absent donor trait.
+    const passiveAbsenceFactor = donorValue === 0 && candidateValue === 0 ? 0.25 : 1;
+    const weight = (options.familyWeights[donorFeature.family] ?? 0) * featureWeight(donorFeature) * passiveAbsenceFactor;
     comparisons.push({
       featureId: id, family: donorFeature.family, label: donorFeature.label,
       donorValue, candidateValue, unit: donorFeature.unit, similarity, weight,
@@ -248,15 +247,12 @@ export function scoreStyleDNA(
   }
 
   const activeFamilies = familyScores.filter((item) => item.comparedFeatures > 0 && item.weight > 0);
-  // A family with sparse or weak evidence must not influence the aggregate as
-  // strongly as a well-supported family. Confidence therefore scales its weight.
-  const totalWeight = activeFamilies.reduce((sum,item)=>sum+item.weight*item.confidence,0);
+  const totalWeight = activeFamilies.reduce((sum,item)=>sum+item.weight,0);
   const score = totalWeight
-    ? activeFamilies.reduce((sum,item)=>sum+item.score*item.weight*item.confidence,0)/totalWeight
+    ? activeFamilies.reduce((sum,item)=>sum+item.score*item.weight,0)/totalWeight
     : 0;
-  const configuredWeight = activeFamilies.reduce((sum,item)=>sum+item.weight,0);
-  const confidence = configuredWeight
-    ? activeFamilies.reduce((sum,item)=>sum+item.confidence*item.weight,0)/configuredWeight
+  const confidence = totalWeight
+    ? activeFamilies.reduce((sum,item)=>sum+item.confidence*item.weight,0)/totalWeight
     : 0;
 
   if (donor.status === "limited") warnings.push("Профиль донора ограничен объёмом корпуса; итоговая оценка предварительная.");

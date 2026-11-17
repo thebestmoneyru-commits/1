@@ -167,11 +167,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
     .filter((p) => p.text.trim().length > 0)
     .slice(0, config.maxEvidencePerFeature)
     .map((p) => ({ span: { start: p.start, end: p.end, text: p.text }, excerpt: p.text.slice(0, 260) }));
-  // Paragraph rhythm needs several independent paragraphs. A long single
-  // paragraph may support sentence statistics, but cannot establish paragraph
-  // organization; keep this uncertainty local to the paragraph feature.
-  const paragraphSampleConfidence = corpusConfidence * clamp01(paragraphs.length / 4);
-  features.push(feature("paragraphs.mean-sentences-per-paragraph","paragraphs","Среднее число предложений в абзаце",stats.meanSentencesPerParagraph,paragraphs.length,"mean",paragraphSampleConfidence,paragraphs.length,paragraphEvidence, "Среднее число предложений в одном абзаце; надёжность зависит от количества независимых абзацев."));
+  features.push(feature("paragraphs.mean-sentences-per-paragraph","paragraphs","Среднее число предложений в абзаце",stats.meanSentencesPerParagraph,paragraphs.length,"mean",corpusConfidence,paragraphs.length,paragraphEvidence, "Среднее число предложений в одном абзаце."));
 
   const punctuation: Array<[string,string,RegExp]> = [
     ["dash","Тире",/—|–/gu],["semicolon","Точка с запятой",/;/gu],
@@ -247,7 +243,6 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   if (stats.words < config.minWordsForReliableProfile) warnings.push(`Мало слов: ${stats.words}; надёжный профиль требует около ${config.minWordsForReliableProfile}.`);
   if (stats.sentences < config.minSentencesForReliableProfile) warnings.push(`Мало предложений: ${stats.sentences}; надёжная оценка требует около ${config.minSentencesForReliableProfile}.`);
   if (!stats.paragraphs) warnings.push("Текст не содержит анализируемых абзацев.");
-  else if (stats.paragraphs < 4) warnings.push("Абзацный профиль предварительный: для устойчивого анализа требуется несколько независимых абзацев (ориентир — не менее четырёх).");
   if (features.some(f=>f.id.startsWith("syntax.participle") || f.id.startsWith("syntax.gerund"))) warnings.push("Морфологические признаки определяются эвристически; для точной классификации нужен морфологический анализатор.");
 
   const status = stats.words >= config.minWordsForReliableProfile && stats.sentences >= config.minSentencesForReliableProfile
