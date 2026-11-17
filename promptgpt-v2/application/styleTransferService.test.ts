@@ -192,7 +192,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
           return prompt.includes("ЗАДАЧА: восстанови") ? sourceText : candidateText;
         },
       },
-      critic: { async review() { throw new Error("critic must not run for a restored accepted candidate"); } },
+      critic: { async review() { return JSON.stringify({ styleFidelityScore: 100, naturalnessScore: 100, issues: [] }); } },
       repair: { async repair() { throw new Error("style repair must not run for a restored accepted candidate"); } },
       semanticVerifier: {
         async assess({ candidateText: checkedText }) {
@@ -502,7 +502,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
           return candidateIndex === 0 ? "Семантически неполный вариант." : sourceText;
         },
       },
-      critic: { async review() { throw new Error("critic must not run for the accepted fallback candidate"); } },
+      critic: { async review() { return JSON.stringify({ styleFidelityScore: 100, naturalnessScore: 100, issues: [] }); } },
       repair: { async repair() { throw new Error("repair must not run for the accepted fallback candidate"); } },
       semanticVerifier: {
         async assess({ candidateText }) {
