@@ -72,9 +72,9 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(result.status === "accepted", "an identical, semantically valid candidate should be accepted");
     assert(result.selectedText === sourceText, "the selected text must be the generated candidate");
     assert(generationCalls === 1, "one candidate should cause one generation call");
-    assert(criticCalls === 0, "an already accepted candidate should bypass critic and repair");
+    assert(criticCalls === 1, "every semantically admissible candidate must receive an independent critic review");
     assert(result.trace.some((event) => event.stage === "completed"), "successful execution should be traced");
-    names.push("accept semantically valid candidate and skip unnecessary repair");
+    names.push("independently critique a high-scoring candidate without unnecessary repair");
   }
 
   {
