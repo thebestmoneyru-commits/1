@@ -1,14 +1,14 @@
 import { buildFactInventory } from "../semantic/factInventory";
 import { analyzeStyleDNA } from "../style/styleDNAAnalyzer";
 import { createDonorStyleBaseline } from "../style/donorBaseline";
-import { buildStyleCriticPrompt, runStyleCritic } from "./styleCritic";
+import { runStyleCritic } from "./styleCritic";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Style critic self-test failed: ${message}`);
 }
 function donorText(): string {
   return Array.from({ length: 24 }, () =>
-    "И тогда автор — человек вдумчивый — подробно объяснил обстоятельства, поскольку они имели особенное значение. Однако затем повествование продолжилось, и мысль получила дальнейшее развитие."
+    "И тогда автор подробно объяснил обстоятельства, поскольку они имели особенное значение. Однако затем повествование продолжилось, и мысль получила дальнейшее развитие."
   ).join("\n\n");
 }
 
@@ -174,28 +174,6 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
     "critic must anchor verbatim candidate quotes even when model offsets are imprecise",
   );
   names.push("anchor verbatim critic span offsets");
-
-  const criticPrompt = buildStyleCriticPrompt({
-    sourceText,
-    candidateText,
-    inventory,
-    donorBaseline: baseline,
-  });
-  const evidenceHeader = "DONOR STYLE EVIDENCE JSON:\n";
-  const evidenceSlice = criticPrompt.slice(criticPrompt.indexOf(evidenceHeader) + evidenceHeader.length);
-  const evidenceJson = JSON.parse(evidenceSlice.slice(0, evidenceSlice.indexOf("\n\nSOURCE PROPOSITIONS JSON:"))) as {
-    corpusSummary: { meanWordsPerSentence: number; absentDonorTraits: Array<{ featureId: string }> };
-    featuresWithEvidence: Array<{ featureId: string; rate: number; examples: string[] }>;
-  };
-  assert(evidenceJson.corpusSummary.meanWordsPerSentence > 0 &&
-    evidenceJson.corpusSummary.absentDonorTraits.some((item) => item.featureId === "punctuation.exclamation"),
-    "critic prompt receives corpusSummary and absentDonorTraits");
-  assert(
-    evidenceJson.featuresWithEvidence.some((item) => item.featureId === "rhythm.mean-sentence-length") &&
-    evidenceJson.featuresWithEvidence.some((item) => item.featureId === "punctuation.dash"),
-    "critic prompt includes grounded rhythm and punctuation features for quantitative critique",
-  );
-  names.push("critic prompt exposes corpusSummary, absentDonorTraits, rhythm, and punctuation evidence");
 
   return { passed: names.length, names };
 }

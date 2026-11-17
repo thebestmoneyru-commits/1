@@ -44,7 +44,7 @@ const DEFAULT_OPTIONS: CandidateGenerationOptions = {
   candidateCount: 3,
   concurrency: 2,
   styleIntensity: 4,
-  maxDonorExamples: 24,
+  maxDonorExamples: 12,
 };
 
 export function resolveCandidateCount(options: Partial<CandidateGenerationOptions> = {}): number {
@@ -60,113 +60,49 @@ function normalizeOptions(options: Partial<CandidateGenerationOptions>): Candida
       ? Math.max(1, Math.min(3, Math.floor(options.concurrency!))) : DEFAULT_OPTIONS.concurrency,
     styleIntensity: intensity as CandidateGenerationOptions["styleIntensity"],
     maxDonorExamples: Number.isFinite(options.maxDonorExamples)
-      ? Math.max(0, Math.min(48, Math.floor(options.maxDonorExamples!))) : DEFAULT_OPTIONS.maxDonorExamples,
+      ? Math.max(0, Math.min(20, Math.floor(options.maxDonorExamples!))) : DEFAULT_OPTIONS.maxDonorExamples,
     customInstructions: typeof options.customInstructions === "string"
       ? options.customInstructions.slice(0, 4000) : undefined,
     adaptive: options.adaptive !== false,
   };
 }
 
-function isCorpusWidePortableFeature(id: string): boolean {
-  return id.startsWith("rhythm.") || id.startsWith("paragraphs.") ||
-    id.startsWith("punctuation.") || id.startsWith("syntax.") ||
-    id.startsWith("connectors.");
-}
-
 function selectStyleFeatures(features: readonly StyleFeature[]): StyleFeature[] {
   return [...features]
-    .filter((feature) =>
-      !feature.id.startsWith("lexical.repeat.") && !feature.id.startsWith("closings.") &&
-      (isCorpusWidePortableFeature(feature.id) || (feature.confidence >= 0.25 && feature.observations >= 2)))
-    .sort((a, b) => (b.confidence * Math.log2(b.observations + 1)) - (a.confidence * Math.log2(a.observations + 1)));
+    .filter((feature) => feature.confidence >= 0.25 && feature.observations >= 2 &&
+      !feature.id.startsWith("lexical.repeat.") && !feature.id.startsWith("closings."))
+    .sort((a, b) => (b.confidence * Math.log2(b.observations + 1)) - (a.confidence * Math.log2(a.observations + 1)))
+    .slice(0, 24);
 }
-
-function allocateExamplesRoundRobin(
-  features: readonly StyleFeature[],
-  limit: number,
-): Map<string, string[]> {
-  const allocated = new Map<string, string[]>();
-  for (const feature of features) allocated.set(feature.id, []);
-  if (limit <= 0) return allocated;
-
-  const cursors = new Map<string, number>();
-  const globalSeen = new Set<string>();
-  let count = 0;
-
-  // First pass: prefer unique excerpts across features so rhythm, punctuation, connectors, and syntax all get distinct examples.
-  // Second pass: allow already-seen excerpts only if needed to populate remaining empty features within budget.
-  for (const allowDuplicateAcrossFeatures of [false, true]) {
-    let progressed = true;
-    while (count < limit && progressed) {
-      progressed = false;
-      for (const feature of features) {
-        if (count >= limit) break;
-        const bucket = allocated.get(feature.id)!;
-        if (bucket.length >= 3) continue;
-        let idx = cursors.get(feature.id) ?? 0;
-        while (idx < feature.evidence.length) {
-          const excerpt = feature.evidence[idx].excerpt.trim().slice(0, 340);
-          idx++;
-          if (!excerpt) continue;
-          const normKey = excerpt.replace(/\s+/gu, " ");
-          if (!allowDuplicateAcrossFeatures && globalSeen.has(normKey)) continue;
-          if (bucket.includes(excerpt)) continue;
-          bucket.push(excerpt);
-          globalSeen.add(normKey);
-          count++;
-          progressed = true;
-          break;
-        }
-        cursors.set(feature.id, idx);
-      }
-    }
-    for (const feature of features) cursors.set(feature.id, 0);
-  }
-  return allocated;
-}
-
 function buildStyleEvidence(baseline: DonorStyleBaseline, limit: number): string {
-  const allPortable = selectStyleFeatures(baseline.profile.features);
-  const activeFeatures = allPortable.filter((feature) => feature.rate > 0 || feature.observations > 0);
-  const zeroFeatures = allPortable.filter((feature) => feature.rate === 0 && feature.observations === 0);
-  const allocatedExamples = allocateExamplesRoundRobin(activeFeatures, limit);
-  const dist = baseline.profile.corpus.sentenceLengthDistribution;
-
-  const payload = {
-    corpusProfile: {
-      words: baseline.profile.corpus.words,
-      sentences: baseline.profile.corpus.sentences,
-      paragraphs: baseline.profile.corpus.paragraphs,
-      meanWordsPerSentence: Number(baseline.profile.corpus.meanWordsPerSentence.toFixed(2)),
-      medianWordsPerSentence: Number(baseline.profile.corpus.medianWordsPerSentence.toFixed(2)),
-      meanSentencesPerParagraph: Number(baseline.profile.corpus.meanSentencesPerParagraph.toFixed(2)),
-      sentenceLengthDistribution: {
-        shortUpTo8Words: { count: dist.short.count, share: Number(dist.short.share.toFixed(3)) },
-        medium9To20Words: { count: dist.medium.count, share: Number(dist.medium.share.toFixed(3)) },
-        long21To35Words: { count: dist.long.count, share: Number(dist.long.share.toFixed(3)) },
-        veryLongOver35Words: { count: dist.veryLong.count, share: Number(dist.veryLong.share.toFixed(3)) },
-      },
-    },
-    features: activeFeatures.map((feature) => ({
-      id: feature.id,
+  const features = selectStyleFeatures(baseline.profile.features);
+  const observations: Array<{
+    family: string;
+    label: string;
+    rate: number;
+    confidence: number;
+    examples: string[];
+  }> = [];
+  let count = 0;
+  for (const feature of features) {
+    const examples: string[] = [];
+    for (const evidence of feature.evidence) {
+      if (count >= limit) break;
+      const excerpt = evidence.excerpt.trim();
+      if (!excerpt) continue;
+      examples.push(excerpt.slice(0, 240));
+      count++;
+    }
+    observations.push({
       family: feature.family,
       label: feature.label,
       rate: Number(feature.rate.toFixed(3)),
-      unit: feature.unit,
-      observations: feature.observations,
       confidence: Number(feature.confidence.toFixed(2)),
-      interpretation: feature.interpretation,
-      examples: allocatedExamples.get(feature.id) ?? [],
-    })),
-    avoidOveruseTraits: zeroFeatures.map((feature) => ({
-      id: feature.id,
-      family: feature.family,
-      label: feature.label,
-      rate: 0,
-      unit: feature.unit,
-    })),
-  };
-  return JSON.stringify(payload, null, 2);
+      examples,
+    });
+    if (count >= limit) break;
+  }
+  return JSON.stringify(observations, null, 2);
 }
 
 /** Creates a model prompt while keeping the original content and donor style roles separate. */
@@ -240,7 +176,6 @@ export function buildCandidatePrompt(input: {
     "",
     "НАБЛЮДАЕМЫЕ ОСОБЕННОСТИ ДОНОРА (JSON-ДАННЫЕ; примеры показывают только форму):",
     buildStyleEvidence(input.donorBaseline, input.maxDonorExamples),
-    "Ориентируйся на все семейства признаков из JSON: выдерживай близкие к corpusProfile среднюю и медианную длину предложений, доли коротких/средних/длинных/сверхдлинных фраз, плотность абзацев, пунктуационный профиль (тире, двоеточия, точку с запятой, скобки, кавычки), синтаксические обороты и связки донора; избегай избыточного использования черт из avoidOveruseTraits, отсутствующих у донора.",
     "",
     "ОБЯЗАТЕЛЬНЫЕ СОДЕРЖАТЕЛЬНЫЕ ЯКОРЯ ИСХОДНИКА (JSON-ДАННЫЕ):",
     anchors,

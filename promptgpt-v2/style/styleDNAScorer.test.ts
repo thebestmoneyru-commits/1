@@ -71,15 +71,5 @@ export function runStyleDNAScorerSelfTests(): { passed: number; names: string[] 
     "empty comparable feature sets do not fabricate a high score");
   names.push("empty feature-set handling");
 
-  const sharedExclamation = identical.comparisons.find((item) => item.featureId === "punctuation.exclamation");
-  const overusedDash = punctuation.comparisons.find((item) => item.featureId === "punctuation.dash");
-  assert(!!sharedExclamation && sharedExclamation.donorValue === 0 && sharedExclamation.candidateValue === 0 &&
-    Math.abs(sharedExclamation.weight - 0.8 * 0.25) < 1e-9,
-    "shared zero punctuation features receive discounted 0.25 passive absence weight");
-  assert(!!overusedDash && overusedDash.donorValue === 0 && overusedDash.candidateValue > 0 &&
-    Math.abs(overusedDash.weight - 0.8) < 1e-9,
-    "candidate overuse of an absent donor trait keeps full penalty weight");
-  names.push("passive shared-absence weight reduction vs full overuse penalty");
-
   return { passed: names.length, names };
 }

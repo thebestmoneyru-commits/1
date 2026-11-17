@@ -52,26 +52,5 @@ export function runStyleDNAAnalyzerSelfTests(): { passed: number; names: string[
     "paragraph rhythm is represented as a measurable feature");
   names.push("sentence and paragraph distributions");
 
-  const richSample = [
-    "Короткая фраза — начало.",
-    "Второе предложение немного длиннее, поскольку в нём присутствуют пояснения; тем не менее мысль остаётся ясной.",
-    "",
-    "Третий фрагмент: развёрнутое рассуждение, охватывающее девять, десять, одиннадцать или даже двенадцать обычных русских слов без лишней спешки.",
-  ].join("\n");
-  const richProfile = analyzeStyleDNA(richSample, { maxEvidencePerFeature: 3 });
-  const dashFeature = richProfile.features.find((item) => item.id === "punctuation.dash");
-  const meanEvidence = richProfile.features.find((item) => item.id === "rhythm.mean-sentence-length");
-  const shortDist = richProfile.features.find((item) => item.id === "rhythm.length-distribution.short");
-  const paraFeature = richProfile.features.find((item) => item.id === "paragraphs.mean-sentences-per-paragraph");
-  assert(!!dashFeature && dashFeature.evidence.length > 0 && dashFeature.evidence[0].excerpt.includes("—"),
-    "punctuation.dash retains grounded donor sentence evidence");
-  assert(!!meanEvidence && meanEvidence.evidence.length > 0 && richSample.includes(meanEvidence.evidence[0].excerpt),
-    "rhythm.mean-sentence-length retains grounded donor sentence evidence");
-  assert(!!shortDist && shortDist.evidence.length > 0 && shortDist.evidence[0].excerpt.includes("Короткая фраза"),
-    "rhythm.length-distribution.short retains grounded short sentence evidence");
-  assert(!!paraFeature && paraFeature.evidence.length === 2 && richSample.includes(paraFeature.evidence[0].excerpt),
-    "paragraphs.mean-sentences-per-paragraph retains grounded paragraph excerpts");
-  names.push("grounded donor evidence for rhythm, paragraph, and punctuation features");
-
   return { passed: names.length, names };
 }

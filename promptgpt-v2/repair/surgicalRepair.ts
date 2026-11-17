@@ -78,7 +78,6 @@ function buildRepairPrompt(input: {
     "Сохраняй отрицание, субъект, объект, модальность, условия, оговорки, причинные и временные связи, цитаты и атрибуцию.",
     "Не исправляй намеренные авторские особенности и ошибки, если замечание не доказывает стилевое несоответствие.",
     "Верни только JSON-массив объектов {issueId, expectedText, replacement}. expectedText обязан дословно совпадать с полным фрагментом соответствующего замечания.",
-    "Не возвращай патчи с перекрывающимися или вложенными фрагментами expectedText.",
     "Не возвращай патчи для замечаний, которые невозможно исправить без изменения смысла.",
     `Максимум патчей: ${input.maxPatches}.`,
     "",
@@ -145,13 +144,9 @@ export async function repairCandidateSurgically(input: {
   const seenIssueIds = new Set<string>();
   for (const issue of actionable) {
     const feature = input.donorBaseline.profile.features.find((item) => item.id === issue.donorFeatureId);
-    const trimmedExcerpt = typeof issue.donorEvidenceExcerpt === "string" ? issue.donorEvidenceExcerpt.trim() : "";
-    const collapsedExcerpt = trimmedExcerpt.replace(/\s+/gu, " ");
-    const evidenceIsGrounded = !!feature && trimmedExcerpt.length > 0 &&
-      feature.evidence.some((item) =>
-        item.excerpt.includes(trimmedExcerpt) ||
-        (collapsedExcerpt.length > 0 && item.excerpt.trim().replace(/\s+/gu, " ").includes(collapsedExcerpt)),
-      );
+    const evidenceIsGrounded = !!feature && typeof issue.donorEvidenceExcerpt === "string" &&
+      issue.donorEvidenceExcerpt.trim().length > 0 &&
+      feature.evidence.some((item) => item.excerpt.includes(issue.donorEvidenceExcerpt.trim()));
     if (typeof issue.id !== "string" || !issue.id.trim() || seenIssueIds.has(issue.id) ||
         !spanIsExact(issue.outputSpan, input.candidateText) ||
         (issue.severity !== "blocking" && issue.severity !== "warning" && issue.severity !== "info") ||

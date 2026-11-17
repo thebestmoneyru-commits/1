@@ -18,11 +18,6 @@ export type StyleTransferRequestPreparer = (
   input: StyleTransferPreparationInput,
 ) => Promise<Omit<StyleTransferRequest, "requestId" | "sourceText" | "signal">>;
 
-export type DefaultTransferOptions = Pick<
-  StyleTransferRequest,
-  "generation" | "minimumStyleScore" | "minimumStyleConfidence" | "critic" | "repair" | "verification"
->;
-
 export interface StyleTransferApiOptions {
   service: StyleTransferService;
   prepareRequest: StyleTransferRequestPreparer;
@@ -32,7 +27,6 @@ export interface StyleTransferApiOptions {
   rateLimit: RequestHandler;
   maxSourceCharacters?: number;
   maxDonorCharacters?: number;
-  defaultTransferOptions?: DefaultTransferOptions;
   onError?: (error: unknown) => void;
 }
 
@@ -136,7 +130,6 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
         });
         if (controller.signal.aborted) return;
         const result = await options.service.execute({
-          ...options.defaultTransferOptions,
           ...prepared,
           requestId: parsed.body.requestId,
           sourceText: parsed.body.sourceText,

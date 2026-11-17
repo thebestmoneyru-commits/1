@@ -55,7 +55,7 @@ const DEFAULT_OPTIONS: StyleCriticOptions = {
   minimumStyleScore: 78,
   minimumNaturalnessScore: 75,
   maxIssues: 12,
-  maxDonorEvidenceChars: 12000,
+  maxDonorEvidenceChars: 5000,
 };
 
 const VIOLATION_TYPES = new Set<StyleViolationType>([
@@ -72,22 +72,13 @@ function normalizeOptions(input: Partial<StyleCriticOptions>): StyleCriticOption
     minimumStyleScore: bounded(input.minimumStyleScore, DEFAULT_OPTIONS.minimumStyleScore, 0, 100),
     minimumNaturalnessScore: bounded(input.minimumNaturalnessScore, DEFAULT_OPTIONS.minimumNaturalnessScore, 0, 100),
     maxIssues: Math.floor(bounded(input.maxIssues, DEFAULT_OPTIONS.maxIssues, 1, 20)),
-    maxDonorEvidenceChars: Math.floor(bounded(input.maxDonorEvidenceChars, DEFAULT_OPTIONS.maxDonorEvidenceChars, 500, 24000)),
+    maxDonorEvidenceChars: Math.floor(bounded(input.maxDonorEvidenceChars, DEFAULT_OPTIONS.maxDonorEvidenceChars, 500, 12000)),
   };
-}
-
-function normalizeEvidenceWhitespace(value: string): string {
-  return value.trim().replace(/\s+/gu, " ");
 }
 
 function evidenceForFeature(evidence: readonly StyleEvidence[], excerpt: string): boolean {
   const normalized = excerpt.trim();
-  if (normalized.length === 0) return false;
-  const collapsed = normalizeEvidenceWhitespace(normalized);
-  return evidence.some((item) =>
-    item.excerpt.includes(normalized) ||
-    (collapsed.length > 0 && normalizeEvidenceWhitespace(item.excerpt).includes(collapsed)),
-  );
+  return normalized.length > 0 && evidence.some((item) => item.excerpt.includes(normalized));
 }
 function validSpan(span: unknown, text: string): span is TextSpan {
   if (!span || typeof span !== "object") return false;
@@ -100,89 +91,19 @@ function validSpan(span: unknown, text: string): span is TextSpan {
 }
 
 function buildDonorEvidence(baseline: DonorStyleBaseline, limit: number): string {
-  const dist = baseline.profile.corpus.sentenceLengthDistribution;
-  const absentDonorTraits = baseline.profile.features
-    .filter((feature) =>
-      !feature.id.startsWith("lexical.repeat.") && !feature.id.startsWith("closings.") &&
-      feature.rate === 0 && feature.observations === 0)
-    .map((feature) => ({ featureId: feature.id, family: feature.family, label: feature.label, rate: 0, unit: feature.unit }));
-
-  const corpusSummary = {
-    words: baseline.profile.corpus.words,
-    sentences: baseline.profile.corpus.sentences,
-    paragraphs: baseline.profile.corpus.paragraphs,
-    meanWordsPerSentence: Number(baseline.profile.corpus.meanWordsPerSentence.toFixed(2)),
-    medianWordsPerSentence: Number(baseline.profile.corpus.medianWordsPerSentence.toFixed(2)),
-    meanSentencesPerParagraph: Number(baseline.profile.corpus.meanSentencesPerParagraph.toFixed(2)),
-    sentenceLengthDistribution: {
-      short: Number(dist.short.share.toFixed(3)),
-      medium: Number(dist.medium.share.toFixed(3)),
-      long: Number(dist.long.share.toFixed(3)),
-      veryLong: Number(dist.veryLong.share.toFixed(3)),
-    },
-    absentDonorTraits,
-  };
-
-  const priorityOrder = (family: string): number => {
-    switch (family) {
-      case "rhythm": return 0;
-      case "paragraphs": return 1;
-      case "punctuation": return 2;
-      case "syntax": return 3;
-      case "connectors": return 4;
-      case "openers": return 5;
-      default: return 6;
-    }
-  };
-
-  const sorted = [...baseline.profile.features]
-    .filter((feature) => !feature.id.startsWith("lexical.repeat.") && !feature.id.startsWith("closings."))
-    .sort((a, b) => priorityOrder(a.family) - priorityOrder(b.family));
-
-  const entries: Array<{
-    featureId: string;
-    family: string;
-    label: string;
-    rate: number;
-    unit: string;
-    observations: number;
-    confidence: number;
-    examples: string[];
-  }> = [];
-  let used = JSON.stringify(corpusSummary).length;
-
-  for (const feature of sorted) {
-    const isStructural =
-      feature.id.startsWith("rhythm.") || feature.id.startsWith("paragraphs.") ||
-      feature.id.startsWith("punctuation.") || feature.id.startsWith("syntax.") ||
-      feature.id.startsWith("connectors.");
-    if (!isStructural && (feature.confidence < 0.3 || feature.observations < 2)) continue;
-    const examples = feature.evidence.map((item) => item.excerpt.trim()).filter(Boolean).slice(0, 2);
+  const entries: Array<{ featureId: string; family: string; label: string; confidence: number; examples: string[] }> = [];
+  let used = 0;
+  for (const feature of baseline.profile.features) {
+    if (feature.confidence < 0.3 || feature.observations < 2) continue;
+    const examples = feature.evidence.map((item) => item.excerpt.trim()).filter(Boolean).slice(0, 3);
     if (!examples.length) continue;
-    const next = {
-      featureId: feature.id,
-      family: feature.family,
-      label: feature.label,
-      rate: Number(feature.rate.toFixed(3)),
-      unit: feature.unit,
-      observations: feature.observations,
-      confidence: feature.confidence,
-      examples,
-    };
+    const next = { featureId: feature.id, family: feature.family, label: feature.label, confidence: feature.confidence, examples };
     const size = JSON.stringify(next).length;
-    if (used + size <= limit) {
-      entries.push(next);
-      used += size;
-    } else if (examples.length > 1) {
-      const compact = { ...next, examples: examples.slice(0, 1) };
-      const compactSize = JSON.stringify(compact).length;
-      if (used + compactSize <= limit) {
-        entries.push(compact);
-        used += compactSize;
-      }
-    }
+    if (used + size > limit) break;
+    entries.push(next);
+    used += size;
   }
-  return JSON.stringify({ corpusSummary, featuresWithEvidence: entries }, null, 2);
+  return JSON.stringify(entries, null, 2);
 }
 
 export function buildStyleCriticPrompt(input: {

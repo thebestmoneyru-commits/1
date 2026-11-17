@@ -1,5 +1,4 @@
 import { validatePropositionExtraction } from "./propositionSchema";
-import { normalizeModelExtractedPropositions } from "./spanAnchor";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -123,40 +122,6 @@ export function runPropositionSchemaSelfTests(): { passed: number; names: string
   }], new Set(["p2"]));
   assert(!paddedExpression.valid, "relation evidence must match the source exactly, including whitespace");
   names.push("reject relation expressions with non-source whitespace");
-
-  const multilineSource = "Он не пришёл, потому\nчто заболел.";
-  const normalizedMultiExpression = normalizeModelExtractedPropositions(multilineSource, [
-    {
-      ...base,
-      sourceSpan: { start: 0, end: 12, text: "Он не пришёл" },
-      relations: [{ kind: "cause", from: "p2", to: "p1", expression: " потому что " }],
-    },
-    {
-      ...base,
-      id: "p2",
-      summary: "Он заболел",
-      sourceSpan: { start: multilineSource.indexOf("заболел"), end: multilineSource.length, text: "заболел." },
-      subject: "Он",
-      predicate: "заболел",
-      polarity: "positive",
-      modality: undefined,
-      relations: [],
-    },
-  ]);
-  const anchoredMulti = validatePropositionExtraction(multilineSource, normalizedMultiExpression);
-  assert(
-    anchoredMulti.valid && anchoredMulti.propositions[0].relations[0].expression === "потому\nчто",
-    "normalizer must resolve whitespace-variant expressions to exact verbatim source text",
-  );
-  const untouchedFabricated = normalizeModelExtractedPropositions(source, [
-    { ...base, relations: [{ kind: "cause", from: "p1", to: "p2", expression: "выдуманный маркер" }] },
-    { ...base, id: "p2", subject: "Брат" },
-  ]);
-  assert(
-    !validatePropositionExtraction(source, untouchedFabricated).valid,
-    "normalizer must leave fabricated relation expressions untouched for strict rejection",
-  );
-  names.push("anchor whitespace-variant relation expressions without accepting fabricated markers");
 
   const differentModality = validatePropositionExtraction(source, [
     base,

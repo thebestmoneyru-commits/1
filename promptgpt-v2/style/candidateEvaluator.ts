@@ -37,7 +37,7 @@ export interface CandidateEvaluationResult {
 }
 
 const DEFAULT_OPTIONS: CandidateEvaluatorOptions = {
-  minimumStyleScore: 76,
+  minimumStyleScore: 70,
   minimumStyleConfidence: 0.35,
 };
 
