@@ -636,7 +636,13 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(criticCalls === 1 && repairCalls === 1,
       "initially accepted candidate scoring below excellence threshold (<85) must still trigger StyleCritic and SurgicalRepair");
     assert(polished.status === "accepted" && (polished.candidates[0]?.initial.styleReport.score ?? 0) < 85,
-      "polished run starts with initial score below 85 and finishes accepted");
+      "polished run should be accepted after repair; status=" + polished.status +
+      ", initialScore=" + polished.candidates[0]?.initial.styleReport.score +
+      ", finalScore=" + polished.candidates[0]?.finalEvaluation.styleReport.score +
+      ", finalDisposition=" + polished.candidates[0]?.finalEvaluation.disposition +
+      ", repaired=" + polished.candidates[0]?.repaired +
+      ", repairPassed=" + polished.candidates[0]?.repairPassed +
+      ", warnings=" + JSON.stringify(polished.candidates[0]?.warnings));
     assert(polished.selectedText?.includes(replacementPhrase),
       "successful polish repair is adopted in final selectedText");
     names.push("trigger critic and surgical repair when initially accepted candidate scores below excellence threshold");
