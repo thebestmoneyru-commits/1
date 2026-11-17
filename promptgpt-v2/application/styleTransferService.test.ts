@@ -446,6 +446,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     names.push("reject repaired candidate when post-repair outputEvidence does not match repairedText");
   }
 
+  // Adaptive early-stop is permitted only after independent critic approval.
   {
     const { sourceText, request } = fixture();
     let generationCalls = 0;
