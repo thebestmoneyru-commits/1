@@ -93,9 +93,7 @@ export class StyleTransferService {
       const outcomes: CandidateOutcome[] = [];
       const adaptive = request.generation?.adaptive !== false;
       const candidateLimit = resolveCandidateCount(request.generation);
-      const excellenceStyleScore = request.minimumStyleScore === 0
-        ? 0
-        : Math.max(85, request.critic?.minimumStyleScore ?? 78);
+      const excellenceStyleScore = Math.max(85, request.critic?.minimumStyleScore ?? 78);
       const candidateBatches: Array<number | null> = adaptive
         ? Array.from({ length: candidateLimit }, (_, index) => index)
         : [null];
@@ -307,24 +305,9 @@ export class StyleTransferService {
           }
         }
 
-        const alreadyHighExcellence =
-          currentEvaluation.disposition === "accepted" &&
-          (request.minimumStyleScore === 0 ||
-            (currentEvaluation.styleReport.score ?? 0) >= excellenceStyleScore);
-
-        if (alreadyHighExcellence) {
-          outcomes.push({
-            candidateId: candidate.candidateId,
-            initial,
-            finalText: currentText,
-            finalEvaluation: currentEvaluation,
-            repaired: semanticRestorationApplied,
-            repairPassed: semanticRestorationApplied ? true : undefined,
-            warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...currentEvaluation.warnings])],
-          });
-          if (adaptive) break candidateLoop;
-          continue;
-        }
+        // Every semantically admissible candidate receives an independent critic
+        // review. A heuristic score, even >=85, is not proof of stylistic fidelity.
+        // The repair stage remains conditional: a passing critic does not trigger edits.
 
         // Style critique is only allowed after semantic preservation has passed.
         if (!currentEvaluation.semanticReport.passed) {

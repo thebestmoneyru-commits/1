@@ -73,13 +73,22 @@ export function runStyleDNAScorerSelfTests(): { passed: number; names: string[] 
 
   const sharedExclamation = identical.comparisons.find((item) => item.featureId === "punctuation.exclamation");
   const overusedDash = punctuation.comparisons.find((item) => item.featureId === "punctuation.dash");
-  assert(!!sharedExclamation && sharedExclamation.donorValue === 0 && sharedExclamation.candidateValue === 0 &&
-    Math.abs(sharedExclamation.weight - 0.8 * 0.25) < 1e-9,
-    "shared zero punctuation features receive discounted 0.25 passive absence weight");
+  assert(!sharedExclamation,
+    "shared zero punctuation features must not add positive evidence or dilute the score");
   assert(!!overusedDash && overusedDash.donorValue === 0 && overusedDash.candidateValue > 0 &&
     Math.abs(overusedDash.weight - 0.8) < 1e-9,
     "candidate overuse of an absent donor trait keeps full penalty weight");
-  names.push("passive shared-absence weight reduction vs full overuse penalty");
+  names.push("exclude shared absence while retaining full absent-trait overuse penalty");
+
+  const oneParagraph = analyzeStyleDNA(donorText.split(String.fromCharCode(10, 10)).join(" "), {
+    minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+  });
+  const paragraphFeature = oneParagraph.features.find((item) => item.id === "paragraphs.mean-sentences-per-paragraph");
+  assert(!!paragraphFeature && paragraphFeature.confidence < 0.3,
+    "one paragraph cannot produce a confident paragraph-rhythm estimate");
+  assert(oneParagraph.warnings.some((warning) => warning.includes("Абзацный профиль предварительный")),
+    "insufficient paragraph samples must be visible in profile warnings");
+  names.push("paragraph-specific sample adequacy");
 
   return { passed: names.length, names };
 }
