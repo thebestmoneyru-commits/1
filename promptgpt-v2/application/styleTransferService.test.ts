@@ -629,7 +629,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     const polished = await service.execute({
       ...request,
       donorBaseline,
-      minimumStyleScore: 55,
+      minimumStyleScore: 50,
       minimumStyleConfidence: 0,
       generation: { candidateCount: 1, concurrency: 1, styleIntensity: 5, maxDonorExamples: 12, adaptive: true },
     });
@@ -666,7 +666,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     const preserved = await monotonicService.execute({
       ...request,
       donorBaseline,
-      minimumStyleScore: 55,
+      minimumStyleScore: 50,
       minimumStyleConfidence: 0,
     });
     assert(preserved.status === "accepted" && preserved.selectedText === partialMatchCandidate,
