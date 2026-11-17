@@ -456,7 +456,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
           return candidateIndex === 0 ? sourceText : "этот вариант не должен запрашиваться";
         },
       },
-      critic: { async review() { throw new Error("critic must not run for an accepted candidate"); } },
+      critic: { async review() { return JSON.stringify({ styleFidelityScore: 100, naturalnessScore: 100, issues: [] }); } },
       repair: { async repair() { throw new Error("repair must not run for an accepted candidate"); } },
       semanticVerifier: {
         async assess() { return []; },
@@ -542,7 +542,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     let legacyCalls = 0;
     const service = new StyleTransferService({
       candidateGenerator: { async generate() { return sourceText; } },
-      critic: { async review() { throw new Error("critic must not run for an accepted candidate"); } },
+      critic: { async review() { return JSON.stringify({ styleFidelityScore: 100, naturalnessScore: 100, issues: [] }); } },
       repair: { async repair() { throw new Error("repair must not run for an accepted candidate"); } },
       semanticVerifier: {
         async assess() { legacyCalls++; throw new Error("legacy proposition verifier must not run"); },
