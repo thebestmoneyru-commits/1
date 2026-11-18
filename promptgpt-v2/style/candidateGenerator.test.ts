@@ -41,6 +41,15 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     "topic-specific repeated words and exact donor endings are not presented as style instructions");
   assert(prompt.includes("предложение за предложением") && prompt.includes("обратную сверку"),
     "generation prompt explicitly requires source-by-source completeness review");
+  const longInstructions = "УКАЗАНИЕ".repeat(700);
+  const uncappedPrompt = buildCandidatePrompt({
+    sourceText, inventory, donorBaseline: baseline, candidateIndex: 0,
+    styleIntensity: 5, maxDonorExamples: Number.MAX_SAFE_INTEGER,
+    customInstructions: longInstructions,
+  });
+  assert(uncappedPrompt.includes(longInstructions), "long user instructions are not silently truncated");
+  assert(!uncappedPrompt.includes("90%") && !uncappedPrompt.includes("115%"), "generation prompt has no arbitrary output-length ratio");
+  names.push("unbounded custom-instruction text and removal of fixed output-length ratio");
   const secondPrompt = buildCandidatePrompt({
     sourceText, inventory, donorBaseline: baseline, candidateIndex: 1,
     styleIntensity: 5, maxDonorExamples: 3,
