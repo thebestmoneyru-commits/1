@@ -44,7 +44,7 @@ const DEFAULT_OPTIONS: CandidateGenerationOptions = {
   candidateCount: 3,
   concurrency: 2,
   styleIntensity: 4,
-  maxDonorExamples: 24,
+  maxDonorExamples: Number.MAX_SAFE_INTEGER,
 };
 
 export function resolveCandidateCount(options: Partial<CandidateGenerationOptions> = {}): number {
