@@ -175,9 +175,17 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
   );
   names.push("anchor verbatim critic span offsets");
 
-  const criticPrompt = buildStyleCriticPrompt({
-    sourceText, candidateText, inventory, donorBaseline: baseline,
+  const irregularDonorText = donorText() + "\\n\\nОн обруживает эту особенность в тексте.";
+  const irregularProfile = analyzeStyleDNA(irregularDonorText, {
+    minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
   });
+  const irregularBaseline = createDonorStyleBaseline(irregularProfile, irregularDonorText);
+  assert(irregularBaseline.ok && !!irregularBaseline.baseline, "donor with a spelling irregularity creates a baseline");
+  const criticPrompt = buildStyleCriticPrompt({
+    sourceText, candidateText, inventory, donorBaseline: irregularBaseline.baseline!,
+  });
+  assert(criticPrompt.includes("обруживает"), "critic receives the exact donor spelling irregularity");
+  assert(criticPrompt.includes("не помечай их как unnatural-construction"), "critic is instructed not to penalize donor-grounded irregularities");
   assert(
     criticPrompt.includes('"corpusSummary"') && criticPrompt.includes('"absentDonorTraits"'),
     "critic prompt must expose corpusSummary and absentDonorTraits",
