@@ -1,6 +1,7 @@
 import express, { type ErrorRequestHandler, type Request, type Response, type RequestHandler, type Router } from "express";
 import type { StyleTransferService } from "../application/styleTransferService";
 import type { StyleTransferRequest } from "../application/applicationTypes";
+import { ModelRouterError } from "../infrastructure/modelRouter";
 
 export interface StyleTransferPreparationInput {
   requestId: string;
@@ -61,6 +62,72 @@ function readBody(value: unknown, options: Required<Pick<StyleTransferApiOptions
     ? body.requestId.trim().slice(0, 128)
     : `style-transfer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   return { ok: true, body: { requestId, sourceText: body.sourceText, donorText: body.donorText } };
+}
+
+function classifyRouterFailure(error: unknown): { status: number; code: string; message: string } {
+  if (error instanceof ModelRouterError) {
+    const modelLabel = error.modelId ?? "Gemini";
+    if (error.kind === "cancelled") {
+      return {
+        status: 408,
+        code: "CANCELLED",
+        message: "Запрос PROMPTGPT v2 отменён клиентом или превысил допустимое время ожидания.",
+      };
+    }
+    if (error.kind === "timeout" || error.kind === "queue-timeout") {
+      return {
+        status: 504,
+        code: "MODEL_TIMEOUT",
+        message: `Превышено время ожидания ответа модели (${modelLabel}). Повторите попытку.`,
+      };
+    }
+    if (error.kind === "rate-limit" || error.kind === "quota-exhausted") {
+      return {
+        status: 429,
+        code: "RATE_LIMITED_UPSTREAM",
+        message: `Превышен лимит запросов или квота модели (${modelLabel}): ${error.message.slice(0, 300)}`,
+      };
+    }
+    if (error.kind === "invalid-auth") {
+      return {
+        status: 502,
+        code: "UPSTREAM_AUTH_ERROR",
+        message: "Ошибка авторизации Gemini API на сервере (проверьте GEMINI_API_KEY).",
+      };
+    }
+    return {
+      status: 502,
+      code: "UPSTREAM_MODEL_ERROR",
+      message: `Ошибка модели (${modelLabel}): ${error.message.slice(0, 400)}`,
+    };
+  }
+  if (error instanceof Error && error.message.trim()) {
+    const raw = error.message.trim().slice(0, 800);
+    if (/Request preparation was cancelled/i.test(raw)) {
+      return {
+        status: 408,
+        code: "CANCELLED",
+        message: "Подготовка запроса PROMPTGPT v2 отменена до завершения.",
+      };
+    }
+    if (/Donor corpus is (?:insufficient|limited)|Semantic (?:extraction|completeness|interpretation|structure|inventory)|Logical relation/i.test(raw)) {
+      return {
+        status: 422,
+        code: "PREPARATION_FAILED",
+        message: `Подготовка PROMPTGPT v2 остановлена проверкой: ${raw}`,
+      };
+    }
+    return {
+      status: 500,
+      code: "STYLE_TRANSFER_API_ERROR",
+      message: `Не удалось выполнить перенос стиля: ${raw}`,
+    };
+  }
+  return {
+    status: 500,
+    code: "STYLE_TRANSFER_API_ERROR",
+    message: "Не удалось выполнить перенос стиля.",
+  };
 }
 
 /**
@@ -144,8 +211,9 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
       } catch (error) {
         options.onError?.(error);
         if (!res.headersSent && !res.writableEnded) {
-          return res.status(500).json({
-            error: { code: "STYLE_TRANSFER_API_ERROR", message: "Не удалось выполнить перенос стиля." },
+          const classified = classifyRouterFailure(error);
+          return res.status(classified.status).json({
+            error: { code: classified.code, message: classified.message },
           });
         }
       } finally {

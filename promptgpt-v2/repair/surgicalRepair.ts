@@ -142,11 +142,12 @@ export async function repairCandidateSurgically(input: {
     issue.severity !== "info" || options.allowInfoIssues
   ).slice(0, options.maxPatches);
   const seenIssueIds = new Set<string>();
+  const normalizeWs = (value: string) => value.replace(/\s+/gu, " ").trim();
   for (const issue of actionable) {
     const feature = input.donorBaseline.profile.features.find((item) => item.id === issue.donorFeatureId);
-    const evidenceIsGrounded = !!feature && typeof issue.donorEvidenceExcerpt === "string" &&
-      issue.donorEvidenceExcerpt.trim().length > 0 &&
-      feature.evidence.some((item) => item.excerpt.includes(issue.donorEvidenceExcerpt.trim()));
+    const normalizedExcerpt = typeof issue.donorEvidenceExcerpt === "string" ? normalizeWs(issue.donorEvidenceExcerpt) : "";
+    const evidenceIsGrounded = !!feature && normalizedExcerpt.length > 0 &&
+      feature.evidence.some((item) => normalizeWs(item.excerpt).includes(normalizedExcerpt));
     if (typeof issue.id !== "string" || !issue.id.trim() || seenIssueIds.has(issue.id) ||
         !spanIsExact(issue.outputSpan, input.candidateText) ||
         (issue.severity !== "blocking" && issue.severity !== "warning" && issue.severity !== "info") ||

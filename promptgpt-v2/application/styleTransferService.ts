@@ -21,6 +21,17 @@ export interface StyleTransferServiceDependencies {
   repair: SurgicalRepairAdapter;
   semanticVerifier: SemanticVerifier;
   styleProfiler: StyleProfiler;
+  defaultRequestOptions?: Partial<Pick<
+    StyleTransferRequest,
+    | "generation"
+    | "semanticPolicy"
+    | "minimumStyleScore"
+    | "minimumStyleConfidence"
+    | "criticPolishThreshold"
+    | "critic"
+    | "repair"
+    | "verification"
+  >>;
   now?: () => number;
 }
 
@@ -35,7 +46,24 @@ export class StyleTransferService {
     this.now = deps.now ?? Date.now;
   }
 
-  async execute(request: StyleTransferRequest): Promise<StyleTransferResponse> {
+  async execute(rawRequest: StyleTransferRequest): Promise<StyleTransferResponse> {
+    const defaults = this.deps.defaultRequestOptions;
+    const request: StyleTransferRequest = defaults ? {
+      ...defaults,
+      ...rawRequest,
+      generation: defaults.generation || rawRequest.generation
+        ? { ...defaults.generation, ...rawRequest.generation }
+        : undefined,
+      critic: defaults.critic || rawRequest.critic
+        ? { ...defaults.critic, ...rawRequest.critic }
+        : undefined,
+      repair: defaults.repair || rawRequest.repair
+        ? { ...defaults.repair, ...rawRequest.repair }
+        : undefined,
+      verification: defaults.verification || rawRequest.verification
+        ? { ...defaults.verification, ...rawRequest.verification }
+        : undefined,
+    } : rawRequest;
     const trace: TransferTraceEvent[] = [];
     const warnings: string[] = [];
     const mark = (stage: TransferTraceEvent["stage"], message: string, candidateId?: string) =>
@@ -278,7 +306,15 @@ export class StyleTransferService {
           }
         }
 
-        if (currentEvaluation.disposition === "accepted") {
+        const polishThreshold = request.criticPolishThreshold;
+        const preCriticScore = currentEvaluation.styleReport.score ?? 0;
+        const wasAcceptedBeforeCritic = currentEvaluation.disposition === "accepted";
+        const needsCriticPolish =
+          polishThreshold !== undefined &&
+          wasAcceptedBeforeCritic &&
+          preCriticScore < polishThreshold;
+
+        if (wasAcceptedBeforeCritic && !needsCriticPolish) {
           outcomes.push({
             candidateId: candidate.candidateId,
             initial,
@@ -347,25 +383,51 @@ export class StyleTransferService {
             },
           });
           const finalEvaluation = pipeline.verification.after;
-          outcomes.push({
-            candidateId: candidate.candidateId,
-            initial,
-            finalText: pipeline.finalText,
-            finalEvaluation,
-            repaired: semanticRestorationApplied || pipeline.repairResult.applied,
-            repairPassed: pipeline.completed,
-            warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...pipeline.warnings])],
-          });
-          if (adaptive && pipeline.completed && finalEvaluation.disposition === "accepted") {
-            break candidateLoop;
+          const afterScore = finalEvaluation.styleReport.score ?? -1;
+          const keepPreCriticAccepted =
+            wasAcceptedBeforeCritic &&
+            (!pipeline.completed ||
+              finalEvaluation.disposition !== "accepted" ||
+              afterScore < preCriticScore);
+
+          if (keepPreCriticAccepted) {
+            outcomes.push({
+              candidateId: candidate.candidateId,
+              initial,
+              finalText: currentText,
+              finalEvaluation: currentEvaluation,
+              repaired: semanticRestorationApplied,
+              repairPassed: semanticRestorationApplied ? true : undefined,
+              warnings: [...new Set([
+                ...initial.warnings,
+                ...restorationWarnings,
+                ...pipeline.warnings,
+                "Точечная доработка критика не улучшила уже принятый вариант; сохранён проверенный кандидат.",
+              ])],
+            });
+            if (adaptive) break candidateLoop;
+          } else {
+            outcomes.push({
+              candidateId: candidate.candidateId,
+              initial,
+              finalText: pipeline.finalText,
+              finalEvaluation,
+              repaired: semanticRestorationApplied || pipeline.repairResult.applied,
+              repairPassed: pipeline.completed,
+              warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...pipeline.warnings])],
+            });
+            if (adaptive && pipeline.completed && finalEvaluation.disposition === "accepted") {
+              break candidateLoop;
+            }
           }
         } catch (error) {
           outcomes.push({
             candidateId: candidate.candidateId, initial, finalText: currentText,
             finalEvaluation: currentEvaluation, repaired: semanticRestorationApplied,
-            repairPassed: false,
+            repairPassed: wasAcceptedBeforeCritic ? (semanticRestorationApplied ? true : undefined) : false,
             warnings: [...restorationWarnings, error instanceof Error ? error.message : "Critic/repair stage failed."],
           });
+          if (adaptive && wasAcceptedBeforeCritic) break candidateLoop;
         }
       }
       }

@@ -199,15 +199,18 @@ export function scoreStyleDNA(
     if (!isPortableStyleFeature(id)) continue;
     const isCorpusWideFeature =
       id.startsWith("rhythm.") || id.startsWith("syntax.") ||
-      id.startsWith("punctuation.") || id.startsWith("connectors.");
+      id.startsWith("punctuation.") || id.startsWith("connectors.") ||
+      id.startsWith("paragraphs.");
     if (!isCorpusWideFeature && donorFeature.observations < options.minimumDonorObservations) continue;
     const candidateFeature = candidateFeatures.get(id);
     const donorValue = featureValue(donorFeature);
     const candidateValue = candidateFeature ? featureValue(candidateFeature) : 0;
+    const bothZero = donorValue === 0 && candidateValue === 0;
     const reliability = featureReliability(donorFeature) * (candidateFeature ? featureReliability(candidateFeature) : clamp(candidate.confidence));
     const tolerance = toleranceFor(donorFeature, donorValue, options);
     const similarity = similarityFor(donorValue, candidateValue, tolerance, options.penaltyExponent);
-    const weight = (options.familyWeights[donorFeature.family] ?? 0) * featureWeight(donorFeature);
+    const passiveFactor = bothZero ? 0.15 : 1;
+    const weight = (options.familyWeights[donorFeature.family] ?? 0) * featureWeight(donorFeature) * passiveFactor;
     comparisons.push({
       featureId: id, family: donorFeature.family, label: donorFeature.label,
       donorValue, candidateValue, unit: donorFeature.unit, similarity, weight,

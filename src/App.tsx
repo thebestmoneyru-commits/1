@@ -1559,35 +1559,86 @@ export default function App() {
     setDnaResultText('');
 
     try {
-      const data = await safePost(
-        '/api/v2/style-transfer',
-        { donorText, sourceText: contentText },
-        3,
-        { 'X-PromptGPT-V2-Key': v2AccessKey.trim() }
-      );
+      let res: Response | null = null;
+      let rawText = '';
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        res = await fetch('/api/v2/style-transfer', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-PromptGPT-V2-Key': v2AccessKey.trim(),
+          },
+          body: JSON.stringify({ donorText, sourceText: contentText }),
+        });
 
-      setV2Diagnostics(data);
-      setV2Status(`PROMPTGPT v2: ${data.status || 'неизвестный статус'}; создано вариантов: ${data.generation?.generated ?? 0}.`);
+        const contentType = res.headers.get('content-type') || '';
+        rawText = await res.text();
+        const isWarmup =
+          (contentType.includes('text/html') && rawText.includes('Starting Server...')) ||
+          res.status === 502 ||
+          res.status === 503;
 
-      if (data.status !== 'accepted' || typeof data.selectedText !== 'string' || !data.selectedText.trim()) {
-        const detail =
-          data.error?.message ||
-          data.warnings?.[0] ||
-          data.candidates?.[0]?.warnings?.[0] ||
-          'Ни один вариант не прошёл обязательные проверки смысла и стиля.';
-        throw new Error(`PROMPTGPT v2 завершил работу со статусом «${data.status || 'unknown'}». ${detail}`);
+        if (isWarmup && !rawText.trim().startsWith('{') && attempt < 3) {
+          await sleep(1200);
+          continue;
+        }
+        break;
       }
 
-      setDnaResultText(data.selectedText);
-      setDnaRefinementMeta(null);
-      setAuditTargetSource('result');
-      handleRunDetectorAudit(data.selectedText);
-      saveToHistory(
-        data.selectedText,
-        100,
-        `[PROMPTGPT v2 | ${selectedModelName}] Т1: ${donorText.slice(0, 35)}... | Т2: ${contentText.slice(0, 35)}...`,
-        'style-dna'
-      );
+      if (!res) {
+        throw new Error('Не удалось связаться с сервером. Пожалуйста, повторите попытку.');
+      }
+
+      let data: any = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = null;
+      }
+
+      if (data && typeof data === 'object' && 'status' in data) {
+        bumpUsage();
+        setV2Diagnostics(data);
+        setV2Status(
+          `PROMPTGPT v2: ${data.status || 'неизвестный статус'}; создано вариантов: ${data.generation?.generated ?? 0}.`
+        );
+
+        if (data.status !== 'accepted' || typeof data.selectedText !== 'string' || !data.selectedText.trim()) {
+          const firstCandidate = Array.isArray(data.candidates) ? data.candidates[0] : undefined;
+          const firstEval = firstCandidate?.finalEvaluation || firstCandidate?.initial;
+          const detail =
+            data.error?.message ||
+            firstEval?.rejectionReasons?.[0] ||
+            data.warnings?.[0] ||
+            firstCandidate?.warnings?.[0] ||
+            'Ни один вариант не прошёл обязательные проверки смысла и стиля.';
+          throw new Error(`PROMPTGPT v2 завершил работу со статусом «${data.status || 'unknown'}». ${detail}`);
+        }
+
+        setDnaResultText(data.selectedText);
+        setDnaRefinementMeta(null);
+        setAuditTargetSource('result');
+        handleRunDetectorAudit(data.selectedText);
+        saveToHistory(
+          data.selectedText,
+          100,
+          `[PROMPTGPT v2] Т1: ${donorText.slice(0, 35)}... | Т2: ${contentText.slice(0, 35)}...`,
+          'style-dna'
+        );
+        return;
+      }
+
+      if (!res.ok) {
+        const errorMessage =
+          (typeof data?.error === 'string' ? data.error : data?.error?.message) ||
+          data?.message ||
+          (rawText.includes('Starting Server...')
+            ? 'Сервер инициализируется. Пожалуйста, подождите несколько секунд и повторите запуск.'
+            : `Ошибка сервера (${res.status}).`);
+        throw new Error(errorMessage);
+      }
+
+      throw new Error('Сервер вернул неожиданный ответ от PROMPTGPT v2.');
     } catch (err: any) {
       setError(err.message || 'Ошибка PROMPTGPT v2');
     } finally {
@@ -2207,6 +2258,16 @@ export default function App() {
                         <ul className="list-disc pl-5 space-y-1 text-xs text-amber-200">
                           {candidate.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
                         </ul>
+                      )}
+                      {typeof candidate.finalText === 'string' && candidate.finalText.trim() && (
+                        <details className="rounded-lg border border-slate-800 bg-slate-900/70 p-2">
+                          <summary className="cursor-pointer text-xs font-semibold text-slate-300">
+                            Текст кандидата ({candidate.finalText.length} симв.)
+                          </summary>
+                          <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300 leading-relaxed">
+                            {candidate.finalText}
+                          </p>
+                        </details>
                       )}
                     </div>
                   );

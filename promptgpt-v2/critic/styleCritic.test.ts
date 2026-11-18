@@ -1,7 +1,7 @@
 import { buildFactInventory } from "../semantic/factInventory";
 import { analyzeStyleDNA } from "../style/styleDNAAnalyzer";
 import { createDonorStyleBaseline } from "../style/donorBaseline";
-import { runStyleCritic } from "./styleCritic";
+import { buildStyleCriticPrompt, runStyleCritic } from "./styleCritic";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Style critic self-test failed: ${message}`);
@@ -174,6 +174,42 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
     "critic must anchor verbatim candidate quotes even when model offsets are imprecise",
   );
   names.push("anchor verbatim critic span offsets");
+
+  const criticPrompt = buildStyleCriticPrompt({
+    sourceText, candidateText, inventory, donorBaseline: baseline,
+  });
+  assert(
+    criticPrompt.includes('"corpusSummary"') && criticPrompt.includes('"absentDonorTraits"'),
+    "critic prompt must expose corpusSummary and absentDonorTraits",
+  );
+  const wsExcerpt = donorExcerpt.replace(/\s+/gu, "  ");
+  const wsNormalizedResult = await runStyleCritic({
+    sourceText, candidateText, inventory, donorBaseline: baseline,
+    adapter: {
+      async review() {
+        return JSON.stringify({
+          styleFidelityScore: 84,
+          naturalnessScore: 88,
+          issues: [{
+            id: "issue-ws",
+            type: "syntax-mismatch",
+            severity: "warning",
+            outputSpan: span,
+            donorFeatureId: feature!.id,
+            donorEvidenceExcerpt: wsExcerpt,
+            rationale: "Отличается от образца.",
+            suggestedChange: "Сблизить порядок слов.",
+            affectedPropositionIds: [],
+          }],
+        });
+      },
+    },
+  });
+  assert(
+    wsNormalizedResult.issues.length === 1 && wsNormalizedResult.issues[0].id === "issue-ws",
+    "critic must tolerate harmless internal whitespace normalization in donorEvidenceExcerpt",
+  );
+  names.push("critic corpusSummary context and whitespace-tolerant excerpt grounding");
 
   return { passed: names.length, names };
 }

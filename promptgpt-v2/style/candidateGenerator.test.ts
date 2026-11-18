@@ -95,5 +95,29 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   assert(!called, "invalid source inventory blocks provider calls");
   names.push("source inventory guard");
 
+  const richDonor = analyzeStyleDNA(
+    Array.from({ length: 18 }, () =>
+      "И тогда автор — вопреки ожиданиям — объяснил причину, поскольку знал цену слова; однако вывод оставался сдержанным."
+    ).join("\n\n"),
+    { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
+  );
+  const richCreated = createDonorStyleBaseline(richDonor);
+  assert(richCreated.ok && !!richCreated.baseline, "rich donor baseline fixture is available");
+  const richPrompt = buildCandidatePrompt({
+    sourceText,
+    inventory,
+    donorBaseline: richCreated.baseline!,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 24,
+  });
+  assert(richPrompt.includes('"corpusProfile"'), "prompt includes corpusProfile statistics");
+  assert(richPrompt.includes('"avoidOveruseTraits"'), "prompt includes absent donor traits warning list");
+  assert(
+    richPrompt.includes('"punctuation.dash"') && richPrompt.includes('"rhythm.mean-sentence-length"'),
+    "prompt retains multi-family corpus-wide features alongside syntax",
+  );
+  names.push("multi-family Style DNA evidence and corpusProfile transfer");
+
   return { passed: names.length, names };
 }

@@ -71,5 +71,23 @@ export function runStyleDNAScorerSelfTests(): { passed: number; names: string[] 
     "empty comparable feature sets do not fabricate a high score");
   names.push("empty feature-set handling");
 
+  const singleParagraphDonor = profile(
+    Array.from({ length: 12 }, () =>
+      "Спокойная речь текла ровно, поскольку рассказчик последовательно излагал ход событий."
+    ).join(" "),
+  );
+  const multiParagraphCandidate = profile(
+    Array.from({ length: 12 }, () =>
+      "Спокойная речь текла ровно.\n\nПоскольку рассказчик последовательно излагал ход событий, мысль не терялась."
+    ).join("\n\n"),
+  );
+  const paragraphComparison = scoreStyleDNA(singleParagraphDonor, multiParagraphCandidate);
+  assert(
+    paragraphComparison.status === "scored" &&
+    paragraphComparison.comparisons.some((item) => item.featureId === "paragraphs.mean-sentences-per-paragraph"),
+    "single-paragraph donor must still be scored on paragraph structure",
+  );
+  names.push("single-paragraph donor comparison");
+
   return { passed: names.length, names };
 }

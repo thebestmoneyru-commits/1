@@ -44,7 +44,7 @@ const DEFAULT_OPTIONS: CandidateGenerationOptions = {
   candidateCount: 3,
   concurrency: 2,
   styleIntensity: 4,
-  maxDonorExamples: 12,
+  maxDonorExamples: 24,
 };
 
 export function resolveCandidateCount(options: Partial<CandidateGenerationOptions> = {}): number {
@@ -60,49 +60,119 @@ function normalizeOptions(options: Partial<CandidateGenerationOptions>): Candida
       ? Math.max(1, Math.min(3, Math.floor(options.concurrency!))) : DEFAULT_OPTIONS.concurrency,
     styleIntensity: intensity as CandidateGenerationOptions["styleIntensity"],
     maxDonorExamples: Number.isFinite(options.maxDonorExamples)
-      ? Math.max(0, Math.min(20, Math.floor(options.maxDonorExamples!))) : DEFAULT_OPTIONS.maxDonorExamples,
+      ? Math.max(0, Math.min(40, Math.floor(options.maxDonorExamples!))) : DEFAULT_OPTIONS.maxDonorExamples,
     customInstructions: typeof options.customInstructions === "string"
       ? options.customInstructions.slice(0, 4000) : undefined,
     adaptive: options.adaptive !== false,
   };
 }
 
+function isCorpusWideFeatureId(id: string): boolean {
+  return id.startsWith("rhythm.") || id.startsWith("syntax.") ||
+    id.startsWith("punctuation.") || id.startsWith("connectors.") ||
+    id.startsWith("paragraphs.");
+}
+
 function selectStyleFeatures(features: readonly StyleFeature[]): StyleFeature[] {
   return [...features]
-    .filter((feature) => feature.confidence >= 0.25 && feature.observations >= 2 &&
-      !feature.id.startsWith("lexical.repeat.") && !feature.id.startsWith("closings."))
-    .sort((a, b) => (b.confidence * Math.log2(b.observations + 1)) - (a.confidence * Math.log2(a.observations + 1)))
-    .slice(0, 24);
+    .filter((feature) => {
+      if (feature.id.startsWith("lexical.repeat.") || feature.id.startsWith("closings.")) return false;
+      if (feature.confidence < 0.25) return false;
+      return isCorpusWideFeatureId(feature.id) ? feature.observations >= 1 : feature.observations >= 2;
+    })
+    .sort((a, b) => (b.confidence * Math.log2(b.observations + 1)) - (a.confidence * Math.log2(a.observations + 1)));
 }
+
 function buildStyleEvidence(baseline: DonorStyleBaseline, limit: number): string {
-  const features = selectStyleFeatures(baseline.profile.features);
-  const observations: Array<{
-    family: string;
-    label: string;
-    rate: number;
-    confidence: number;
-    examples: string[];
-  }> = [];
-  let count = 0;
-  for (const feature of features) {
-    const examples: string[] = [];
-    for (const evidence of feature.evidence) {
-      if (count >= limit) break;
-      const excerpt = evidence.excerpt.trim();
-      if (!excerpt) continue;
-      examples.push(excerpt.slice(0, 240));
-      count++;
+  const selected = selectStyleFeatures(baseline.profile.features);
+  const exampleMap = new Map<string, string[]>();
+  for (const feature of selected) {
+    exampleMap.set(feature.id, []);
+  }
+
+  // Round-robin example allocation across families guarantees syntax never starves
+  // rhythm, paragraphs, punctuation, connectors, or openers.
+  const familyBuckets = new Map<string, StyleFeature[]>();
+  for (const feature of selected) {
+    if (!feature.evidence.length) continue;
+    const list = familyBuckets.get(feature.family) ?? [];
+    list.push(feature);
+    familyBuckets.set(feature.family, list);
+  }
+  const evidenceOffsets = new Map<string, number>(selected.map((f) => [f.id, 0]));
+  let allocated = 0;
+  let madeProgress = true;
+  while (allocated < limit && madeProgress) {
+    madeProgress = false;
+    for (const familyFeatures of familyBuckets.values()) {
+      for (const feature of familyFeatures) {
+        if (allocated >= limit) break;
+        const offset = evidenceOffsets.get(feature.id) ?? 0;
+        let nextOffset = offset;
+        let picked: string | undefined;
+        while (nextOffset < feature.evidence.length) {
+          const candidateExcerpt = feature.evidence[nextOffset].excerpt.trim();
+          nextOffset += 1;
+          if (candidateExcerpt) {
+            picked = candidateExcerpt.slice(0, 240);
+            break;
+          }
+        }
+        evidenceOffsets.set(feature.id, nextOffset);
+        if (picked) {
+          exampleMap.get(feature.id)!.push(picked);
+          allocated += 1;
+          madeProgress = true;
+          break; // advance one slot per family per round before repeating
+        }
+      }
+      if (allocated >= limit) break;
     }
-    observations.push({
+  }
+
+  const observedFeatures = selected.map((feature) => ({
+    id: feature.id,
+    family: feature.family,
+    label: feature.label,
+    rate: Number(feature.rate.toFixed(3)),
+    unit: feature.unit,
+    observations: feature.observations,
+    confidence: Number(feature.confidence.toFixed(2)),
+    examples: exampleMap.get(feature.id) ?? [],
+  }));
+
+  const absentDonorTraits = baseline.profile.features
+    .filter((feature) =>
+      !feature.id.startsWith("lexical.repeat.") &&
+      !feature.id.startsWith("closings.") &&
+      isCorpusWideFeatureId(feature.id) &&
+      feature.observations === 0,
+    )
+    .map((feature) => ({
+      id: feature.id,
       family: feature.family,
       label: feature.label,
-      rate: Number(feature.rate.toFixed(3)),
-      confidence: Number(feature.confidence.toFixed(2)),
-      examples,
-    });
-    if (count >= limit) break;
-  }
-  return JSON.stringify(observations, null, 2);
+    }));
+
+  const corpus = baseline.profile.corpus;
+  return JSON.stringify({
+    corpusProfile: {
+      words: corpus.words,
+      sentences: corpus.sentences,
+      paragraphs: corpus.paragraphs,
+      meanWordsPerSentence: Number(corpus.meanWordsPerSentence.toFixed(2)),
+      medianWordsPerSentence: Number(corpus.medianWordsPerSentence.toFixed(2)),
+      meanSentencesPerParagraph: Number(corpus.meanSentencesPerParagraph.toFixed(2)),
+      sentenceLengthDistribution: {
+        shortShare: Number(corpus.sentenceLengthDistribution.short.share.toFixed(3)),
+        mediumShare: Number(corpus.sentenceLengthDistribution.medium.share.toFixed(3)),
+        longShare: Number(corpus.sentenceLengthDistribution.long.share.toFixed(3)),
+        veryLongShare: Number(corpus.sentenceLengthDistribution.veryLong.share.toFixed(3)),
+      },
+    },
+    observedFeatures,
+    avoidOveruseTraits: absentDonorTraits,
+  }, null, 2);
 }
 
 /** Creates a model prompt while keeping the original content and donor style roles separate. */

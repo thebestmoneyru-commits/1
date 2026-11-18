@@ -52,5 +52,26 @@ export function runStyleDNAAnalyzerSelfTests(): { passed: number; names: string[
     "paragraph rhythm is represented as a measurable feature");
   names.push("sentence and paragraph distributions");
 
+  const richSample = "Первый абзац — короткий.\n\nВторой абзац длиннее (и с пояснением), поэтому ритм меняется; вопрос остаётся открытым?";
+  const richProfile = analyzeStyleDNA(richSample, { maxEvidencePerFeature: 3 });
+  for (const featureId of [
+    "rhythm.mean-sentence-length",
+    "paragraphs.mean-sentences-per-paragraph",
+    "punctuation.dash",
+    "punctuation.semicolon",
+    "punctuation.parentheses",
+    "punctuation.question",
+  ]) {
+    const feature = richProfile.features.find((item) => item.id === featureId);
+    assert(!!feature && feature.evidence.length > 0, `${featureId} must emit grounded donor evidence`);
+    for (const ev of feature!.evidence) {
+      assert(
+        richSample.slice(ev.span.start, ev.span.end) === ev.excerpt,
+        `${featureId} evidence span must match exact UTF-16 slice`,
+      );
+    }
+  }
+  names.push("grounded evidence spans for rhythm, paragraph, and punctuation features");
+
   return { passed: names.length, names };
 }

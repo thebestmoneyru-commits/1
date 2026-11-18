@@ -563,5 +563,45 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     names.push("use one combined semantic-verification call per candidate");
   }
 
+  {
+    const { sourceText, request } = fixture();
+    let criticCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate() { return sourceText.replace("молитву.", "молитву — с глубоким вниманием."); },
+      },
+      critic: {
+        async review() {
+          criticCalls++;
+          return JSON.stringify({
+            styleFidelityScore: 55,
+            naturalnessScore: 80,
+            issues: [],
+          });
+        },
+      },
+      repair: {
+        async repair() { throw new Error("unexpected repair failure"); },
+      },
+      semanticVerifier: {
+        async assess() { return []; },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+      defaultRequestOptions: {
+        criticPolishThreshold: 101,
+      },
+    });
+    const result = await service.execute(request);
+    assert(criticCalls === 1, "criticPolishThreshold should trigger critic review for accepted candidate below threshold");
+    assert(result.status === "accepted" && typeof result.selectedText === "string" && result.selectedText.length > 0,
+      "monotonic guard must retain the previously accepted candidate if critic/repair does not improve or encounters no repairs");
+    names.push("criticPolishThreshold with monotonic accepted-candidate preservation");
+  }
+
   return { passed: names.length, names };
 }

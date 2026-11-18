@@ -55,7 +55,7 @@ const DEFAULT_OPTIONS: StyleCriticOptions = {
   minimumStyleScore: 78,
   minimumNaturalnessScore: 75,
   maxIssues: 12,
-  maxDonorEvidenceChars: 5000,
+  maxDonorEvidenceChars: 9000,
 };
 
 const VIOLATION_TYPES = new Set<StyleViolationType>([
@@ -72,13 +72,17 @@ function normalizeOptions(input: Partial<StyleCriticOptions>): StyleCriticOption
     minimumStyleScore: bounded(input.minimumStyleScore, DEFAULT_OPTIONS.minimumStyleScore, 0, 100),
     minimumNaturalnessScore: bounded(input.minimumNaturalnessScore, DEFAULT_OPTIONS.minimumNaturalnessScore, 0, 100),
     maxIssues: Math.floor(bounded(input.maxIssues, DEFAULT_OPTIONS.maxIssues, 1, 20)),
-    maxDonorEvidenceChars: Math.floor(bounded(input.maxDonorEvidenceChars, DEFAULT_OPTIONS.maxDonorEvidenceChars, 500, 12000)),
+    maxDonorEvidenceChars: Math.floor(bounded(input.maxDonorEvidenceChars, DEFAULT_OPTIONS.maxDonorEvidenceChars, 500, 16000)),
   };
 }
 
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
 function evidenceForFeature(evidence: readonly StyleEvidence[], excerpt: string): boolean {
-  const normalized = excerpt.trim();
-  return normalized.length > 0 && evidence.some((item) => item.excerpt.includes(normalized));
+  const normalized = normalizeWhitespace(excerpt);
+  return normalized.length > 0 && evidence.some((item) => normalizeWhitespace(item.excerpt).includes(normalized));
 }
 function validSpan(span: unknown, text: string): span is TextSpan {
   if (!span || typeof span !== "object") return false;
@@ -90,20 +94,75 @@ function validSpan(span: unknown, text: string): span is TextSpan {
     text.slice(value.start as number, value.end as number) === value.text;
 }
 
+function isCorpusWideCriticFeature(id: string): boolean {
+  return id.startsWith("rhythm.") || id.startsWith("syntax.") ||
+    id.startsWith("punctuation.") || id.startsWith("connectors.") ||
+    id.startsWith("paragraphs.");
+}
+
 function buildDonorEvidence(baseline: DonorStyleBaseline, limit: number): string {
-  const entries: Array<{ featureId: string; family: string; label: string; confidence: number; examples: string[] }> = [];
-  let used = 0;
-  for (const feature of baseline.profile.features) {
-    if (feature.confidence < 0.3 || feature.observations < 2) continue;
-    const examples = feature.evidence.map((item) => item.excerpt.trim()).filter(Boolean).slice(0, 3);
+  const eligible = baseline.profile.features.filter((feature) => {
+    if (feature.id.startsWith("lexical.repeat.") || feature.id.startsWith("closings.")) return false;
+    if (feature.confidence < 0.25) return false;
+    const minObs = isCorpusWideCriticFeature(feature.id) ? 1 : 2;
+    return feature.observations >= minObs && feature.evidence.some((item) => item.excerpt.trim().length > 0);
+  });
+
+  // Round-robin queue by family so Critic receives examples across rhythm, paragraphs,
+  // punctuation, connectors, syntax, and openers instead of halting after one family.
+  const byFamily = new Map<string, typeof eligible>();
+  for (const feature of eligible) {
+    const list = byFamily.get(feature.family) ?? [];
+    list.push(feature);
+    byFamily.set(feature.family, list);
+  }
+  const ordered: typeof eligible = [];
+  const queues = [...byFamily.values()].map((list) => [...list]);
+  while (queues.some((q) => q.length > 0)) {
+    for (const q of queues) {
+      const next = q.shift();
+      if (next) ordered.push(next);
+    }
+  }
+
+  const entries: Array<{ featureId: string; family: string; label: string; rate: number; unit: string; confidence: number; examples: string[] }> = [];
+  const corpusSummary = {
+    words: baseline.profile.corpus.words,
+    sentences: baseline.profile.corpus.sentences,
+    paragraphs: baseline.profile.corpus.paragraphs,
+    meanWordsPerSentence: Number(baseline.profile.corpus.meanWordsPerSentence.toFixed(2)),
+    medianWordsPerSentence: Number(baseline.profile.corpus.medianWordsPerSentence.toFixed(2)),
+    meanSentencesPerParagraph: Number(baseline.profile.corpus.meanSentencesPerParagraph.toFixed(2)),
+  };
+  const absentDonorTraits = baseline.profile.features
+    .filter((feature) =>
+      !feature.id.startsWith("lexical.repeat.") &&
+      !feature.id.startsWith("closings.") &&
+      isCorpusWideCriticFeature(feature.id) &&
+      feature.observations === 0,
+    )
+    .map((feature) => ({ featureId: feature.id, family: feature.family, label: feature.label }));
+
+  const headerSize = JSON.stringify({ corpusSummary, absentDonorTraits, features: [] }).length;
+  let used = headerSize;
+  for (const feature of ordered) {
+    const examples = feature.evidence.map((item) => item.excerpt.trim()).filter(Boolean).slice(0, 2);
     if (!examples.length) continue;
-    const next = { featureId: feature.id, family: feature.family, label: feature.label, confidence: feature.confidence, examples };
-    const size = JSON.stringify(next).length;
-    if (used + size > limit) break;
+    const next = {
+      featureId: feature.id,
+      family: feature.family,
+      label: feature.label,
+      rate: Number(feature.rate.toFixed(3)),
+      unit: feature.unit,
+      confidence: feature.confidence,
+      examples,
+    };
+    const size = JSON.stringify(next).length + 4;
+    if (used + size > limit) continue;
     entries.push(next);
     used += size;
   }
-  return JSON.stringify(entries, null, 2);
+  return JSON.stringify({ corpusSummary, absentDonorTraits, features: entries }, null, 2);
 }
 
 export function buildStyleCriticPrompt(input: {

@@ -135,6 +135,7 @@ async function invoke(
   prompt: string,
   signal?: AbortSignal,
   responseSchema?: unknown,
+  onModelNote?: (note: string) => void,
 ): Promise<string> {
   const route = routeFor(routes, task);
   const result = await router.generate({
@@ -143,10 +144,19 @@ async function invoke(
     fallbackModels: route.fallbackModels,
     prompt,
     responseSchema,
+    thinking: "high",
     signal,
-    timeoutMs: task === "candidate-generation" ? 90_000 : 45_000,
+    timeoutMs: 120_000,
     maxAttemptsPerModel: 3,
   });
+  if (onModelNote) {
+    if (result.fallbackOccurred) {
+      onModelNote(`Этап ${task}: выполнен автоматический переход с ${result.requestedModel} на ${result.usedModel}.`);
+    }
+    for (const warning of result.warnings) {
+      onModelNote(warning);
+    }
+  }
   return result.text;
 }
 
@@ -172,21 +182,27 @@ function validateAssessments(value: unknown): value is PropositionAssessment[] {
 }
 
 /** Creates adapters backed by one shared router and its long-lived provider client. */
-export function createRouterAdapters(router: ModelRouter, routes: ApplicationModelRoutes): {
+export function createRouterAdapters(
+  router: ModelRouter,
+  routes: ApplicationModelRoutes,
+  options: { onModelNote?: (note: string) => void } = {},
+): {
   candidateGenerator: CandidateModelAdapter;
   critic: StyleCriticAdapter;
   repair: SurgicalRepairAdapter;
   semanticVerifier: SemanticVerifier;
 } {
+  const wrapInvoke = (task: ModelTask, prompt: string, signal?: AbortSignal, schema?: unknown) =>
+    invoke(router, routes, task, prompt, signal, schema, options.onModelNote);
   return {
     candidateGenerator: {
-      generate: ({ prompt, signal }) => invoke(router, routes, "candidate-generation", prompt, signal),
+      generate: ({ prompt, signal }) => wrapInvoke("candidate-generation", prompt, signal),
     },
     critic: {
-      review: (prompt, signal) => invoke(router, routes, "style-critique", prompt, signal, CRITIC_RESPONSE_SCHEMA),
+      review: (prompt, signal) => wrapInvoke("style-critique", prompt, signal, CRITIC_RESPONSE_SCHEMA),
     },
     repair: {
-      repair: (prompt, signal) => invoke(router, routes, "surgical-repair", prompt, signal, REPAIR_RESPONSE_SCHEMA),
+      repair: (prompt, signal) => wrapInvoke("surgical-repair", prompt, signal, REPAIR_RESPONSE_SCHEMA),
     },
     semanticVerifier: {
       async assessCombined({ sourceText, candidateText, propositions, signal }) {
@@ -197,7 +213,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
         const prompt = [
           "Выполни две отдельные проверки сохранения смысла кандидата относительно оригинала. Это два самостоятельных отчёта в одном JSON-ответе; не смешивай их элементы.",
           "ОТЧЁТ 1 — propositionAssessments: проверь каждую исходную пропозицию отдельно: субъект, предикат, объект, отрицание, модальность, условия, оговорки, причинность, последовательность и атрибуцию. Отдельно сверь КАЖДОЕ значение qualifications и modality: нельзя признать пропозицию полностью сохранённой, если основной тезис остался, но исчезло существенное уточнение, ограничение, степень, частотность, временная оговорка или усилитель. Смысловой эквивалент допускается; буквальное совпадение не требуется. Верни ровно одну оценку на каждый propositionId. Статусы: preserved, changed, omitted, uncertain. outputEvidence — точные непустые фрагменты кандидата; при preserved приводи фрагмент, подтверждающий именно проверяемое содержание и его уточнения. При сомнении используй uncertain.",
-          "ОТЧЁТ 2 — relationAssessments: проверь каждую исходную логическую связь отдельно. Наличие обоих фактов не доказывает сохранение связи. Проверь направление, тип, причинность, временной порядок, условия, уступки, цель, противопоставление, сравнение и атрибуцию. Не требуй исходного союза дословно: допускай равнозначную синтаксическую конструкцию, но только если она сохраняет то же отношение между теми же положениями и то же направление. При preserved outputEvidence должен содержать точный фрагмент кандидата (обычно полное предложение или клаузу), в котором видны оба связанных положения и связь между ними. Не возвращай пустое evidence для preserved. Для каждой relationKey верни ровно одну оценку со статусом preserved, changed, omitted или uncertain. Не выдумывай цитаты.",
+          "ОТЧЁТ 2 — relationAssessments: проверь каждую исходную логическую связь отдельно. Наличие обоих фактов не доказывает сохранение связи. Проверь направление, тип, причинность, временной порядок, условия, уступки, цель, противопоставление, сравнение и атрибуцию. Не требуй исходного союза дословно: допускай равнозначную синтаксическую конструкцию, но только если она сохраняет то же отношение между теми же положениями и его направление. При preserved outputEvidence должен содержать точный фрагмент кандидата (обычно полное предложение или клаузу), в котором видны оба связанных положения и связь между ними. Не возвравляй пустое evidence для preserved. Для каждой relationKey верни ровно одну оценку со статусом preserved, changed, omitted или uncertain. Не выдумывай цитаты.",
           "Не пропускай элементы. Не добавляй неизвестные ID или ключи. Если исходных связей нет, верни relationAssessments: []. При любой неопределённости укажи uncertain.",
           "Верни только JSON-объект: {propositionAssessments:[{propositionId,status,outputEvidence,rationale,confidence}],relationAssessments:[{relationKey,status,outputEvidence,rationale,confidence}]}. confidence — число от 0 до 1.",
           "", "ORIGINAL SOURCE JSON:", JSON.stringify(sourceText),
@@ -205,7 +221,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "", "SOURCE PROPOSITIONS JSON:", JSON.stringify(propositions),
           "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, COMBINED_VERIFICATION_SCHEMA);
+        const raw = await wrapInvoke("semantic-verification", prompt, signal, COMBINED_VERIFICATION_SCHEMA);
         const parsed = parseJsonUnknown(raw);
         if (!isRecord(parsed) || !validateAssessments(parsed.propositionAssessments) ||
             !validateRelationAssessments(parsed.relationAssessments)) {
@@ -233,7 +249,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "SOURCE PROPOSITIONS JSON:",
           JSON.stringify(propositions),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, PROPOSITION_ASSESSMENT_ARRAY_SCHEMA);
+        const raw = await wrapInvoke("semantic-verification", prompt, signal, PROPOSITION_ASSESSMENT_ARRAY_SCHEMA);
         const parsed = parseJsonUnknown(raw);
         if (!validateAssessments(parsed)) {
           throw new Error("Semantic verifier returned an invalid assessment array.");
@@ -256,7 +272,7 @@ export function createRouterAdapters(router: ModelRouter, routes: ApplicationMod
           "", "CANDIDATE JSON:", JSON.stringify(candidateText),
           "", "SOURCE RELATIONS JSON:", JSON.stringify([...relations.entries()].map(([relationKey, relation]) => ({ relationKey, relation }))),
         ].join("\n");
-        const raw = await invoke(router, routes, "semantic-verification", prompt, signal, RELATION_ASSESSMENT_ARRAY_SCHEMA);
+        const raw = await wrapInvoke("semantic-verification", prompt, signal, RELATION_ASSESSMENT_ARRAY_SCHEMA);
         const parsed = parseJsonUnknown(raw);
         if (!validateRelationAssessments(parsed)) throw new Error("Semantic structure verifier returned an invalid relation assessment array.");
         return parsed;

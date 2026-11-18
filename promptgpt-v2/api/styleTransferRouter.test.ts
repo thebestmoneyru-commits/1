@@ -1,4 +1,5 @@
 import express, { type RequestHandler } from "express";
+import { ModelRouterError } from "../infrastructure/modelRouter";
 import { createStyleTransferApiRouter } from "./styleTransferRouter";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -9,6 +10,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
   const names: string[] = [];
   let prepareCalls = 0;
   let executeCalls = 0;
+  let prepareMode: "ok" | "rate-limit" | "insufficient-donor" = "ok";
   const authenticate: RequestHandler = (req, res, next) => {
     if (req.header("x-test-auth") !== "allowed") return res.status(401).json({ error: "unauthorized" });
     next();
@@ -29,8 +31,14 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     service: service as never,
     authenticate,
     rateLimit,
-    prepareRequest: async ({ requestId, sourceText }) => {
+    prepareRequest: async () => {
       prepareCalls++;
+      if (prepareMode === "rate-limit") {
+        throw new ModelRouterError("Quota exceeded on model", "rate-limit", "gemini-3.1-flash-lite");
+      }
+      if (prepareMode === "insufficient-donor") {
+        throw new Error("Donor corpus is insufficient: 120 words, need 500.");
+      }
       return {
         inventory: {} as never,
         donorBaseline: {} as never,
@@ -94,6 +102,33 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     assert(rateLimitCalls === rateLimitBeforeValid + 1, "authenticated requests must pass through the host rate limiter");
     assert(Number(prepareCalls) === 1 && Number(executeCalls) === 1, "valid request must be prepared and executed exactly once");
     names.push("apply host rate limiting before preparation and execution");
+
+    prepareMode = "rate-limit";
+    const upstreamRateLimited = await fetch(base, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-auth": "allowed" },
+      body: JSON.stringify({ sourceText: "Исходный текст", donorText: "Текст автора" }),
+    });
+    const rateLimitBody = await upstreamRateLimited.json() as { error?: { code?: string; message?: string } };
+    assert(
+      upstreamRateLimited.status === 429 && rateLimitBody.error?.code === "RATE_LIMITED_UPSTREAM",
+      "upstream ModelRouterError(rate-limit) must surface HTTP 429 instead of opaque 500",
+    );
+
+    prepareMode = "insufficient-donor";
+    const prepRejected = await fetch(base, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-auth": "allowed" },
+      body: JSON.stringify({ sourceText: "Исходный текст", donorText: "Текст автора" }),
+    });
+    const prepBody = await prepRejected.json() as { error?: { code?: string; message?: string } };
+    assert(
+      prepRejected.status === 422 &&
+      prepBody.error?.code === "PREPARATION_FAILED" &&
+      (prepBody.error?.message ?? "").includes("Donor corpus is insufficient"),
+      "preparation rejections must surface HTTP 422 with concrete reason",
+    );
+    names.push("classify upstream model and preparation errors cleanly");
 
     return { passed: names.length, names };
   } finally {

@@ -10,6 +10,7 @@ export interface GeminiStyleTransferServiceConfig {
   catalog: ModelCatalogConfig;
   router?: Omit<ModelRouterOptions, "models" | "adapter">;
   styleProfiler: StyleTransferServiceDependencies["styleProfiler"];
+  defaultRequestOptions?: StyleTransferServiceDependencies["defaultRequestOptions"];
 }
 
 /**
@@ -22,7 +23,14 @@ export function createGeminiStyleTransferService(config: GeminiStyleTransferServ
 } {
   if (!config.apiKey.trim()) throw new Error("A Gemini API key is required to construct the v2 service.");
   const catalog = validateModelCatalog(config.catalog);
-  const client = new GoogleGenAI({ apiKey: config.apiKey });
+  const client = new GoogleGenAI({
+    apiKey: config.apiKey,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
+    },
+  });
   const adapter = new GeminiModelAdapter(client);
   const router = new ModelRouter({
     ...config.router,
@@ -33,6 +41,7 @@ export function createGeminiStyleTransferService(config: GeminiStyleTransferServ
   const service = new StyleTransferService({
     ...routed,
     styleProfiler: config.styleProfiler,
+    defaultRequestOptions: config.defaultRequestOptions,
   });
   return { service, router };
 }

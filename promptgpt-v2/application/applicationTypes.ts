@@ -33,6 +33,8 @@ export interface StyleTransferRequest {
   semanticPolicy?: SemanticPolicy;
   minimumStyleScore?: number;
   minimumStyleConfidence?: number;
+  /** Optional score threshold below which even accepted candidates run StyleCritic + SurgicalRepair polish. */
+  criticPolishThreshold?: number;
   critic?: Partial<StyleCriticOptions>;
   repair?: Partial<SurgicalRepairOptions>;
   verification?: Partial<RepairVerificationOptions>;
