@@ -464,7 +464,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
       { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
     )({ requestId: "modality-genuine-mismatch", sourceText: modalitySource, donorText: donor });
   } catch (error) {
-    genuineModalityMismatchRejected = String(error).includes("potential source-interpretation error");
+    genuineModalityMismatchRejected = String(error).includes("Modality repair omitted one or more confirmed source markers");
   }
   assert(genuineModalityMismatchRejected, "a genuinely omitted modal meaning must remain blocking");
   names.push("retain fail-closed behavior when a modality mismatch is independently confirmed");
