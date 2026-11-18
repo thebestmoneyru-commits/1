@@ -367,6 +367,7 @@ export class StyleTransferService {
             finalEvaluation: currentEvaluation,
             repaired: semanticRestorationApplied,
             repairPassed: semanticRestorationApplied ? true : undefined,
+            diagnosticSteps: [...diagnosticSteps, { stage: "final-decision", status: currentEvaluation.disposition === "accepted" ? "completed" : "failed", detail: "Итоговый статус: " + currentEvaluation.disposition + "." }],
             warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...currentEvaluation.warnings])],
           });
           if (adaptive) break candidateLoop;
@@ -382,6 +383,7 @@ export class StyleTransferService {
             finalText: candidate.text,
             finalEvaluation: initial,
             repaired: false,
+            diagnosticSteps: [...diagnosticSteps, { stage: "final-decision", status: "failed", detail: "Кандидат отклонён: обязательная проверка смысла не пройдена." }],
             warnings: [...new Set([
               ...initial.warnings,
               ...restorationWarnings,
@@ -449,6 +451,7 @@ export class StyleTransferService {
               finalEvaluation: currentEvaluation,
               repaired: semanticRestorationApplied,
               repairPassed: semanticRestorationApplied ? true : undefined,
+              diagnosticSteps: [...diagnosticSteps, { stage: "final-decision", status: "completed", detail: "Сохранён ранее принятый семантически проверенный вариант." }],
               warnings: [...new Set([
                 ...initial.warnings,
                 ...restorationWarnings,
@@ -465,6 +468,7 @@ export class StyleTransferService {
               finalEvaluation,
               repaired: semanticRestorationApplied || pipeline.repairResult.applied,
               repairPassed: pipeline.completed,
+              diagnosticSteps: [...diagnosticSteps, { stage: "final-decision", status: finalEvaluation.disposition === "accepted" ? "completed" : "failed", detail: "Итоговый статус после критика и повторной проверки: " + finalEvaluation.disposition + "." }],
               warnings: [...new Set([...initial.warnings, ...restorationWarnings, ...pipeline.warnings])],
             });
             if (adaptive && pipeline.completed && finalEvaluation.disposition === "accepted") {
@@ -477,6 +481,7 @@ export class StyleTransferService {
             candidateId: candidate.candidateId, initial, finalText: currentText,
             finalEvaluation: currentEvaluation, repaired: semanticRestorationApplied,
             repairPassed: wasAcceptedBeforeCritic ? (semanticRestorationApplied ? true : undefined) : false,
+            diagnosticSteps: [...diagnosticSteps, { stage: "final-decision", status: "failed", detail: "Этап критики/правки завершился исключением; сохранён последний проверенный текст." }],
             warnings: [...restorationWarnings, error instanceof Error ? error.message : "Critic/repair stage failed."],
           });
           if (adaptive && wasAcceptedBeforeCritic) break candidateLoop;
