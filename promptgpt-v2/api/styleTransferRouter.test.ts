@@ -81,7 +81,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
       body: JSON.stringify({ sourceText: "x".repeat(101), donorText: "Текст автора ".repeat(20) }),
     });
     assert(oversized.status === 200, "source and donor text beyond legacy configured limits must still be processed");
-    assert(prepareCalls === 1 && executeCalls === 1, "large text must reach preparation and service");
+    assert(Number(prepareCalls) === 1 && Number(executeCalls) === 1, "large text must reach preparation and service");
     names.push("ignore legacy per-field text caps");
 
     const malformed = await fetch(base, {
