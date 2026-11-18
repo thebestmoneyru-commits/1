@@ -41,6 +41,12 @@ export interface StyleTransferRequest {
   signal?: AbortSignal;
 }
 
+export interface CandidateDiagnosticStep {
+  stage: "candidate-generation" | "semantic-verification" | "logical-structure" | "style-profiling" | "style-scoring" | "semantic-restoration" | "style-critic-repair" | "final-decision";
+  status: "completed" | "failed" | "skipped" | "not-completed";
+  detail: string;
+}
+
 export interface CandidateOutcome {
   candidateId: string;
   initial: CandidateEvaluationResult;
@@ -49,6 +55,8 @@ export interface CandidateOutcome {
   repaired: boolean;
   repairPassed?: boolean;
   warnings: string[];
+  /** Explicit per-candidate record of which pipeline stages ran, passed, failed or were skipped. */
+  diagnosticSteps: CandidateDiagnosticStep[];
 }
 
 export interface StyleTransferResponse {
