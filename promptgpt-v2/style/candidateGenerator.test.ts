@@ -17,7 +17,8 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   const donor = analyzeStyleDNA(donorText(), {
     minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
   });
-  const created = createDonorStyleBaseline(donor);
+  const donorWithIrregularity = donorText() + "\\n\\nОн обруживает эту особенность в тексте.";
+  const created = createDonorStyleBaseline(donor, donorWithIrregularity);
   assert(created.ok && !!created.baseline, "donor baseline fixture is available");
   const baseline = created.baseline!;
   const sourceText = "В 1912 году автор описал событие.";
@@ -31,6 +32,8 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   assert(prompt.includes("не переноси факты") || prompt.includes("НЕ ПЕРЕНОСИ факты"),
     "prompt separates donor style from donor content");
   assert(prompt.includes("1912"), "required numeric anchor is supplied to the model");
+  assert(prompt.includes("обруживает"), "exact donor spelling irregularities are supplied as style evidence");
+  assert(prompt.includes("сопоставимой частотностью"), "prompt requires frequency-calibrated imitation of donor irregularities");
   assert(!prompt.includes("lexical.repeat.") && !prompt.includes("Повторяющееся окончание:"),
     "topic-specific repeated words and exact donor endings are not presented as style instructions");
   assert(prompt.includes("предложение за предложением") && prompt.includes("обратную сверку"),
@@ -40,7 +43,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     styleIntensity: 5, maxDonorExamples: 3,
   });
   assert(prompt !== secondPrompt, "candidate indices produce deliberately distinct stylistic approaches");
-  names.push("prompt content, semantic constraints and candidate diversity");
+  names.push("prompt content, semantic constraints, donor spelling preservation and candidate diversity");
 
   let active = 0;
   let maxActive = 0;
