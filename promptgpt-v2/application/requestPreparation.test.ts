@@ -458,6 +458,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
         { missingPropositions: [], missingRelations: [] },
         interpretationAudit(["p1"], [modalityIssue]),
         { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "Предикат не сохраняет маркер необходимости." }] },
+        { repairs: [] },
       ),
       routes,
       { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
