@@ -2300,6 +2300,13 @@ export default function App() {
                                 <div className="min-w-0">
                                   <div className="text-xs font-semibold text-slate-200">{step.stage}</div>
                                   <div className="text-xs text-slate-400 whitespace-pre-wrap">{step.detail}</div>
+                                  {typeof step.durationMs === 'number' && (
+                                    <div className="mt-1 text-[10px] text-cyan-400/80 tabular-nums">
+                                      Время этапа: {step.durationMs < 1000
+                                        ? String(Math.round(step.durationMs)) + ' мс'
+                                        : (step.durationMs / 1000).toFixed(2) + ' с'}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             ))}
