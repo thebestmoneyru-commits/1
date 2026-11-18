@@ -72,8 +72,8 @@ function normalizeOptions(input: Partial<StyleCriticOptions>): StyleCriticOption
     minimumStyleScore: bounded(input.minimumStyleScore, DEFAULT_OPTIONS.minimumStyleScore, 0, 100),
     minimumNaturalnessScore: bounded(input.minimumNaturalnessScore, DEFAULT_OPTIONS.minimumNaturalnessScore, 0, 100),
     maxIssues: Math.floor(bounded(input.maxIssues, DEFAULT_OPTIONS.maxIssues, 1, 20)),
-    maxDonorEvidenceChars: Number.isFinite(input.maxDonorEvidenceChars)
-      ? Math.max(0, Math.floor(input.maxDonorEvidenceChars!)) : DEFAULT_OPTIONS.maxDonorEvidenceChars,
+    // Kept in the public options shape for backwards compatibility; donor evidence is no longer capped.
+    maxDonorEvidenceChars: Number.MAX_SAFE_INTEGER,
   };
 }
 
@@ -196,7 +196,7 @@ export function buildStyleCriticPrompt(input: {
     "",
     "DONOR STYLE EVIDENCE JSON:",
     buildDonorEvidence(input.donorBaseline, options.maxDonorEvidenceChars),
-    input.donorBaseline.donorText !== undefined ? "ПОЛНЫЙ ТЕКСТ ДОНОРА — ДОПОЛНИТЕЛЬНЫЙ ИСТОЧНИК СВЕДЕНИЙ О ПОВЕРХНОСТНЫХ ОСОБЕННОСТЯХ; НЕ ПЕРЕНОСИ ЕГО ФАКТЫ И СОДЕРЖАНИЕ:\\n" + JSON.stringify(input.donorBaseline.donorText) : "",
+    input.donorBaseline.donorText !== undefined ? "ПОЛНЫЙ ТЕКСТ ДОНОРА — ДОПОЛНИТЕЛЬНЫЙ ИСТОЧНИК СВЕДЕНИЙ О ПОВЕРХНОСТНЫХ ОСОБЕННОСТЯХ; НЕ ПЕРЕНОСИ ЕГО ФАКТЫ И СОДЕРЖАНИЕ:\n" + JSON.stringify(input.donorBaseline.donorText) : "",
     "",
     "SOURCE PROPOSITIONS JSON:",
     JSON.stringify(propositions),
