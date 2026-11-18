@@ -197,6 +197,7 @@ export function buildStyleCriticPrompt(input: {
     "DONOR STYLE EVIDENCE JSON:",
     buildDonorEvidence(input.donorBaseline, options.maxDonorEvidenceChars),
     input.donorBaseline.donorText !== undefined ? "ПОЛНЫЙ ТЕКСТ ДОНОРА — ДОПОЛНИТЕЛЬНЫЙ ИСТОЧНИК СВЕДЕНИЙ О ПОВЕРХНОСТНЫХ ОСОБЕННОСТЯХ; НЕ ПЕРЕНОСИ ЕГО ФАКТЫ И СОДЕРЖАНИЕ:\\n" + JSON.stringify(input.donorBaseline.donorText) : "",
+    input.donorBaseline.donorText !== undefined ? "ПОЛНЫЙ ТЕКСТ ДОНОРА — ДОПОЛНИТЕЛЬНЫЙ ИСТОЧНИК СВЕДЕНИЙ О ПОВЕРХНОСТНЫХ ОСОБЕННОСТЯХ; НЕ ПЕРЕНОСИ ЕГО ФАКТЫ И СОДЕРЖАНИЕ:\\n" + JSON.stringify(input.donorBaseline.donorText) : "",
     "",
     "SOURCE PROPOSITIONS JSON:",
     JSON.stringify(propositions),
