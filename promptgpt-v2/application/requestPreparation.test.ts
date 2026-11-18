@@ -176,7 +176,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     ? { ...item, relations: [{ kind: "effect", from: "p1", to: "p2", expression: "поэтому" }] }
     : item);
   const wrongCausalRelationKey = JSON.stringify(["effect", "p1", "p2", "поэтому"]);
-  const relationTypeIssue = {
+  const causalRelationTypeIssue = {
     kind: "relation-type",
     propositionIds: ["p1", "p2"],
     relationKey: wrongCausalRelationKey,
@@ -190,7 +190,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
       {
         checkedPropositionIds: ["p1", "p2"],
         checkedRelationKeys: [wrongCausalRelationKey],
-        issues: [relationTypeIssue],
+        issues: [causalRelationTypeIssue],
       },
       { decisions: [{ issueIndex: 0, action: "change-kind", correctedKind: "cause", explanation: "p1 — причина p2; меняется только тип связи." }] },
     ),
