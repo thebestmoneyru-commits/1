@@ -74,5 +74,7 @@ export interface DonorStyleBaseline {
   baselineId: string;
   baselineFingerprint: string;
   profile: StyleDNAProfile;
+  /** Exact immutable donor corpus, retained so surface irregularities can be imitated rather than normalized. */
+  donorText?: string;
   warnings: string[];
 }
