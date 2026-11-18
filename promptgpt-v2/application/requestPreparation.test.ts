@@ -743,6 +743,42 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(spanRejected, "non-literal source spans must be rejected");
   names.push("reject proposition spans not matching source text");
 
+  const mixedAnchorSource = "Дождь пошёл, поэтому путники укрылись.";
+  const mixedAnchorExtraction = [
+    {
+      id: "p1", summary: "Дождь пошёл",
+      sourceSpan: { start: 0, end: 11, text: "Дождь пошел" },
+      subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [],
+      relations: [{ kind: "cause", from: "p1", to: "p2", expression: "по том" }], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Путники укрылись",
+      sourceSpan: { start: mixedAnchorSource.indexOf("путники"), end: mixedAnchorSource.length, text: "путники укрылись." },
+      subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const mixedAnchorPrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      mixedAnchorExtraction,
+      [{ propositionId: "p1", relationIndex: 0, expression: "поэтому" }],
+      [
+        { id: "p1", sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" } },
+        { id: "p2", sourceSpan: { start: mixedAnchorSource.indexOf("путники"), end: mixedAnchorSource.length, text: "путники укрылись." } },
+      ],
+    ),
+    routes,
+    {
+      completenessAudit: false, interpretationAudit: false, structureAudit: false,
+      analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
+    },
+  )({ requestId: "repair-mixed-source-anchors", sourceText: mixedAnchorSource, donorText: donor });
+  assert(
+    mixedAnchorPrepared.inventory.propositions.find((item) => item.id === "p1")?.sourceSpan.text === "Дождь пошёл" &&
+    mixedAnchorPrepared.inventory.propositions.find((item) => item.id === "p1")?.relations[0]?.expression === "поэтому",
+    "relation expression and sourceSpan defects must be repaired independently without changing relation semantics",
+  );
+  names.push("independently repair a non-verbatim relation expression and sourceSpan in the same extraction");
+
   let donorRejected = false;
   try {
     await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1", "p2"])), routes)({
