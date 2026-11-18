@@ -44,7 +44,7 @@ const DEFAULT_OPTIONS: CandidateGenerationOptions = {
   candidateCount: 3,
   concurrency: 2,
   styleIntensity: 4,
-  maxDonorExamples: 24,
+  maxDonorExamples: Number.MAX_SAFE_INTEGER,
 };
 
 export function resolveCandidateCount(options: Partial<CandidateGenerationOptions> = {}): number {
@@ -59,10 +59,10 @@ function normalizeOptions(options: Partial<CandidateGenerationOptions>): Candida
     concurrency: Number.isFinite(options.concurrency)
       ? Math.max(1, Math.min(3, Math.floor(options.concurrency!))) : DEFAULT_OPTIONS.concurrency,
     styleIntensity: intensity as CandidateGenerationOptions["styleIntensity"],
-    maxDonorExamples: Number.isFinite(options.maxDonorExamples)
-      ? Math.max(0, Math.min(40, Math.floor(options.maxDonorExamples!))) : DEFAULT_OPTIONS.maxDonorExamples,
+    // Kept in the public options shape for backwards compatibility; donor evidence is no longer capped.
+    maxDonorExamples: Number.MAX_SAFE_INTEGER,
     customInstructions: typeof options.customInstructions === "string"
-      ? options.customInstructions.slice(0, 4000) : undefined,
+      ? options.customInstructions : undefined,
     adaptive: options.adaptive !== false,
   };
 }
@@ -114,7 +114,7 @@ function buildStyleEvidence(baseline: DonorStyleBaseline, limit: number): string
           const candidateExcerpt = feature.evidence[nextOffset].excerpt.trim();
           nextOffset += 1;
           if (candidateExcerpt) {
-            picked = candidateExcerpt.slice(0, 240);
+            picked = candidateExcerpt;
             break;
           }
         }
@@ -186,8 +186,6 @@ export function buildCandidatePrompt(input: {
   customInstructions?: string;
 }): string {
   const sourceWordCount = countWords(input.sourceText);
-  const minimumTargetWords = Math.floor(sourceWordCount * 0.9);
-  const maximumTargetWords = Math.ceil(sourceWordCount * 1.15);
   const anchors = JSON.stringify(input.inventory.anchors
     .filter((anchor) => anchor.required)
     .map((anchor) => ({
@@ -235,9 +233,9 @@ export function buildCandidatePrompt(input: {
     "Не объединяй несколько самостоятельных смысловых деталей в одно общее выражение, если при этом исчезает хотя бы одно уточнение.",
     "Проверяй исходник последовательно, предложение за предложением. Для каждого предложения сохрани все самостоятельные утверждения и все вложенные уточнения; не считай сохранение общего тезиса достаточным, если исчезли его признаки, степень, причина, условие или ограничение.",
     "Перед выдачей мысленно выполни обратную сверку: каждое содержательное слово и каждое уточнение исходника должно либо иметь смысловой эквивалент в результате, либо оставаться в неизменённой формулировке. Не удаляй деталь ради более гладкой фразы.",
-    "Если результат получается короче 90% исходника, сначала проверь, не пропущены ли предложения, определения, уточнения или причинные пояснения. Не сокращай текст ради компактности.",
-    "По объёму ориентируйся на исходник: целевой диапазон — примерно от 90% до 115% исходного числа слов. Не добивайся диапазона пустыми повторами; полнота содержания важнее формального объёма.",
-    "Не исправляй индивидуальные особенности исходника автоматически, если задача состоит в переносе стиля. Не заменяй авторскую манеру нейтральной гладкой прозой.",
+    "Не обрывай результат по достижении заданного числа слов или символов. Если технический лимит модели препятствует полному ответу, не маскируй усечение под готовый результат.",
+    "Не устанавливай искусственный процентный диапазон объёма. Обрабатывай весь исходный текст без сокращения; сохраняй все его смысловые элементы. Результат может быть длиннее или короче исходника, если этого требует полноценное воспроизведение содержания и манеры, но не сокращай его ради лимита или компактности.",
+    "Не исправляй индивидуальные особенности исходника автоматически, если задача состоит в переносе стиля. Не заменяй авторскую манеру нейтральной гладкой прозой. В особенности не исправляй подтверждённые донорским текстом орфографические ошибки, опечатки, нестандартные формы, повторы, пунктуационные и грамматические отклонения: воспроизводи их как наблюдаемые особенности письма с приблизительно сопоставимой частотностью, а не случайным образом.",
     "Не добавляй маркеры донора механически. Используй их только там, где они естественно соответствуют контексту и синтаксису.",
     "",
     `ИНТЕНСИВНОСТЬ ПЕРЕНОСА: ${input.styleIntensity}/5. ${intensity}`,
@@ -246,6 +244,7 @@ export function buildCandidatePrompt(input: {
     "",
     "НАБЛЮДАЕМЫЕ ОСОБЕННОСТИ ДОНОРА (JSON-ДАННЫЕ; примеры показывают только форму):",
     buildStyleEvidence(input.donorBaseline, input.maxDonorExamples),
+    input.donorBaseline.donorText !== undefined ? "ПОЛНЫЙ ТЕКСТ ДОНОРА (ТОЧНЫЙ ОБРАЗЕЦ ОРФОГРАФИИ, ПУНКТУАЦИИ, ГРАММАТИКИ И ДРУГИХ ПОВЕРХНОСТНЫХ ОСОБЕННОСТЕЙ; НЕ ПЕРЕНОСИ СОДЕРЖАНИЕ):\n" + JSON.stringify(input.donorBaseline.donorText) : "",
     "",
     "ОБЯЗАТЕЛЬНЫЕ СОДЕРЖАТЕЛЬНЫЕ ЯКОРЯ ИСХОДНИКА (JSON-ДАННЫЕ):",
     anchors,
@@ -253,7 +252,7 @@ export function buildCandidatePrompt(input: {
     "СТРУКТУРИРОВАННЫЕ УТВЕРЖДЕНИЯ ИСХОДНИКА (JSON-ДАННЫЕ):",
     propositions,
     "",
-    "КОНТРОЛЬ ПОЛНОТЫ: в исходнике примерно " + sourceWordCount + " слов; целевой диапазон результата — " + minimumTargetWords + "–" + maximumTargetWords + " слов. Перед выдачей сверь каждое утверждение и каждое его уточнение с исходником. Если для переноса стиля приходится выбирать между стилистической перестройкой и сохранением детали, сохраняй деталь.",
+    "КОНТРОЛЬ ПОЛНОТЫ: в исходнике примерно " + sourceWordCount + " слов. Перед выдачей сверь каждое утверждение и каждое его уточнение с исходником. Не применяй искусственное ограничение длины результата; не выдавай частичный ответ как завершённый текст.",
     "",
     input.customInstructions ? `ДОПОЛНИТЕЛЬНЫЕ УКАЗАНИЯ ПОЛЬЗОВАТЕЛЯ:\n${input.customInstructions}` : "",
     "",
@@ -308,7 +307,7 @@ export async function generateCandidates(input: {
   if (!baselineIntegrity.valid) {
     throw new Error(baselineIntegrity.reason ?? "Донорский baseline недействителен.");
   }
-  if (input.donorBaseline.profile.status === "limited") {
+  if (input.donorBaseline.profile.status !== "sufficient") {
     warnings.push("Донорский профиль ограничен; генерация может недостаточно точно передавать индивидуальный стиль.");
   }
 

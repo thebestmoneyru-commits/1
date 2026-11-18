@@ -1747,14 +1747,13 @@ export function createStyleTransferRequestPreparer(
     }
 
     const profile = analyzeStyleDNA(donorText, options.analyzer);
-    if (profile.status === "insufficient" ||
-        (options.requireSufficientDonor !== false && profile.status !== "sufficient")) {
+    if (profile.status === "insufficient" && profile.corpus.words === 0) {
       throw new Error(
         `Donor corpus is ${profile.status}: ${profile.corpus.words} words and ${profile.corpus.sentences} sentences. ` +
         "A reliable donor profile requires a larger sample.",
       );
     }
-    const baseline = createDonorStyleBaseline(profile);
+    const baseline = createDonorStyleBaseline(profile, donorText);
     if (!baseline.ok || !baseline.baseline) {
       throw new Error(`Donor baseline creation failed: ${baseline.errors.join(" ")}`);
     }

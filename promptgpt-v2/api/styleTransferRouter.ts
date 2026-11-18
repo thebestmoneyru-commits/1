@@ -26,7 +26,9 @@ export interface StyleTransferApiOptions {
   authenticate: RequestHandler;
   /** Host-supplied rate limiter; use a shared store in multi-instance deployments. */
   rateLimit: RequestHandler;
+  /** @deprecated Legacy fields are ignored; text fields are no longer capped by the application. */
   maxSourceCharacters?: number;
+  /** @deprecated Legacy fields are ignored; text fields are no longer capped by the application. */
   maxDonorCharacters?: number;
   onError?: (error: unknown) => void;
 }
@@ -41,7 +43,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function readBody(value: unknown, options: Required<Pick<StyleTransferApiOptions, "maxSourceCharacters" | "maxDonorCharacters">>):
+function readBody(value: unknown):
   { ok: true; body: { requestId: string; sourceText: string; donorText: string } } |
   { ok: false; message: string } {
   if (!isRecord(value)) return { ok: false, message: "Ожидался JSON-объект." };
@@ -51,12 +53,6 @@ function readBody(value: unknown, options: Required<Pick<StyleTransferApiOptions
   }
   if (typeof body.donorText !== "string" || !body.donorText.trim()) {
     return { ok: false, message: "Поле donorText обязательно и должно содержать текст-образец." };
-  }
-  if (body.sourceText.length > options.maxSourceCharacters) {
-    return { ok: false, message: `Исходный текст превышает лимит ${options.maxSourceCharacters} символов.` };
-  }
-  if (body.donorText.length > options.maxDonorCharacters) {
-    return { ok: false, message: `Текст-образец превышает лимит ${options.maxDonorCharacters} символов.` };
   }
   const requestId = typeof body.requestId === "string" && body.requestId.trim()
     ? body.requestId.trim().slice(0, 128)
@@ -140,21 +136,16 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
     throw new Error("Style-transfer API requires a service, server-side preparer, authentication middleware and rate limiter.");
   }
 
-  const maxSourceCharacters = options.maxSourceCharacters ?? 30_000;
-  const maxDonorCharacters = options.maxDonorCharacters ?? 100_000;
-  if (!Number.isInteger(maxSourceCharacters) || maxSourceCharacters < 1 ||
-      !Number.isInteger(maxDonorCharacters) || maxDonorCharacters < 1) {
-    throw new Error("Text limits must be positive integers.");
-  }
 
   const router = express.Router();
   router.post(
     "/",
     options.authenticate,
     options.rateLimit,
-    express.json({ limit: "768kb", strict: true, type: "application/json" }),
+    // No application-level source/donor size cap. Runtime memory and upstream model limits still apply.
+    express.json({ limit: Number.MAX_SAFE_INTEGER, strict: true, type: "application/json" }),
     async (req: Request, res: Response) => {
-      const parsed = readBody(req.body, { maxSourceCharacters, maxDonorCharacters });
+      const parsed = readBody(req.body);
       if (!parsed.ok) return res.status(400).json({ error: { code: "INVALID_REQUEST", message: parsed.message } });
 
       const controller = new AbortController();
@@ -227,7 +218,7 @@ export function createStyleTransferApiRouter(options: StyleTransferApiOptions): 
   const parserErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
     const status = typeof error?.status === "number" ? error.status : 500;
     if (status === 413) {
-      return res.status(413).json({ error: { code: "PAYLOAD_TOO_LARGE", message: "Размер JSON-запроса превышает допустимый лимит." } });
+      return res.status(413).json({ error: { code: "PAYLOAD_TOO_LARGE", message: "Размер JSON-запроса превышает технические возможности сервера." } });
     }
     if (status === 400 || error?.type === "entity.parse.failed") {
       return res.status(400).json({ error: { code: "INVALID_JSON", message: "Тело запроса должно содержать корректный JSON." } });

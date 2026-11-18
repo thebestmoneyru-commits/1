@@ -10,7 +10,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
   const names: string[] = [];
   let prepareCalls = 0;
   let executeCalls = 0;
-  let prepareMode: "ok" | "rate-limit" | "insufficient-donor" = "ok";
+  let prepareMode: "ok" | "rate-limit" | "preparation-error" = "ok";
   const authenticate: RequestHandler = (req, res, next) => {
     if (req.header("x-test-auth") !== "allowed") return res.status(401).json({ error: "unauthorized" });
     next();
@@ -36,8 +36,8 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
       if (prepareMode === "rate-limit") {
         throw new ModelRouterError("Quota exceeded on model", "rate-limit", "gemini-3.1-flash-lite");
       }
-      if (prepareMode === "insufficient-donor") {
-        throw new Error("Donor corpus is insufficient: 120 words, need 500.");
+      if (prepareMode === "preparation-error") {
+        throw new Error("Semantic extraction failed source-bound validation.");
       }
       return {
         inventory: {} as never,
@@ -78,11 +78,11 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     const oversized = await fetch(base, {
       method: "POST",
       headers: { "content-type": "application/json", "x-test-auth": "allowed" },
-      body: JSON.stringify({ sourceText: "x".repeat(101), donorText: "Текст автора" }),
+      body: JSON.stringify({ sourceText: "x".repeat(101), donorText: "Текст автора ".repeat(20) }),
     });
-    assert(oversized.status === 400, "text over configured character limit must be rejected");
-    assert(prepareCalls === 0, "oversized text must not reach server-side preparation");
-    names.push("enforce per-field text limits");
+    assert(oversized.status === 200, "source and donor text beyond legacy configured limits must still be processed");
+    assert(Number(prepareCalls) === 1 && Number(executeCalls) === 1, "large text must reach preparation and service");
+    names.push("ignore legacy per-field text caps");
 
     const malformed = await fetch(base, {
       method: "POST",
@@ -100,7 +100,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     });
     assert(valid.status === 200, "valid authenticated request must reach the service");
     assert(rateLimitCalls === rateLimitBeforeValid + 1, "authenticated requests must pass through the host rate limiter");
-    assert(Number(prepareCalls) === 1 && Number(executeCalls) === 1, "valid request must be prepared and executed exactly once");
+    assert(Number(prepareCalls) === 2 && Number(executeCalls) === 2, "each valid request, including the earlier large request, must be prepared and executed exactly once");
     names.push("apply host rate limiting before preparation and execution");
 
     prepareMode = "rate-limit";
@@ -115,7 +115,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
       "upstream ModelRouterError(rate-limit) must surface HTTP 429 instead of opaque 500",
     );
 
-    prepareMode = "insufficient-donor";
+    prepareMode = "preparation-error";
     const prepRejected = await fetch(base, {
       method: "POST",
       headers: { "content-type": "application/json", "x-test-auth": "allowed" },
@@ -125,8 +125,8 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     assert(
       prepRejected.status === 422 &&
       prepBody.error?.code === "PREPARATION_FAILED" &&
-      (prepBody.error?.message ?? "").includes("Donor corpus is insufficient"),
-      "preparation rejections must surface HTTP 422 with concrete reason",
+      (prepBody.error?.message ?? "").includes("Semantic extraction failed"),
+      "semantic preparation failures must surface HTTP 422 with concrete reason",
     );
     names.push("classify upstream model and preparation errors cleanly");
 

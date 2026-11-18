@@ -1,6 +1,6 @@
 import type { DonorStyleBaseline, StyleDNAProfile } from "./styleTypes";
 
-export const DONOR_BASELINE_VERSION = "1.0.0";
+export const DONOR_BASELINE_VERSION = "1.1.0";
 
 function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -36,10 +36,9 @@ function validateProfile(profile: StyleDNAProfile): string[] {
   const errors: string[] = [];
   if (!profile || typeof profile !== "object") return ["Профиль донора отсутствует."];
   if (!profile.profileVersion || !profile.sourceFingerprint) errors.push("Не указана версия профиля или fingerprint исходного корпуса.");
-  if (profile.status !== "sufficient" && profile.status !== "limited") errors.push("Некорректный статус надёжности донорского профиля.");
+  if (profile.status !== "sufficient" && profile.status !== "limited" && profile.status !== "insufficient") errors.push("Некорректный статус надёжности донорского профиля.");
   if (!Number.isFinite(profile.confidence) || profile.confidence < 0 || profile.confidence > 1) errors.push("Некорректная уверенность донорского профиля.");
   if (!profile.corpus || !Array.isArray(profile.features)) errors.push("Структура профиля донора неполная.");
-  if (profile.status === "insufficient") errors.push("Недостаточный корпус нельзя закрепить как стилевой эталон.");
   const ids = new Set<string>();
   for (const feature of Array.isArray(profile.features) ? profile.features : []) {
     if (!feature.id || ids.has(feature.id)) errors.push("Профиль содержит пустые или повторяющиеся идентификаторы признаков.");
@@ -61,14 +60,17 @@ export interface DonorBaselineCreationResult {
  * Captures a deep-cloned, recursively frozen donor profile.
  * Later candidate profiles are compared to this snapshot, never substituted for it.
  */
-export function createDonorStyleBaseline(profile: StyleDNAProfile): DonorBaselineCreationResult {
+export function createDonorStyleBaseline(profile: StyleDNAProfile, donorText?: string): DonorBaselineCreationResult {
   const errors = validateProfile(profile);
   if (errors.length) return { ok: false, errors };
 
+  if (donorText !== undefined && profile.sourceFingerprint !== `fnv1a32:${checksum(donorText)}:${donorText.length}`) {
+    return { ok: false, errors: ["Текст донора не соответствует fingerprint стилевого профиля."] };
+  }
   const snapshot = deepFreeze(cloneProfile(profile));
-  const baselineFingerprint = profileFingerprint(snapshot);
-  const warnings = snapshot.status === "limited"
-    ? ["Донорский корпус ограничен; baseline закреплён, но сравнения будут иметь пониженную уверенность."]
+  const baselineFingerprint = `${profileFingerprint(snapshot)}${donorText === undefined ? "" : `:donor:${checksum(donorText)}:${donorText.length}`}`;
+  const warnings = snapshot.status !== "sufficient"
+    ? ["Донорский корпус невелик; baseline закреплён, а стилевые выводы и частотные оценки имеют пониженную уверенность."]
     : [];
 
   return {
@@ -78,6 +80,7 @@ export function createDonorStyleBaseline(profile: StyleDNAProfile): DonorBaselin
       baselineId: `donor-${baselineFingerprint.split(":")[1]?.slice(0, 8)}`,
       baselineFingerprint,
       profile: snapshot,
+      ...(donorText !== undefined ? { donorText } : {}),
       warnings,
     }),
     errors: [],
@@ -94,7 +97,13 @@ export function verifyDonorStyleBaseline(baseline: DonorStyleBaseline): DonorBas
   if (!baseline || baseline.baselineVersion !== DONOR_BASELINE_VERSION) {
     return { valid: false, reason: "Неизвестная версия донорского baseline." };
   }
-  const actual = profileFingerprint(baseline.profile);
+  const profileHash = profileFingerprint(baseline.profile);
+  const actual = baseline.donorText === undefined
+    ? profileHash
+    : `${profileHash}:donor:${checksum(baseline.donorText)}:${baseline.donorText.length}`;
+  if (baseline.donorText !== undefined && baseline.profile.sourceFingerprint !== `fnv1a32:${checksum(baseline.donorText)}:${baseline.donorText.length}`) {
+    return { valid: false, reason: "Текст донора не соответствует закреплённому стилевому профилю." };
+  }
   if (actual !== baseline.baselineFingerprint) {
     return { valid: false, reason: "Профиль донора изменился после закрепления baseline." };
   }
