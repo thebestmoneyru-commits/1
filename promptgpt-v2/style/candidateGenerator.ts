@@ -307,7 +307,7 @@ export async function generateCandidates(input: {
   if (!baselineIntegrity.valid) {
     throw new Error(baselineIntegrity.reason ?? "Донорский baseline недействителен.");
   }
-  if (input.donorBaseline.profile.status === "limited") {
+  if (input.donorBaseline.profile.status !== "sufficient") {
     warnings.push("Донорский профиль ограничен; генерация может недостаточно точно передавать индивидуальный стиль.");
   }
 
