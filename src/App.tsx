@@ -2216,6 +2216,28 @@ export default function App() {
                   </div>
                 )}
 
+                {Array.isArray(v2Diagnostics.generation?.candidates) && v2Diagnostics.generation.candidates.some((item: any) => item.status === 'failed') && (
+                  <div className="rounded-xl border border-red-900/60 bg-red-950/10 p-3">
+                    <div className="text-xs font-bold text-red-300 mb-2">Неудачные попытки генерации</div>
+                    {v2Diagnostics.generation.candidates.filter((item: any) => item.status === 'failed').map((item: any) => (
+                      <div key={item.candidateId} className="mb-2 text-xs text-red-200">
+                        <span className="font-semibold">{item.candidateId}:</span> {item.error || 'Причина не передана модельным адаптером.'}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {Array.isArray(v2Diagnostics.generation?.candidates) && v2Diagnostics.generation.candidates
+                  .filter((generated: any) => generated.status === 'generated' && !v2Diagnostics.candidates?.some((evaluated: any) => evaluated.candidateId === generated.candidateId))
+                  .map((generated: any) => (
+                    <details key={generated.candidateId} open className="rounded-xl border border-amber-800/60 bg-amber-950/10 p-3">
+                      <summary className="cursor-pointer text-xs font-bold text-amber-300">
+                        Сгенерирован, но не дошёл до итоговой оценки: {generated.candidateId}
+                      </summary>
+                      <p className="mt-2 whitespace-pre-wrap text-xs text-slate-200">{generated.text}</p>
+                    </details>
+                  ))}
+
                 {Array.isArray(v2Diagnostics.candidates) && v2Diagnostics.candidates.map((candidate: any, index: number) => {
                   const evaluation = candidate.finalEvaluation || candidate.initial;
                   const semantic = evaluation?.semanticReport;
