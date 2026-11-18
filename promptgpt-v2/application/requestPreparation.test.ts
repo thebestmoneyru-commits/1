@@ -139,6 +139,87 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(sharedPredicateMismatchRejected, "a genuine shared-predicate mismatch must remain blocking");
   names.push("retain fail-closed behavior for genuine shared-predicate mismatches");
 
+  const causalAuditSource = "Дождь пошёл, поэтому путники укрылись.";
+  const causalP1End = causalAuditSource.indexOf("путники");
+  const causalExtraction = [
+    { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: 0, end: causalP1End, text: causalAuditSource.slice(0, causalP1End) }, subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }], mandatory: true },
+    { id: "p2", summary: "Путники укрылись", sourceSpan: { start: causalP1End, end: causalAuditSource.length, text: causalAuditSource.slice(causalP1End) }, subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [], relations: [], mandatory: true },
+  ];
+  const causalInterpretationIssue = {
+    propositionId: "p1",
+    field: "logical-relation",
+    evidenceSpan: { start: causalAuditSource.indexOf("поэтому"), end: causalAuditSource.indexOf("поэтому") + "поэтому".length, text: "поэтому" },
+    explanation: "Проверить направление причинной связи.",
+  };
+  const causalRelationKey = JSON.stringify(["cause", "p1", "p2", "поэтому"]);
+  const cleanCausalStructureAudit = {
+    checkedPropositionIds: ["p1", "p2"],
+    checkedRelationKeys: [causalRelationKey],
+    issues: [],
+  };
+  const falsePositiveCausalAudit = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      causalExtraction,
+      interpretationAudit(["p1", "p2"], [causalInterpretationIssue]),
+      cleanCausalStructureAudit,
+    ),
+    routes,
+    { completenessAudit: false, analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "logical-relation-false-positive", sourceText: causalAuditSource, donorText: donor });
+  assert(
+    falsePositiveCausalAudit.inventory.propositions[0]?.relations[0]?.kind === "cause",
+    "a relation warning from the field-level audit must be independently checked by the dedicated structure audit",
+  );
+  names.push("defer a possible relation false positive to the dedicated structure audit");
+
+  const wrongCausalExtraction = causalExtraction.map((item) => item.id === "p1"
+    ? { ...item, relations: [{ kind: "effect", from: "p1", to: "p2", expression: "поэтому" }] }
+    : item);
+  const wrongCausalRelationKey = JSON.stringify(["effect", "p1", "p2", "поэтому"]);
+  const causalRelationTypeIssue = {
+    kind: "relation-type",
+    propositionIds: ["p1", "p2"],
+    relationKey: wrongCausalRelationKey,
+    evidenceSpan: causalInterpretationIssue.evidenceSpan,
+    explanation: "p1 является причиной p2, но связь размечена как effect.",
+  };
+  const repairedCausalAudit = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      wrongCausalExtraction,
+      interpretationAudit(["p1", "p2"], [causalInterpretationIssue]),
+      {
+        checkedPropositionIds: ["p1", "p2"],
+        checkedRelationKeys: [wrongCausalRelationKey],
+        issues: [causalRelationTypeIssue],
+      },
+      { decisions: [{ issueIndex: 0, action: "change-kind", correctedKind: "cause", explanation: "p1 — причина p2; меняется только тип связи." }] },
+    ),
+    routes,
+    { completenessAudit: false, analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "logical-relation-type-repair", sourceText: causalAuditSource, donorText: donor });
+  assert(
+    repairedCausalAudit.inventory.propositions[0]?.relations[0]?.kind === "cause",
+    "a confirmed relation-type error must be repaired by the dedicated relation audit",
+  );
+  names.push("repair a confirmed cause/effect type mismatch in the dedicated structure audit");
+
+  let relationFindingBlocksWhenStructureAuditDisabled = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        causalExtraction,
+        interpretationAudit(["p1", "p2"], [causalInterpretationIssue]),
+      ),
+      routes,
+      { completenessAudit: false, structureAudit: false, analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "logical-relation-without-structure-audit", sourceText: causalAuditSource, donorText: donor });
+  } catch (error) {
+    relationFindingBlocksWhenStructureAuditDisabled = String(error).includes("Semantic interpretation audit found");
+  }
+  assert(relationFindingBlocksWhenStructureAuditDisabled, "relation findings must remain blocking when their dedicated audit is disabled");
+  names.push("retain relation findings as blocking when the dedicated structure audit is disabled");
+
+
   const selfRelationSource = "Дождь пошёл, поэтому путники укрылись.";
   const selfRelationExtraction = [
     { id: "p1", summary: "Дождь пошёл", sourceSpan: { start: 0, end: "Дождь пошёл".length, text: "Дождь пошёл" }, subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [], relations: [{ kind: "cause", from: "p1", to: "p1", expression: "поэтому" }], mandatory: true },

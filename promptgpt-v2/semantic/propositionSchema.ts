@@ -6,6 +6,10 @@ const MODALITY_KINDS = new Set([
 const QUALIFICATION_KINDS = new Set([
   "condition", "exception", "restriction", "approximation", "attribution", "time", "place", "degree", "other",
 ]);
+/**
+ * Causal direction convention: "cause" means from causes to; "effect" means
+ * from is the effect and to is its cause. Endpoints are never silently reversed.
+ */
 export const LOGICAL_RELATION_KINDS: ReadonlySet<string> = new Set([
   "cause", "effect", "contrast", "concession", "condition", "purpose", "sequence", "comparison", "attribution", "other",
 ]);

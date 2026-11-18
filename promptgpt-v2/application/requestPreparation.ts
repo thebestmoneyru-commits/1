@@ -4,6 +4,7 @@ import { buildSemanticInventory } from "../semantic/buildInventory";
 import { LOGICAL_RELATION_KINDS, validatePropositionExtraction } from "../semantic/propositionSchema";
 import { checkPropositionSourceCoverage } from "../semantic/propositionCoverage";
 import { validatePropositionInterpretationAudit } from "../semantic/propositionInterpretationAudit";
+import type { PropositionInterpretationIssue } from "../semantic/propositionInterpretationAudit";
 import { getLogicalRelationAuditKey, validateSemanticStructureAudit } from "../semantic/semanticStructureAudit";
 import {
   resolveVerbatimSpan,
@@ -408,6 +409,7 @@ export function createStyleTransferRequestPreparer(
       "Извлеки из исходного текста полный перечень самостоятельных смысловых утверждений (пропозиций).",
       "Не пересказывай тему в целом: отдельная пропозиция должна фиксировать конкретное утверждение.",
       "Сохраняй субъект, предикат, объект, отрицание, модальность, условия, исключения, степень уверенности, время, место, атрибуцию и логические отношения.",
+      "Единая конвенция направления relations: kind='cause' означает, что from — причина, а to — следствие; kind='effect' означает, что from — следствие, а to — причина. Не меняй местами from/to ради названия kind. Например, если p1 является причиной p2, записывай {kind:'cause',from:'p1',to:'p2'}; если описываешь p2 как следствие p1, записывай {kind:'effect',from:'p2',to:'p1'}. Если роль концов неясна, не создавай связь.",
       "Не объединяй независимые утверждения. Не добавляй сведений, которых нет в исходнике. Не создавай две одинаковые пропозиции для одного и того же исходного фрагмента, субъекта, предиката, объекта, полярности, модальности и уточнений.",
       "Разделяй однородные сказуемые, если они выражают самостоятельные действия/события; не дроби единый составной предикат и смысловые уточнения.",
       "В сложных предложениях отдельно фиксируй самостоятельные утверждения главной и придаточной частей, если каждая сообщает отдельный факт; условия и следствия связывай отношением condition.",
@@ -755,19 +757,22 @@ export function createStyleTransferRequestPreparer(
       }
     }
 
+    let deferredLogicalRelationIssues: PropositionInterpretationIssue[] = [];
     if (options.interpretationAudit !== false) {
       if (signal?.aborted) throw new Error("Request preparation was cancelled.");
       const interpretationRoute = routes.semanticAudit ?? routes.semanticExtraction;
       const interpretationPrompt = [
         "Проведи независимую проверку точности интерпретации каждой извлечённой пропозиции.",
-        "Не проверяй только наличие цитаты: установи, действительно ли subject, predicate, object, polarity, modality, qualifications, attribution и logical relations следуют из SOURCE TEXT.",
+        "Не проверяй только наличие цитаты: установи, действительно ли subject, predicate, object, polarity, modality, qualifications и attribution следуют из SOURCE TEXT.",
+        "Не оценивай и не исправляй межпропозиционные logical relations на этом этапе. Их направление, тип и концы проверяются следующим отдельным Semantic structure audit, который может безопасно исправить подтверждённые relation-type и relation-inversion ошибки.",
+        "Не делай выводов о межпропозиционных связях на этом этапе; их проверяет отдельный структурный аудит.",
         "Ищи прежде всего ошибки, при которых правильный sourceSpan сопровождается неверным субъектом/действующим лицом, перепутанным объектом, неверной областью отрицания, повышением или ослаблением модальности, ошибочной атрибуцией чужих слов автору, подменой мнения фактом, неверным антецедентом местоимения, выдуманной причинностью, следствием, условием или временной последовательностью.",
         "Не считай парафраз ошибкой, если он точно передаёт смысл. Не используй внешние знания. Не исправляй пропозиции и не предлагай переписывание полей: только сообщай о конкретном несоответствии исходнику.",
         "Учитывай синтаксически общие члены предложения: при однородных дополнениях, однородных сказуемых и эллипсисе subject или predicate одной пропозиции может быть выражен один раз и относиться к нескольким фрагментам. Не объявляй поле отсутствующим только потому, что его буквальное выражение находится вне узкого sourceSpan, если оно явно присутствует в том же предложении SOURCE TEXT и синтаксически относится к данной пропозиции. Такие сомнительные замечания будут отдельно перепроверены.",
         "Особое правило для modality: проверяй сохранность модального смысла во всей пропозиции, а не только наличие отдельного объекта modality. Если маркер необходимости/возможности/желания и т. п. уже явно сохранён в predicate, object, qualification или другом смысловом поле, не сообщай об ошибке только потому, что он не продублирован в modality. Само наличие маркера в sourceSpan недостаточно: он должен быть отражён в смысловых полях пропозиции.",
         "Не объявляй «неизбежно», «неминуемо», «может», «возможно», «должен» и подобные слова ошибкой лишь из-за того, что predicate сформулирован как утверждение. Сначала проверь, не включает ли predicate сам этот модальный компонент. Замечание допустимо только если модальный оттенок действительно утрачен или изменён в совокупности смысловых полей.",
         "Каждую пропозицию обязательно перечисли в checkedPropositionIds, даже если ошибок не найдено. Если ошибок нет, верни issues: [].",
-        "Каждое замечание должно ссылаться на существующий propositionId, одно поле из списка subject, predicate, object, polarity, modality, qualification, attribution, logical-relation, scope, other, содержать точный evidenceSpan из SOURCE TEXT (UTF-16 start/end и буквальный text) и кратко объяснять несоответствие.",
+        "Каждое замечание должно ссылаться на существующий propositionId и одно поле из списка subject, predicate, object, polarity, modality, qualification, attribution, scope, other. Не создавай замечаний по logical-relation: межпропозиционные связи проверяются следующим отдельным Semantic structure audit. Каждое замечание должно содержать точный evidenceSpan из SOURCE TEXT (UTF-16 start/end и буквальный text) и кратко объяснять несоответствие.",
         "Не создавай замечаний без конкретного текстового свидетельства. evidenceSpan должен пересекаться с sourceSpan указанной пропозиции. Не дублируй одно замечание разными словами.",
         "Верни только JSON-объект: {checkedPropositionIds:[...],issues:[{propositionId,field,evidenceSpan:{start,end,text},explanation}]}",
         "",
@@ -907,7 +912,14 @@ export function createStyleTransferRequestPreparer(
       if (!interpretation.valid || !interpretation.audit) {
         throw new Error(`Semantic interpretation audit failed validation: ${interpretation.errors.join(" ")}`);
       }
-      let confirmedInterpretationIssues = interpretation.audit.issues;
+      // Cross-proposition relations are handled by the dedicated structure audit below.
+      // If that audit is disabled, keep relation findings blocking rather than dropping them.
+      deferredLogicalRelationIssues = options.structureAudit === false
+        ? []
+        : interpretation.audit.issues.filter((issue) => issue.field === "logical-relation");
+      let confirmedInterpretationIssues = interpretation.audit.issues.filter((issue) =>
+        issue.field !== "logical-relation" || options.structureAudit === false,
+      );
       const modalityCandidates = interpretation.audit.issues
         .map((issue, index) => ({ issue, index }))
         .filter(({ issue }) => issue.field === "modality");
@@ -1036,8 +1048,9 @@ export function createStyleTransferRequestPreparer(
         if (decisions.size !== expectedIndexes.size) {
           throw new Error("Modality adjudication did not decide every candidate; preparation stopped safely.");
         }
-        confirmedInterpretationIssues = interpretation.audit.issues.filter((issue, index) =>
-          issue.field !== "modality" || decisions.get(index) === "genuine-mismatch",
+        confirmedInterpretationIssues = confirmedInterpretationIssues.filter((issue) =>
+          issue.field !== "modality" ||
+          decisions.get(interpretation.audit!.issues.indexOf(issue)) === "genuine-mismatch",
         );
       }
 
@@ -1108,6 +1121,7 @@ export function createStyleTransferRequestPreparer(
       const structurePrompt = [
         "Проведи независимый аудит целостности смысловой структуры исходного текста.",
         "Проверяй не только наличие отдельных утверждений, но и правильность связей между ними: направление причины и следствия; порядок событий; область действия условия и исключения; уступительные конструкции; атрибуцию цитат и мнений; антецеденты местоимений; сохранность причинных, временных, условных, целевых и противопоставительных связей.",
+        "Единая конвенция relations: kind='cause' означает from=причина и to=следствие; kind='effect' означает from=следствие и to=причина. Для утверждения «p3 является причиной p4» правильная запись — {kind:'cause',from:'p3',to:'p4'}. Оценивай тип и направление совместно, не трактуй kind отдельно от from/to.",
         "Ищи случаи, когда две пропозиции извлечены верно по отдельности, но их связь потеряна, перевёрнута, отнесена не к тем утверждениям или получила неверный тип. Отдельно проверяй, не превращено ли условие в безусловный факт и не приписаны ли слова цитируемого лица автору.",
         "relation-omission допустимо только между двумя самостоятельными пропозициями. Не объявляй пропуском деепричастный оборот, причастный оборот, уточнение, дополнение или часть составного сказуемого, если их содержание уже включено в predicate, object, qualifications либо sourceSpan одной пропозиции.",
         "При общем сказуемом, относящемся к нескольким однородным результатам, проверь все соответствующие пропозиции. Если связь уже выражена имеющимися relations или содержанием единой пропозиции, не сообщай о пропуске. Если результаты представлены отдельными пропозициями и связь нигде не сохранена, укажи корректные ID и точное свидетельство.",
@@ -1127,6 +1141,17 @@ export function createStyleTransferRequestPreparer(
         "",
         "RELATION KEYS:",
         JSON.stringify(relationKeys),
+        "",
+        "FIRST-PASS LOGICAL-RELATION FINDINGS (leads for verification, not proof):",
+        JSON.stringify(deferredLogicalRelationIssues.map((issue) => ({
+          propositionId: issue.propositionId,
+          evidenceSpan: issue.evidenceSpan,
+          explanation: issue.explanation,
+          proposition: completePropositions.find((item) => item.id === issue.propositionId),
+          relatedRelations: completePropositions
+            .filter((item) => item.id === issue.propositionId)
+            .flatMap((item) => item.relations),
+        }))),
       ].join("\n");
       const structureResponse = await router.generate({
         task: "semantic-extraction",
@@ -1206,6 +1231,8 @@ export function createStyleTransferRequestPreparer(
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
         const relationTypePrompt = [
           "Проведи независимую повторную проверку только замечаний relation-type.",
+          "Соблюдай конвенцию: kind='cause' означает from=причина, to=следствие; kind='effect' означает from=следствие, to=причина. Если p1 вызывает p2, корректная запись — {kind:'cause',from:'p1',to:'p2'}.",
+
           "Для каждого замечания реши, действительно ли указанная межпропозиционная связь имеет неверный тип или аудитор ошибочно принял внутреннюю конструкцию одной пропозиции за связь двух пропозиций.",
           "Используй already-correct, если существующая связь корректна и замечание первого аудитора является ложноположительным.",
           "Используй remove, если указанное выражение относится к внутренней конструкции одной пропозиции и не устанавливает отношение между двумя указанными пропозициями.",
@@ -1336,6 +1363,8 @@ export function createStyleTransferRequestPreparer(
         if (signal?.aborted) throw new Error("Request preparation was cancelled.");
         const inversionPrompt = [
           "Проведи независимую повторную проверку только замечаний relation-inversion.",
+          "Соблюдай конвенцию: kind='cause' означает from=причина, to=следствие; kind='effect' означает from=следствие, to=причина. Проверяй направление from/to с учётом этой конвенции.",
+
           "Для каждого замечания проверь направление указанной связи по SOURCE TEXT и полным смысловым полям обеих пропозиций.",
           "Используй reverse, только если связь действительно направлена противоположно смыслу исходного текста. В этом случае разрешено поменять местами только from и to именно указанной связи.",
           "Используй already-correct, если направление существующей связи соответствует исходному тексту, а замечание первого аудитора ошибочно.",
