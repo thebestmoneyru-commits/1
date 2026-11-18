@@ -29,9 +29,14 @@ export function runDonorBaselineSelfTests(): { passed: number; names: string[] }
   names.push("recursive immutability");
 
   const tooShort = analyzeStyleDNA("Слишком короткий текст.");
-  const rejected = createDonorStyleBaseline(tooShort);
-  assert(!rejected.ok && !rejected.baseline, "insufficient donor corpus cannot become baseline");
-  names.push("insufficient donor rejection");
+  const shortBaseline = createDonorStyleBaseline(tooShort, "Слишком короткий текст.");
+  assert(shortBaseline.ok && !!shortBaseline.baseline, "a short but non-empty donor corpus remains processable");
+  assert(verifyDonorStyleBaseline(shortBaseline.baseline!).valid, "short donor baseline retains exact corpus integrity");
+  names.push("short donor acceptance with reduced-confidence baseline");
+
+  const alteredDonor = { ...shortBaseline.baseline!, donorText: "Изменённый текст." };
+  assert(!verifyDonorStyleBaseline(alteredDonor).valid, "donor text cannot be changed independently of its profile fingerprint");
+  names.push("exact donor corpus fingerprint binding");
 
   const altered = {
     ...baseline,
