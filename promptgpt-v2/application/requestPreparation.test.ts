@@ -779,14 +779,14 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   );
   names.push("independently repair a non-verbatim relation expression and sourceSpan in the same extraction");
 
-  let donorRejected = false;
-  try {
-    await createStyleTransferRequestPreparer(fakeRouter(validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1", "p2"])), routes)({
-      requestId: "short-donor", sourceText: source, donorText: "Короткий образец.",
-    });
-  } catch (error) { donorRejected = String(error).includes("Donor corpus is insufficient"); }
-  assert(donorRejected, "insufficient donor corpus must be rejected");
-  names.push("reject insufficient donor corpus");
+  const shortDonorPrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(validExtraction, { missingPropositions: [], missingRelations: [] }, interpretationAudit(["p1", "p2"]), structureAudit(["p1", "p2"])),
+    routes,
+  )({ requestId: "short-donor", sourceText: source, donorText: "Короткий образец." });
+  assert(shortDonorPrepared.donorBaseline.profile.status === "insufficient" &&
+    shortDonorPrepared.donorBaseline.donorText === "Короткий образец.",
+    "a non-empty short donor corpus must be preserved and allowed to proceed");
+  names.push("allow short donor corpus with explicit low-confidence baseline");
 
   let cancelled = false;
   const controller = new AbortController();
