@@ -37,6 +37,21 @@ export function runCandidateEvaluatorSelfTests(): { passed: number; names: strin
   assert(accepted.disposition === "accepted" && accepted.admissible, "semantically preserved matching candidate is admissible");
   names.push("semantic-first successful admission");
 
+  const shortDonorText = "Слишком короткий текст.";
+  const shortDonorProfile = analyzeStyleDNA(shortDonorText);
+  const shortDonorBaseline = createDonorStyleBaseline(shortDonorProfile, shortDonorText);
+  assert(shortDonorBaseline.ok && !!shortDonorBaseline.baseline, "short donor baseline is available");
+  const shortDonorEvaluation = evaluateCandidate({
+    candidateId: "short-donor", sourceText, outputText, inventory,
+    propositionAssessments: [], donorBaseline: shortDonorBaseline.baseline!,
+    candidateProfile: profile(outputText),
+  });
+  assert(shortDonorEvaluation.disposition === "accepted",
+    "a short donor may lower style confidence but must not block semantically verified output");
+  assert(shortDonorEvaluation.warnings.some((warning) => warning.includes("стилевое сходство") || warning.includes("слишком мал")),
+    "short donor acceptance must disclose reduced style confidence");
+  names.push("short donor does not block semantically verified output");
+
   const sourceWithNumber = `В 1912 году. ${sourceText}`;
   const missingNumberOutput = sourceText;
   const semanticFailure = evaluateCandidate({
