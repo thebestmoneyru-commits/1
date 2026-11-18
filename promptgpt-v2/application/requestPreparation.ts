@@ -1080,7 +1080,7 @@ export function createStyleTransferRequestPreparer(
               issueIndex: index, propositionId: issue.propositionId, evidenceSpan: issue.evidenceSpan,
               explanation: issue.explanation, proposition: completePropositions.find((item) => item.id === issue.propositionId),
             }))),
-          ].join("\\n");
+          ].join("\n");
           const modalityRepairResponse = await router.generate({
             task: "semantic-extraction", preferredModel: interpretationRoute.preferredModel,
             fallbackModels: interpretationRoute.fallbackModels, prompt: modalityRepairPrompt,
