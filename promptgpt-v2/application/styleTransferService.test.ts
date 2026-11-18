@@ -81,6 +81,12 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       "candidate diagnostics must distinguish intentionally skipped critic work");
     assert(audit.some((step) => step.stage === "final-decision" && step.status === "completed"),
       "candidate diagnostics must record the final decision");
+    const timedStages = ["candidate-generation", "semantic-verification", "logical-structure", "style-profiling", "style-scoring", "semantic-restoration"];
+    assert(timedStages.every((stage) => {
+      const step = audit.find((item) => item.stage === stage);
+      return !!step && typeof step.durationMs === "number" &&
+        Number.isFinite(step.durationMs) && step.durationMs >= 0;
+    }), "diagnostic stages must expose finite, non-negative execution durations");
     names.push("accept semantically valid candidate and skip unnecessary repair");
   }
 
