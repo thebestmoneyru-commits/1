@@ -103,9 +103,11 @@ export function evaluateCandidate(
       styleReport.confidence >= options.minimumStyleConfidence &&
       styleReport.score < options.minimumStyleScore);
 
-  const needsReview = styleReport.status !== "scored" ||
-    styleReport.score === null ||
-    styleReport.confidence < options.minimumStyleConfidence;
+  const donorStyleIsReliable = input.donorBaseline.profile.status === "sufficient";
+  const needsReview = styleReport.status === "insufficient-candidate" ||
+    styleReport.status === "incompatible-profiles" ||
+    (donorStyleIsReliable && (styleReport.status !== "scored" || styleReport.score === null ||
+      styleReport.confidence < options.minimumStyleConfidence));
 
   const disposition: CandidateDisposition = hardFailure
     ? "rejected"
