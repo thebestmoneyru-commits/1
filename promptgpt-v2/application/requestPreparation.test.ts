@@ -468,6 +468,42 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(genuineModalityMismatchRejected, "a genuinely omitted modal meaning must remain blocking");
   names.push("retain fail-closed behavior when a modality mismatch is independently confirmed");
 
+  const qualifiedSource = "Смысл неизбежно редуцируется. Явления — не более чем процесс. Человек — лишь результат.";
+  const qualifiedParts = [
+    { id: "p1", marker: "неизбежно", subject: "Смысл", predicate: "редуцируется", start: 0, end: qualifiedSource.indexOf(".") + 1 },
+    { id: "p2", marker: "не более чем", subject: "Явления", predicate: "процесс", start: qualifiedSource.indexOf("Явления"), end: qualifiedSource.indexOf(". ", qualifiedSource.indexOf("Явления")) + 1 },
+    { id: "p3", marker: "лишь", subject: "Человек", predicate: "результат", start: qualifiedSource.indexOf("Человек"), end: qualifiedSource.length },
+  ];
+  const qualifiedExtraction = qualifiedParts.map((part) => ({
+    id: part.id, summary: qualifiedSource.slice(part.start, part.end),
+    sourceSpan: { start: part.start, end: part.end, text: qualifiedSource.slice(part.start, part.end) },
+    subject: part.subject, predicate: part.predicate, polarity: "positive", qualifications: [], relations: [], mandatory: true,
+  }));
+  const qualifiedIssues = qualifiedParts.map((part) => {
+    const start = qualifiedSource.indexOf(part.marker, part.start);
+    return { propositionId: part.id, field: "modality", evidenceSpan: { start, end: start + part.marker.length, text: part.marker },
+      explanation: `Не сохранён маркер «${part.marker}».` };
+  });
+  const repairedQualified = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      qualifiedExtraction, { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2", "p3"], qualifiedIssues),
+      { decisions: qualifiedIssues.map((_, issueIndex) => ({ issueIndex, classification: "genuine-mismatch", explanation: "Маркер отсутствует в смысловых полях." })) },
+      { repairs: [
+        { issueIndex: 0, propositionId: "p1", marker: "неизбежно", targetField: "modality", modality: { kind: "necessity", value: "неизбежно", scope: "редуцируется" } },
+        { issueIndex: 1, propositionId: "p2", marker: "не более чем", targetField: "qualification", qualification: { kind: "restriction", value: "не более чем" } },
+        { issueIndex: 2, propositionId: "p3", marker: "лишь", targetField: "qualification", qualification: { kind: "restriction", value: "лишь" } },
+      ] },
+      structureAudit(["p1", "p2", "p3"]),
+    ),
+    routes, { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "source-grounded-modality-repair", sourceText: qualifiedSource, donorText: donor });
+  const repairedById = new Map(repairedQualified.inventory.propositions.map((item) => [item.id, item]));
+  assert(repairedById.get("p1")?.modality?.value === "неизбежно", "restore the exact inevitability marker");
+  assert(repairedById.get("p2")?.qualifications.some((item) => item.value === "не более чем"), "restore 'не более чем' as a restriction");
+  assert(repairedById.get("p3")?.qualifications.some((item) => item.value === "лишь"), "restore 'лишь' as a restriction");
+  names.push("repair omitted modality and restriction markers from exact source evidence without weakening semantic checks");
+
   let incompleteInterpretationRejected = false;
   try {
     await createStyleTransferRequestPreparer(
