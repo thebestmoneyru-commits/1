@@ -139,6 +139,68 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(sharedPredicateMismatchRejected, "a genuine shared-predicate mismatch must remain blocking");
   names.push("retain fail-closed behavior for genuine shared-predicate mismatches");
 
+  const predicativeComplementSource = "Современная урбанистическая среда, выступая средоточием всех цивилизационных достижений, влияет на жизнь общества.";
+  const predicativeSpan = predicativeComplementSource.slice(0, predicativeComplementSource.indexOf(", влияет"));
+  const predicativeIssue = {
+    propositionId: "p1", field: "predicate",
+    evidenceSpan: { start: predicativeSpan.indexOf("выступая"), end: predicativeSpan.indexOf("достижений") + "достижений".length, text: predicativeSpan.slice(predicativeSpan.indexOf("выступая"), predicativeSpan.indexOf("достижений") + "достижений".length) },
+    explanation: "Именная часть составного предикативного комплекса ошибочно принята за объект.",
+  };
+  const predicativeExtraction = [{
+    id: "p1", summary: predicativeSpan,
+    sourceSpan: { start: 0, end: predicativeSpan.length, text: predicativeSpan },
+    subject: "Современная урбанистическая среда",
+    predicate: "выступая средоточием всех цивилизационных достижений",
+    polarity: "positive", qualifications: [], relations: [], mandatory: true,
+  }];
+  const predicativePrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      predicativeExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1"], [predicativeIssue]),
+      { decisions: [{ issueIndex: 0, classification: "already-grounded-in-sentence", explanation: "«Средоточием» — именная часть предикативного комплекса, а не прямое дополнение." }] },
+      structureAudit(["p1"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "predicate-predicative-complement", sourceText: predicativeComplementSource, donorText: donor });
+  assert(
+    predicativePrepared.inventory.propositions[0]?.predicate === "выступая средоточием всех цивилизационных достижений",
+    "a predicative nominal complement must remain part of the predicate",
+  );
+  names.push("adjudicate Russian compound-predicate complements without false rejection");
+
+  const objectInsidePredicateSource = "Новый опыт, делая его более разнообразным и приятным, меняет восприятие путешествия.";
+  const objectInsidePredicateSpanEnd = objectInsidePredicateSource.indexOf(", меняет");
+  const objectInsidePredicate = [{
+    id: "p1", summary: "Новый опыт делает его более разнообразным и приятным",
+    sourceSpan: { start: 0, end: objectInsidePredicateSpanEnd, text: objectInsidePredicateSource.slice(0, objectInsidePredicateSpanEnd) },
+    subject: "Новый опыт", predicate: "делая его более разнообразным и приятным",
+    polarity: "positive", qualifications: [], relations: [], mandatory: true,
+  }];
+  const objectInsidePredicateIssue = {
+    propositionId: "p1", field: "predicate",
+    evidenceSpan: { start: objectInsidePredicateSource.indexOf("делая"), end: objectInsidePredicateSource.indexOf("приятным") + "приятным".length, text: objectInsidePredicateSource.slice(objectInsidePredicateSource.indexOf("делая"), objectInsidePredicateSource.indexOf("приятным") + "приятным".length) },
+    explanation: "Прямое дополнение включено внутрь predicate.",
+  };
+  let objectPredicateMismatchRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        objectInsidePredicate,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1"], [objectInsidePredicateIssue]),
+        { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "«Его» — прямое дополнение и должно быть отделено от глагольного ядра." }] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "predicate-object-separation", sourceText: objectInsidePredicateSource, donorText: donor });
+  } catch (error) {
+    objectPredicateMismatchRejected = String(error).includes("Semantic interpretation audit found");
+  }
+  assert(objectPredicateMismatchRejected, "a direct object embedded in predicate must remain a blocking structural finding");
+  names.push("retain fail-closed behavior when a direct object is embedded in the predicate");
+
   const causalAuditSource = "Дождь пошёл, поэтому путники укрылись.";
   const causalP1End = causalAuditSource.indexOf("путники");
   const causalExtraction = [
