@@ -151,57 +151,73 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     evidenceSpan: { start: causalAuditSource.indexOf("поэтому"), end: causalAuditSource.indexOf("поэтому") + "поэтому".length, text: "поэтому" },
     explanation: "Проверить направление причинной связи.",
   };
+  const causalRelationKey = JSON.stringify(["cause", "p1", "p2", "поэтому"]);
+  const cleanCausalStructureAudit = {
+    checkedPropositionIds: ["p1", "p2"],
+    checkedRelationKeys: [causalRelationKey],
+    issues: [],
+  };
   const falsePositiveCausalAudit = await createStyleTransferRequestPreparer(
     fakeRouter(
       causalExtraction,
       interpretationAudit(["p1", "p2"], [causalInterpretationIssue]),
-      { decisions: [{ issueIndex: 0, classification: "already-correct", explanation: "p1 — причина p2; тип cause и направление from/to соответствуют исходнику." }] },
+      cleanCausalStructureAudit,
     ),
     routes,
-    { completenessAudit: false, structureAudit: false, analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    { completenessAudit: false, analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
   )({ requestId: "logical-relation-false-positive", sourceText: causalAuditSource, donorText: donor });
   assert(
     falsePositiveCausalAudit.inventory.propositions[0]?.relations[0]?.kind === "cause",
-    "a false-positive logical-relation warning may be cleared only by explicit second review",
+    "a relation warning from the field-level audit must be independently checked by the dedicated structure audit",
   );
-  names.push("clear a false-positive logical-relation warning after explicit second review");
+  names.push("defer a possible relation false positive to the dedicated structure audit");
 
   const wrongCausalExtraction = causalExtraction.map((item) => item.id === "p1"
     ? { ...item, relations: [{ kind: "effect", from: "p1", to: "p2", expression: "поэтому" }] }
     : item);
-  let genuineCausalMismatchRejected = false;
-  try {
-    await createStyleTransferRequestPreparer(
-      fakeRouter(
-        wrongCausalExtraction,
-        interpretationAudit(["p1", "p2"], [causalInterpretationIssue]),
-        { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "p1 является причиной, но записан как effect с теми же концами." }] },
-      ),
-      routes,
-      { completenessAudit: false, structureAudit: false, analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
-    )({ requestId: "logical-relation-real-error", sourceText: causalAuditSource, donorText: donor });
-  } catch (error) {
-    genuineCausalMismatchRejected = String(error).includes("Semantic interpretation audit found");
-  }
-  assert(genuineCausalMismatchRejected, "a confirmed logical-relation mismatch must remain blocking");
-  names.push("retain fail-closed behavior for a confirmed logical-relation mismatch");
+  const wrongCausalRelationKey = JSON.stringify(["effect", "p1", "p2", "поэтому"]);
+  const relationTypeIssue = {
+    kind: "relation-type",
+    propositionIds: ["p1", "p2"],
+    relationKey: wrongCausalRelationKey,
+    evidenceSpan: causalInterpretationIssue.evidenceSpan,
+    explanation: "p1 является причиной p2, но связь размечена как effect.",
+  };
+  const repairedCausalAudit = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      wrongCausalExtraction,
+      interpretationAudit(["p1", "p2"], [causalInterpretationIssue]),
+      {
+        checkedPropositionIds: ["p1", "p2"],
+        checkedRelationKeys: [wrongCausalRelationKey],
+        issues: [relationTypeIssue],
+      },
+      { decisions: [{ issueIndex: 0, action: "change-kind", correctedKind: "cause", explanation: "p1 — причина p2; меняется только тип связи." }] },
+    ),
+    routes,
+    { completenessAudit: false, analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "logical-relation-type-repair", sourceText: causalAuditSource, donorText: donor });
+  assert(
+    repairedCausalAudit.inventory.propositions[0]?.relations[0]?.kind === "cause",
+    "a confirmed relation-type error must be repaired by the dedicated relation audit",
+  );
+  names.push("repair a confirmed cause/effect type mismatch in the dedicated structure audit");
 
-  let uncertainCausalMismatchRejected = false;
+  let relationFindingBlocksWhenStructureAuditDisabled = false;
   try {
     await createStyleTransferRequestPreparer(
       fakeRouter(
         causalExtraction,
         interpretationAudit(["p1", "p2"], [causalInterpretationIssue]),
-        { decisions: [{ issueIndex: 0, classification: "uncertain", explanation: "Недостаточно данных для уверенного решения." }] },
       ),
       routes,
       { completenessAudit: false, structureAudit: false, analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
-    )({ requestId: "logical-relation-uncertain", sourceText: causalAuditSource, donorText: donor });
+    )({ requestId: "logical-relation-without-structure-audit", sourceText: causalAuditSource, donorText: donor });
   } catch (error) {
-    uncertainCausalMismatchRejected = String(error).includes("Semantic interpretation audit found");
+    relationFindingBlocksWhenStructureAuditDisabled = String(error).includes("Semantic interpretation audit found");
   }
-  assert(uncertainCausalMismatchRejected, "an uncertain second review must not silently clear a semantic warning");
-  names.push("keep uncertain logical-relation findings blocked");
+  assert(relationFindingBlocksWhenStructureAuditDisabled, "relation findings must remain blocking when their dedicated audit is disabled");
+  names.push("retain relation findings as blocking when the dedicated structure audit is disabled");
 
 
   const selfRelationSource = "Дождь пошёл, поэтому путники укрылись.";
