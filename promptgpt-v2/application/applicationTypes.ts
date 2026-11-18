@@ -42,6 +42,8 @@ export interface StyleTransferRequest {
 }
 
 export interface CandidateDiagnosticStep {
+  /** Wall-clock time spent in this stage, measured by the service clock. */
+  durationMs?: number;
   stage: "candidate-generation" | "semantic-verification" | "logical-structure" | "style-profiling" | "style-scoring" | "semantic-restoration" | "style-critic-repair" | "final-decision";
   status: "completed" | "failed" | "skipped" | "not-completed";
   detail: string;
