@@ -2259,12 +2259,88 @@ export default function App() {
                           {candidate.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
                         </ul>
                       )}
-                      {typeof candidate.finalText === 'string' && candidate.finalText.trim() && (
-                        <details className="rounded-lg border border-slate-800 bg-slate-900/70 p-2">
-                          <summary className="cursor-pointer text-xs font-semibold text-slate-300">
-                            Текст кандидата ({candidate.finalText.length} симв.)
+                      {Array.isArray(candidate.diagnosticSteps) && candidate.diagnosticSteps.length > 0 && (
+                        <details open className="rounded-lg border border-cyan-900/70 bg-slate-900/60 p-3">
+                          <summary className="cursor-pointer text-xs font-bold text-cyan-300">
+                            Что программа фактически выполнила ({candidate.diagnosticSteps.length} этапов)
                           </summary>
-                          <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300 leading-relaxed">
+                          <div className="mt-3 space-y-2">
+                            {candidate.diagnosticSteps.map((step: any, i: number) => (
+                              <div key={i} className="flex gap-2 border-b border-slate-800 pb-2 last:border-0">
+                                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                                  step.status === 'completed' ? 'bg-emerald-950 text-emerald-300'
+                                    : step.status === 'failed' ? 'bg-red-950 text-red-300'
+                                      : step.status === 'skipped' ? 'bg-slate-800 text-slate-400'
+                                        : 'bg-amber-950 text-amber-300'
+                                }`}>
+                                  {step.status === 'completed' ? 'ВЫПОЛНЕН' : step.status === 'failed' ? 'ОШИБКА' : step.status === 'skipped' ? 'ПРОПУЩЕН' : 'НЕ ЗАВЕРШЁН'}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="text-xs font-semibold text-slate-200">{step.stage}</div>
+                                  <div className="text-xs text-slate-400 whitespace-pre-wrap">{step.detail}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                      {Array.isArray(semantic?.issues) && semantic.issues.length > 0 && (
+                        <details className="rounded-lg border border-red-900/60 bg-red-950/10 p-2">
+                          <summary className="cursor-pointer text-xs font-semibold text-red-300">
+                            Детали семантической проверки ({semantic.issues.length})
+                          </summary>
+                          <ul className="mt-2 list-disc pl-5 space-y-1 text-xs text-red-200">
+                            {semantic.issues.map((issue: any, i: number) => (
+                              <li key={i}><span className="font-semibold">{issue.code}</span>: {issue.message}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                      {Array.isArray(style?.familyScores) && style.familyScores.length > 0 && (
+                        <details className="rounded-lg border border-slate-800 bg-slate-900/60 p-2">
+                          <summary className="cursor-pointer text-xs font-semibold text-slate-300">
+                            Разбивка стилевой оценки по семействам признаков
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {style.familyScores.map((family: any) => (
+                              <div key={family.family} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-xs">
+                                <div className="text-slate-300">{family.family} <span className="text-slate-500">({family.comparedFeatures} признаков)</span></div>
+                                <div className="font-semibold text-white">{Number(family.score).toFixed(1)}/100</div>
+                                <div className="col-span-2 h-1.5 rounded bg-slate-800 overflow-hidden">
+                                  <div className="h-full bg-cyan-500" style={{ width: `${Math.max(0, Math.min(100, family.score))}%` }} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                      {Array.isArray(style?.comparisons) && style.comparisons.length > 0 && (
+                        <details className="rounded-lg border border-slate-800 bg-slate-900/60 p-2">
+                          <summary className="cursor-pointer text-xs font-semibold text-slate-300">
+                            Все сравнения отдельных стилевых признаков ({style.comparisons.length})
+                          </summary>
+                          <div className="mt-2 max-h-96 overflow-y-auto space-y-2">
+                            {[...style.comparisons].sort((a: any, b: any) => a.similarity - b.similarity).map((item: any) => (
+                              <div key={item.featureId} className="rounded bg-slate-950 p-2 text-xs">
+                                <div className="flex justify-between gap-2">
+                                  <span className="font-semibold text-slate-200">{item.label}</span>
+                                  <span className={item.similarity < 0.5 ? 'text-red-300' : item.similarity < 0.8 ? 'text-amber-300' : 'text-emerald-300'}>
+                                    {(item.similarity * 100).toFixed(1)}% сходства
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-slate-400">Донор: {Number(item.donorValue).toFixed(3)} · Кандидат: {Number(item.candidateValue).toFixed(3)} · {item.direction}</div>
+                                <div className="mt-1 text-slate-500">{item.explanation}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                      {typeof candidate.finalText === 'string' && candidate.finalText.trim() && (
+                        <details open className="rounded-lg border border-cyan-700/60 bg-slate-900/80 p-3">
+                          <summary className="cursor-pointer text-sm font-bold text-cyan-200">
+                            Текст результата кандидата ({candidate.finalText.length} симв.) — {evaluation?.disposition === 'accepted' ? 'прошёл проверки' : 'отклонённый черновик для диагностики'}
+                          </summary>
+                          <p className="mt-3 whitespace-pre-wrap text-sm text-slate-200 leading-relaxed select-text">
                             {candidate.finalText}
                           </p>
                         </details>
@@ -2283,7 +2359,7 @@ export default function App() {
                 )}
 
                 {Array.isArray(v2Diagnostics.trace) && v2Diagnostics.trace.length > 0 && (
-                  <details className="rounded-xl border border-slate-700 p-3">
+                  <details open className="rounded-xl border border-slate-700 p-3">
                     <summary className="cursor-pointer text-sm font-semibold text-cyan-300">
                       Журнал этапов обработки ({v2Diagnostics.trace.length})
                     </summary>
