@@ -430,6 +430,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
           },
           explanation: "Предикат не соответствует буквальному содержанию исходного фрагмента.",
         }]),
+        { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "Предикат не подтверждается исходным текстом." }] },
         structureAudit(["p1", "p2", "p3"]),
       ),
       routes,
