@@ -106,6 +106,7 @@ export class StyleTransferService {
 
       candidateLoop: for (const candidateIndex of candidateBatches) {
         if (request.signal?.aborted) break;
+        const generationStartedAt = this.now();
         const batch = await generateCandidates({
           sourceText: request.sourceText,
           inventory: request.inventory,
@@ -117,6 +118,7 @@ export class StyleTransferService {
           candidateStartIndex: candidateIndex ?? 0,
           signal: request.signal,
         });
+        const generationDurationMs = Math.max(0, this.now() - generationStartedAt);
         generation.requested += batch.requested;
         generation.generated += batch.generated;
         generation.failed += batch.failed;
@@ -131,13 +133,18 @@ export class StyleTransferService {
           stage: "candidate-generation",
           status: "completed",
           detail: "Модель создала текст кандидата: " + candidate.text.length + " символов.",
+          durationMs: generationDurationMs,
         }];
         mark("evaluating-candidates", "Независимая семантическая и стилевая оценка.", candidate.candidateId);
         let assessments: PropositionAssessment[];
         let relationAssessments: LogicalRelationAssessment[];
         let structureReport: ReturnType<typeof validateLogicalRelationAssessments>;
         let profile: StyleDNAProfile;
+        let semanticVerificationDurationMs = 0;
+        let logicalStructureDurationMs = 0;
+        let styleProfilingDurationMs = 0;
         try {
+          const semanticVerificationStartedAt = this.now();
           if (this.deps.semanticVerifier.assessCombined) {
             const combined = await this.deps.semanticVerifier.assessCombined({
               sourceText: request.sourceText,
@@ -165,17 +172,23 @@ export class StyleTransferService {
             assessments = propositionAssessments;
             relationAssessments = checkedRelationAssessments;
           }
+          semanticVerificationDurationMs = Math.max(0, this.now() - semanticVerificationStartedAt);
+          const logicalStructureStartedAt = this.now();
           structureReport = validateLogicalRelationAssessments(
             candidate.text, request.inventory.propositions, relationAssessments,
             request.semanticPolicy?.minimumAssessmentConfidence ?? DEFAULT_SEMANTIC_POLICY.minimumAssessmentConfidence,
           );
+          logicalStructureDurationMs = Math.max(0, this.now() - logicalStructureStartedAt);
           if (request.signal?.aborted) break;
+          const styleProfilingStartedAt = this.now();
           profile = this.deps.styleProfiler.analyze(candidate.text);
+          styleProfilingDurationMs = Math.max(0, this.now() - styleProfilingStartedAt);
         } catch (error) {
           if (request.signal?.aborted) break;
           warnings.push(`Кандидат ${candidate.candidateId} пропущен: ошибка независимой проверки — ${error instanceof Error ? error.message : "неизвестная ошибка"}.`);
           continue;
         }
+        const styleScoringStartedAt = this.now();
         const initial = evaluateCandidate({
           candidateId: candidate.candidateId,
           sourceText: request.sourceText,
@@ -189,6 +202,7 @@ export class StyleTransferService {
           minimumStyleConfidence: request.minimumStyleConfidence,
           semanticPolicy: request.semanticPolicy,
         });
+        const styleScoringDurationMs = Math.max(0, this.now() - styleScoringStartedAt);
 
         if (!structureReport.passed) {
           initial.semanticReport.passed = false;
@@ -206,16 +220,19 @@ export class StyleTransferService {
             stage: "semantic-verification",
             status: initial.semanticReport.passed ? "completed" : "failed",
             detail: "Обязательные утверждения: " + initial.semanticReport.mandatoryPropositionsPreserved + "/" + initial.semanticReport.mandatoryPropositionsTotal + "; якоря: " + initial.semanticReport.requiredAnchorsFound + "/" + initial.semanticReport.requiredAnchorsTotal + ".",
+            durationMs: semanticVerificationDurationMs,
           },
           {
             stage: "logical-structure",
             status: structureReport.passed ? "completed" : "failed",
             detail: structureReport.passed ? "Логические отношения проверены: " + relationAssessments.length + "." : structureReport.issues.join(" "),
+            durationMs: logicalStructureDurationMs,
           },
           {
             stage: "style-profiling",
             status: "completed",
             detail: "Профиль кандидата построен: " + profile.corpus.words + " слов, " + profile.corpus.sentences + " предложений, " + profile.features.length + " признаков; статус " + profile.status + ".",
+            durationMs: styleProfilingDurationMs,
           },
           {
             stage: "style-scoring",
@@ -223,6 +240,7 @@ export class StyleTransferService {
             detail: initial.styleReport.status === "scored"
               ? "Оценка " + initial.styleReport.score + "/100; уверенность " + initial.styleReport.confidence + "; сравнено признаков: " + initial.styleReport.comparisons.length + "."
               : "Оценка не рассчитана: " + initial.styleReport.status + ". " + initial.styleReport.warnings.join(" "),
+            durationMs: styleScoringDurationMs,
           },
         );
 
@@ -240,6 +258,7 @@ export class StyleTransferService {
 
         // A single content-restoration pass is allowed before style-only repair.
         // It is triggered only by concrete verifier findings, never by a missing report.
+        const semanticRestorationStartedAt = this.now();
         if (!initial.semanticReport.passed && hasRestorableDefects) {
           mark("semantic-repair", "Одна ограниченная попытка восстановить пропущенные смысловые элементы с последующей независимой проверкой.", candidate.candidateId);
           try {
@@ -336,6 +355,7 @@ export class StyleTransferService {
           }
         }
 
+        const semanticRestorationDurationMs = Math.max(0, this.now() - semanticRestorationStartedAt);
         diagnosticSteps.push({
           stage: "semantic-restoration",
           status: semanticRestorationApplied ? "completed"
@@ -348,6 +368,7 @@ export class StyleTransferService {
               : !hasRestorableDefects
                 ? "Не запускалось: не обнаружено конкретных дефектов для безопасного восстановления."
                 : restorationWarnings.join(" ") || "Попытка восстановления не привела к принятому тексту.",
+          durationMs: semanticRestorationDurationMs,
         });
 
         const polishThreshold = request.criticPolishThreshold;
@@ -393,6 +414,7 @@ export class StyleTransferService {
           continue;
         }
 
+        const criticRepairStartedAt = this.now();
         mark("critic-repair", "Одна ограниченная попытка точечной правки с независимой повторной проверкой.", candidate.candidateId);
         try {
           const pipeline = await runCriticRepairPipeline({
@@ -435,6 +457,7 @@ export class StyleTransferService {
             stage: "style-critic-repair",
             status: pipeline.completed ? "completed" : "not-completed",
             detail: "Этап критика/правки вызван. Правка применена: " + (pipeline.repairResult.applied ? "да" : "нет") + "; повторная проверка завершена: " + (pipeline.completed ? "да" : "нет") + ". " + pipeline.warnings.join(" "),
+            durationMs: Math.max(0, this.now() - criticRepairStartedAt),
           });
           const afterScore = finalEvaluation.styleReport.score ?? -1;
           const keepPreCriticAccepted =
@@ -476,7 +499,7 @@ export class StyleTransferService {
             }
           }
         } catch (error) {
-          diagnosticSteps.push({ stage: "style-critic-repair", status: "failed", detail: error instanceof Error ? error.message : "Неизвестная ошибка критика/правки." });
+          diagnosticSteps.push({ stage: "style-critic-repair", status: "failed", detail: error instanceof Error ? error.message : "Неизвестная ошибка критика/правки.", durationMs: Math.max(0, this.now() - criticRepairStartedAt) });
           outcomes.push({
             candidateId: candidate.candidateId, initial, finalText: currentText,
             finalEvaluation: currentEvaluation, repaired: semanticRestorationApplied,
