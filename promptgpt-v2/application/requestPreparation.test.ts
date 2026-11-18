@@ -201,6 +201,38 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(objectPredicateMismatchRejected, "a direct object embedded in predicate must remain a blocking structural finding");
   names.push("retain fail-closed behavior when a direct object is embedded in the predicate");
 
+  const objectAsPredicateSource = "Механизм влечет превращение исторического процесса в механическую последовательность фактов.";
+  const nominalObjectStart = objectAsPredicateSource.indexOf("превращение");
+  const objectAsPredicate = [{
+    id: "p1", summary: "Превращение исторического процесса в механическую последовательность фактов",
+    sourceSpan: { start: nominalObjectStart, end: objectAsPredicateSource.length, text: objectAsPredicateSource.slice(nominalObjectStart) },
+    subject: "Механизм",
+    predicate: "превращение исторического процесса в механическую последовательность фактов",
+    polarity: "positive", qualifications: [], relations: [], mandatory: true,
+  }];
+  const objectAsPredicateIssue = {
+    propositionId: "p1", field: "predicate",
+    evidenceSpan: { start: nominalObjectStart, end: objectAsPredicateSource.length, text: objectAsPredicateSource.slice(nominalObjectStart) },
+    explanation: "Отглагольное существительное является объектом при управляющем глаголе «влечет», а не сказуемым.",
+  };
+  let nominalObjectPredicateRejected = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        objectAsPredicate,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1"], [objectAsPredicateIssue]),
+        { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "В этом предложении «влечет» — сказуемое, а «превращение...» — объект." }] },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "predicate-nominal-object", sourceText: objectAsPredicateSource, donorText: donor });
+  } catch (error) {
+    nominalObjectPredicateRejected = String(error).includes("Semantic interpretation audit found");
+  }
+  assert(nominalObjectPredicateRejected, "a nominalized object must not be accepted as the governing predicate when the verb is present");
+  names.push("retain fail-closed behavior when a nominalized object replaces its governing verb");
+
   const causalAuditSource = "Дождь пошёл, поэтому путники укрылись.";
   const causalP1End = causalAuditSource.indexOf("путники");
   const causalExtraction = [
