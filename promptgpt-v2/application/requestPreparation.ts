@@ -602,7 +602,7 @@ export function createStyleTransferRequestPreparer(
         proposition.relations.forEach((rawRelation, relationIndex) => {
           if (!rawRelation || typeof rawRelation !== "object" || Array.isArray(rawRelation)) return;
           const relation = rawRelation as Record<string, unknown>;
-          if (typeof relation.expression !== "string" || !relation.expression.trim() || !sourceText.includes(relation.expression)) {
+          if (relation.expression !== undefined && (typeof relation.expression !== "string" || !relation.expression.trim() || !sourceText.includes(relation.expression))) {
             if (typeof relation.kind === "string" && typeof relation.from === "string" && typeof relation.to === "string") {
               invalidRelationExpressions.push({
                 propositionId: proposition.id as string, relationIndex,
@@ -626,7 +626,7 @@ export function createStyleTransferRequestPreparer(
         "",
         "SOURCE TEXT:", JSON.stringify(sourceText),
         "INVALID RELATION EXPRESSIONS:", JSON.stringify(invalidRelationExpressions),
-      ].join("\\n");
+      ].join("\n");
       const relationExpressionRepairResponse = await router.generate({
         task: "semantic-extraction",
         preferredModel: routes.semanticExtraction.preferredModel,
