@@ -26,6 +26,7 @@ export interface Qualification {
   value: string;
 }
 export interface LogicalRelation {
+  /** For causal links: cause => from is cause and to is effect; effect => from is effect and to is cause. */
   kind: "cause" | "effect" | "contrast" | "concession" | "condition" | "purpose" | "sequence" | "comparison" | "attribution" | "other";
   from: string;
   to: string;
