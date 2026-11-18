@@ -59,8 +59,8 @@ function normalizeOptions(options: Partial<CandidateGenerationOptions>): Candida
     concurrency: Number.isFinite(options.concurrency)
       ? Math.max(1, Math.min(3, Math.floor(options.concurrency!))) : DEFAULT_OPTIONS.concurrency,
     styleIntensity: intensity as CandidateGenerationOptions["styleIntensity"],
-    maxDonorExamples: Number.isFinite(options.maxDonorExamples)
-      ? Math.max(0, Math.floor(options.maxDonorExamples!)) : Number.MAX_SAFE_INTEGER,
+    // Kept in the public options shape for backwards compatibility; donor evidence is no longer capped.
+    maxDonorExamples: Number.MAX_SAFE_INTEGER,
     customInstructions: typeof options.customInstructions === "string"
       ? options.customInstructions : undefined,
     adaptive: options.adaptive !== false,
