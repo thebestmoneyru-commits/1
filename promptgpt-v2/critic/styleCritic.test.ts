@@ -175,7 +175,7 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
   );
   names.push("anchor verbatim critic span offsets");
 
-  const irregularDonorText = donorText() + "\\n\\nОн обруживает эту особенность в тексте.";
+  const irregularDonorText = donorText() + "\n\nОн обруживает эту особенность в тексте.";
   const irregularProfile = analyzeStyleDNA(irregularDonorText, {
     minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
   });
