@@ -17,8 +17,11 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   const donor = analyzeStyleDNA(donorText(), {
     minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
   });
-  const donorWithIrregularity = donorText() + "\\n\\nОн обруживает эту особенность в тексте.";
-  const created = createDonorStyleBaseline(donor, donorWithIrregularity);
+  const donorWithIrregularity = donorText() + "\n\nОн обруживает эту особенность в тексте.";
+  const donorWithIrregularityProfile = analyzeStyleDNA(donorWithIrregularity, {
+    minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+  });
+  const created = createDonorStyleBaseline(donorWithIrregularityProfile, donorWithIrregularity);
   assert(created.ok && !!created.baseline, "donor baseline fixture is available");
   const baseline = created.baseline!;
   const sourceText = "В 1912 году автор описал событие.";
