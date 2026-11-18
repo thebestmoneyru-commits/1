@@ -72,6 +72,21 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(generationCalls === 1, "one candidate should cause one generation call");
     assert(criticCalls === 0, "an already accepted candidate should bypass critic and repair");
     assert(result.trace.some((event) => event.stage === "completed"), "successful execution should be traced");
+    const audit = result.candidates[0]?.diagnosticSteps ?? [];
+    assert(audit.some((step) => step.stage === "semantic-verification" && step.status === "completed"),
+      "candidate diagnostics must record successful semantic verification");
+    assert(audit.some((step) => step.stage === "style-scoring" && step.status === "completed"),
+      "candidate diagnostics must record style scoring");
+    assert(audit.some((step) => step.stage === "style-critic-repair" && step.status === "skipped"),
+      "candidate diagnostics must distinguish intentionally skipped critic work");
+    assert(audit.some((step) => step.stage === "final-decision" && step.status === "completed"),
+      "candidate diagnostics must record the final decision");
+    const timedStages = ["candidate-generation", "semantic-verification", "logical-structure", "style-profiling", "style-scoring", "semantic-restoration"];
+    assert(timedStages.every((stage) => {
+      const step = audit.find((item) => item.stage === stage);
+      return !!step && typeof step.durationMs === "number" &&
+        Number.isFinite(step.durationMs) && step.durationMs >= 0;
+    }), "diagnostic stages must expose finite, non-negative execution durations");
     names.push("accept semantically valid candidate and skip unnecessary repair");
   }
 
@@ -160,6 +175,8 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     const result = await service.execute({ ...request, inventory: inventory.inventory });
     assert(result.status === "rejected", "missing mandatory proposition assessment must reject candidate");
     assert(criticCalls === 0, "style critic must not run after the hard semantic gate fails");
+    assert(result.candidates[0]?.diagnosticSteps.some((step) => step.stage === "style-critic-repair" && step.status === "skipped"),
+      "diagnostics must explain that style repair was deliberately skipped after semantic failure");
     assert(result.candidates.length === 1 && !result.candidates[0].repaired, "semantically invalid candidate must remain unmodified");
     names.push("block style repair after mandatory semantic gate failure");
   }
