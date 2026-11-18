@@ -666,7 +666,7 @@ export function createStyleTransferRequestPreparer(
             !repair.expression.trim() || !sourceText.includes(repair.expression)) {
           throw new Error("Semantic relation-expression repair returned an ungrounded, duplicate or unexpected source quote; preparation stopped safely.");
         }
-        const proposition = normalizedExtraction.find((item) =>
+        const proposition = (normalizedExtraction as unknown[]).find((item: unknown) =>
           Boolean(item) && typeof item === "object" && !Array.isArray(item) &&
           (item as Record<string, unknown>).id === candidate.propositionId,
         ) as Record<string, unknown> | undefined;
