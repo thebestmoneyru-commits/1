@@ -4,6 +4,7 @@ import { buildSemanticInventory } from "../semantic/buildInventory";
 import { LOGICAL_RELATION_KINDS, validatePropositionExtraction } from "../semantic/propositionSchema";
 import { checkPropositionSourceCoverage } from "../semantic/propositionCoverage";
 import { validatePropositionInterpretationAudit } from "../semantic/propositionInterpretationAudit";
+import type { PropositionInterpretationIssue } from "../semantic/propositionInterpretationAudit";
 import { getLogicalRelationAuditKey, validateSemanticStructureAudit } from "../semantic/semanticStructureAudit";
 import {
   resolveVerbatimSpan,
@@ -756,6 +757,7 @@ export function createStyleTransferRequestPreparer(
       }
     }
 
+    let deferredLogicalRelationIssues: PropositionInterpretationIssue[] = [];
     if (options.interpretationAudit !== false) {
       if (signal?.aborted) throw new Error("Request preparation was cancelled.");
       const interpretationRoute = routes.semanticAudit ?? routes.semanticExtraction;
@@ -763,7 +765,7 @@ export function createStyleTransferRequestPreparer(
         "Проведи независимую проверку точности интерпретации каждой извлечённой пропозиции.",
         "Не проверяй только наличие цитаты: установи, действительно ли subject, predicate, object, polarity, modality, qualifications и attribution следуют из SOURCE TEXT.",
         "Не оценивай и не исправляй межпропозиционные logical relations на этом этапе. Их направление, тип и концы проверяются следующим отдельным Semantic structure audit, который может безопасно исправить подтверждённые relation-type и relation-inversion ошибки.",
-        "При проверке relations используй строго единую конвенцию: kind='cause' означает from=причина, to=следствие; kind='effect' означает from=следствие, to=причина. Например, если p3 является причиной p4, корректная запись — {kind:'cause',from:'p3',to:'p4'}, а не kind='effect' с теми же концами. Не объявляй связь ошибочной, не проверив одновременно смысл kind и направление обоих концов.",
+        "Не делай выводов о межпропозиционных связях на этом этапе; их проверяет отдельный структурный аудит.",
         "Ищи прежде всего ошибки, при которых правильный sourceSpan сопровождается неверным субъектом/действующим лицом, перепутанным объектом, неверной областью отрицания, повышением или ослаблением модальности, ошибочной атрибуцией чужих слов автору, подменой мнения фактом, неверным антецедентом местоимения, выдуманной причинностью, следствием, условием или временной последовательностью.",
         "Не считай парафраз ошибкой, если он точно передаёт смысл. Не используй внешние знания. Не исправляй пропозиции и не предлагай переписывание полей: только сообщай о конкретном несоответствии исходнику.",
         "Учитывай синтаксически общие члены предложения: при однородных дополнениях, однородных сказуемых и эллипсисе subject или predicate одной пропозиции может быть выражен один раз и относиться к нескольким фрагментам. Не объявляй поле отсутствующим только потому, что его буквальное выражение находится вне узкого sourceSpan, если оно явно присутствует в том же предложении SOURCE TEXT и синтаксически относится к данной пропозиции. Такие сомнительные замечания будут отдельно перепроверены.",
@@ -912,7 +914,7 @@ export function createStyleTransferRequestPreparer(
       }
       // Cross-proposition relations are handled by the dedicated structure audit below.
       // If that audit is disabled, keep relation findings blocking rather than dropping them.
-      const deferredLogicalRelationIssues = options.structureAudit === false
+      deferredLogicalRelationIssues = options.structureAudit === false
         ? []
         : interpretation.audit.issues.filter((issue) => issue.field === "logical-relation");
       let confirmedInterpretationIssues = interpretation.audit.issues.filter((issue) =>
