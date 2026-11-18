@@ -336,6 +336,20 @@ export class StyleTransferService {
           }
         }
 
+        diagnosticSteps.push({
+          stage: "semantic-restoration",
+          status: semanticRestorationApplied ? "completed"
+            : initial.semanticReport.passed || !hasRestorableDefects ? "skipped"
+            : "not-completed",
+          detail: semanticRestorationApplied
+            ? "Восстановление применено и повторно прошло проверку смысла."
+            : initial.semanticReport.passed
+              ? "Не запускалось: исходный кандидат уже сохранил смысл."
+              : !hasRestorableDefects
+                ? "Не запускалось: не обнаружено конкретных дефектов для безопасного восстановления."
+                : restorationWarnings.join(" ") || "Попытка восстановления не привела к принятому тексту.",
+        });
+
         const polishThreshold = request.criticPolishThreshold;
         const preCriticScore = currentEvaluation.styleReport.score ?? 0;
         const wasAcceptedBeforeCritic = currentEvaluation.disposition === "accepted";
@@ -345,6 +359,7 @@ export class StyleTransferService {
           preCriticScore < polishThreshold;
 
         if (wasAcceptedBeforeCritic && !needsCriticPolish) {
+          diagnosticSteps.push({ stage: "style-critic-repair", status: "skipped", detail: "Не запускалось: кандидат уже прошёл порог принятия; дополнительная полировка не требовалась." });
           outcomes.push({
             candidateId: candidate.candidateId,
             initial,
@@ -360,6 +375,7 @@ export class StyleTransferService {
 
         // Style critique is only allowed after semantic preservation has passed.
         if (!currentEvaluation.semanticReport.passed) {
+          diagnosticSteps.push({ stage: "style-critic-repair", status: "skipped", detail: "Не запускалось намеренно: обязательная проверка смысла не пройдена, поэтому стилистическая правка заблокирована." });
           outcomes.push({
             candidateId: candidate.candidateId,
             initial,
@@ -413,6 +429,11 @@ export class StyleTransferService {
             },
           });
           const finalEvaluation = pipeline.verification.after;
+          diagnosticSteps.push({
+            stage: "style-critic-repair",
+            status: pipeline.completed ? "completed" : "not-completed",
+            detail: "Этап критика/правки вызван. Правка применена: " + (pipeline.repairResult.applied ? "да" : "нет") + "; повторная проверка завершена: " + (pipeline.completed ? "да" : "нет") + ". " + pipeline.warnings.join(" "),
+          });
           const afterScore = finalEvaluation.styleReport.score ?? -1;
           const keepPreCriticAccepted =
             wasAcceptedBeforeCritic &&
@@ -451,6 +472,7 @@ export class StyleTransferService {
             }
           }
         } catch (error) {
+          diagnosticSteps.push({ stage: "style-critic-repair", status: "failed", detail: error instanceof Error ? error.message : "Неизвестная ошибка критика/правки." });
           outcomes.push({
             candidateId: candidate.candidateId, initial, finalText: currentText,
             finalEvaluation: currentEvaluation, repaired: semanticRestorationApplied,
