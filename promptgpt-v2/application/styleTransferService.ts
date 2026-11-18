@@ -11,7 +11,7 @@ import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
 import { DEFAULT_SEMANTIC_POLICY, type PropositionAssessment } from "../types";
 import type { LogicalRelationAssessment } from "../semantic/logicalRelationPreservation";
 import type {
-  CandidateOutcome, SemanticVerifier, StyleProfiler, StyleTransferRequest,
+  CandidateDiagnosticStep, CandidateOutcome, SemanticVerifier, StyleProfiler, StyleTransferRequest,
   StyleTransferResponse, TransferTraceEvent,
 } from "./applicationTypes";
 
@@ -127,6 +127,11 @@ export class StyleTransferService {
         for (const candidate of batch.candidates) {
         if (candidate.status !== "generated" || !candidate.text) continue;
         if (request.signal?.aborted) break;
+        const diagnosticSteps: CandidateDiagnosticStep[] = [{
+          stage: "candidate-generation",
+          status: "completed",
+          detail: "Модель создала текст кандидата: " + candidate.text.length + " символов.",
+        }];
         mark("evaluating-candidates", "Независимая семантическая и стилевая оценка.", candidate.candidateId);
         let assessments: PropositionAssessment[];
         let relationAssessments: LogicalRelationAssessment[];
@@ -195,6 +200,31 @@ export class StyleTransferService {
           initial.admissible = false;
           initial.rejectionReasons.push("Кандидат не сохранил исходную логическую структуру.");
         }
+
+        diagnosticSteps.push(
+          {
+            stage: "semantic-verification",
+            status: initial.semanticReport.passed ? "completed" : "failed",
+            detail: "Обязательные утверждения: " + initial.semanticReport.mandatoryPropositionsPreserved + "/" + initial.semanticReport.mandatoryPropositionsTotal + "; якоря: " + initial.semanticReport.requiredAnchorsFound + "/" + initial.semanticReport.requiredAnchorsTotal + ".",
+          },
+          {
+            stage: "logical-structure",
+            status: structureReport.passed ? "completed" : "failed",
+            detail: structureReport.passed ? "Логические отношения проверены: " + relationAssessments.length + "." : structureReport.issues.join(" "),
+          },
+          {
+            stage: "style-profiling",
+            status: "completed",
+            detail: "Профиль кандидата построен: " + profile.corpus.words + " слов, " + profile.corpus.sentences + " предложений, " + profile.features.length + " признаков; статус " + profile.status + ".",
+          },
+          {
+            stage: "style-scoring",
+            status: initial.styleReport.status === "scored" ? "completed" : "not-completed",
+            detail: initial.styleReport.status === "scored"
+              ? "Оценка " + initial.styleReport.score + "/100; уверенность " + initial.styleReport.confidence + "; сравнено признаков: " + initial.styleReport.comparisons.length + "."
+              : "Оценка не рассчитана: " + initial.styleReport.status + ". " + initial.styleReport.warnings.join(" "),
+          },
+        );
 
         let currentText = candidate.text;
         let currentAssessments = assessments;
