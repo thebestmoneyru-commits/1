@@ -45,6 +45,8 @@ interface MgtBenchWorkbenchProps {
   currentContentText?: string;
   currentDonorText?: string;
   embedded?: boolean;
+  initialText?: string;
+  onApplyScoreToMain?: (humanScore: number, aiScore: number, rawMetric: string) => void;
 }
 
 const SAMPLE_MGTBENCH_TEXT = `Furthermore, it is important to note that higher education plays a crucial role in shaping critical thinking. On the other hand, leveraging comprehensive methodologies underscores a multifaceted testament to intellectual growth. В рамках современной образовательной парадигмы следует отметить, что комплексный подход играет ключевую роль.`;
@@ -101,11 +103,13 @@ export function MgtBenchWorkbench({
   currentContentText = '',
   currentDonorText = '',
   embedded = false,
+  initialText = '',
+  onApplyScoreToMain,
 }: MgtBenchWorkbenchProps) {
   const [subTab, setSubTab] = useState<BenchSubTab>('detect');
 
   // 1. Detection state
-  const [inputText, setInputText] = useState<string>(() => currentDnaResult || currentContentText || SAMPLE_MGTBENCH_TEXT);
+  const [inputText, setInputText] = useState<string>(() => initialText || currentDnaResult || currentContentText || SAMPLE_MGTBENCH_TEXT);
   const [selectedMethods, setSelectedMethods] = useState<string[]>(() => MGTBENCH_METHODS.map((m) => m.id));
   const [cutTokenLength, setCutTokenLength] = useState<number>(-1);
   const [threshold, setThreshold] = useState<number>(0.5);
@@ -140,6 +144,17 @@ export function MgtBenchWorkbench({
   // 4. Catalog state
   const [catalogFilter, setCatalogFilter] = useState<'All' | 'Metric-based' | 'Model-based'>('All');
   const [catalogSearch, setCatalogSearch] = useState<string>('');
+
+  useEffect(() => {
+    if (initialText.trim()) setInputText(initialText);
+  }, [initialText]);
+
+  useEffect(() => {
+    if (!detectReport || !onApplyScoreToMain) return;
+    const humanScore = Number((detectReport.overallHumanProbability * 100).toFixed(1));
+    const aiScore = Number((detectReport.overallAiProbability * 100).toFixed(1));
+    onApplyScoreToMain(humanScore, aiScore, `${aiScore}% P(AI) · ${detectReport.flaggedCount}/${detectReport.totalRun}`);
+  }, [detectReport]);
 
   const refreshStats = async () => {
     try {
