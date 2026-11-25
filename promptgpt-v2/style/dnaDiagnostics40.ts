@@ -768,7 +768,7 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
     status: statusFromScore(p24Score),
     score: p24Score,
     diagnosis: commaNormalizedUp
-      ? "Текст «причёсан» по школьной норме запятых вопреки разрежённому донору."
+      ? "Текст «причёсан» по школьной норме запятых вопреки разрежённому донору. Орфографические и грамматические отклонения этим показателем не измеряются."
       : "Плотность запятых близка к донору; орфографические и грамматические отклонения этим показателем не измеряются.",
     codeHint: "promptgpt-v2/repair/surgicalRepair.ts и promptgpt-v2/repair/semanticRestoration.ts",
   });

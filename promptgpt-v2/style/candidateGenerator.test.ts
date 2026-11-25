@@ -138,7 +138,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   );
   names.push("multi-family Style DNA evidence and corpusProfile transfer");
 
-  const verboseSourceText = Array.from({ length: 4 }, () =>
+  const verboseSourceText = Array.from({ length: 6 }, () =>
     "В рамках сложной теоретической парадигмы смысл существования последовательно редуцируется к длинному процессу материального улучшения внешних условий бытия, где каждое отдельное явление выступает естественным следствием физических законов."
   ).join(" ");
   const shortDonorText = Array.from({ length: 18 }, () =>
