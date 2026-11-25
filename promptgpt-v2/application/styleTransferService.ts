@@ -11,6 +11,7 @@ import { evaluateCandidate, type CandidateEvaluationResult } from "../style/cand
 import { computeWordTrigramOverlap } from "../style/textOverlap";
 import { scoreStyleDNA } from "../style/styleDNAScorer";
 import { buildAdvancedDiagnostics } from "../style/advancedDiagnostics";
+import { buildDnaDiagnostics40 } from "../style/dnaDiagnostics40";
 import type { StageScoreDelta } from "../style/diagnosticsTypes";
 import { validateLogicalRelationAssessments } from "../semantic/logicalRelationPreservation";
 import { SEMANTIC_VERIFICATION_VERSION } from "../semantic/semanticPreservation";
@@ -1478,6 +1479,38 @@ export class StyleTransferService {
       const chosenScore = chosenOutcome?.finalEvaluation.styleReport.score ?? null;
       const chosenPrompt = chosenOutcome?.usedPrompt ?? stagePrompts[0]?.prompt;
 
+      // The 40-point report is informational: a diagnostics failure must never
+      // turn a valid generated result into a failed transfer.
+      let dnaDiagnostics40: StyleTransferResponse["dnaDiagnostics40"];
+      const donorText = request.donorBaseline.donorText;
+      if (bestAvailableText && typeof donorText === "string") {
+        try {
+          dnaDiagnostics40 = buildDnaDiagnostics40({
+            donorText,
+            sourceText: request.sourceText,
+            resultText: bestAvailableText,
+            styleIntensity: request.generation?.styleIntensity,
+            elapsedMs: totalDurationMs,
+            v2Response: {
+              status,
+              requestedModel: modelDiagnostics?.requestedModel,
+              usedModel: modelDiagnostics?.usedModel,
+              fallbackOccurred: modelDiagnostics?.fallbackOccurred,
+              selectedCandidateId: selected?.candidateId,
+              bestAvailableCandidateId,
+              totalDurationMs,
+              warnings: [...new Set(warnings)],
+              candidates: outcomes,
+            },
+          });
+        } catch (diagnosticError) {
+          const detail = diagnosticError instanceof Error ? diagnosticError.message : "Неизвестная ошибка.";
+          warnings.push("Не удалось рассчитать 40-параметрическую диагностику Style DNA: " + detail);
+        }
+      } else if (bestAvailableText) {
+        warnings.push("40-параметрическая диагностика Style DNA недоступна: донорский текст не сохранён в baseline.");
+      }
+
       const historyEntry: PromptResultHistoryEntry | undefined = bestAvailableText
         ? {
             id: `hist-${request.requestId}-${this.now()}`,
@@ -1514,6 +1547,7 @@ export class StyleTransferService {
         donorBaselineId: baselineId,
         generation,
         candidates: outcomes,
+        ...(dnaDiagnostics40 ? { dnaDiagnostics40 } : {}),
         trace,
         warnings: [...new Set(warnings)],
       };
