@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import type { IncomingHttpHeaders } from "node:http";
-import { request as httpsRequest, type RequestOptions } from "node:https";
+import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type RequestOptions as HttpRequestOptions } from "node:http";
+import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { validateRemoteEndpoint } from "./remoteEndpointPolicy";
 
 export interface SafeRemotePostOptions {
@@ -13,6 +13,7 @@ export interface SafeRemotePostOptions {
   maxRequestBytes?: number;
   maxResponseBytes?: number;
   signal?: AbortSignal;
+  requiredPath?: string;
 }
 export interface SafeRemotePostResult {
   statusCode: number;
@@ -126,7 +127,7 @@ export async function safePostJsonToRemote(
   }
   if (options.signal?.aborted) throw new Error("Remote request was cancelled before dispatch.");
 
-  const validated = validateRemoteEndpoint(options.remoteOrigin, { allowedOrigins: options.allowedOrigins });
+  const validated = validateRemoteEndpoint(options.remoteOrigin, { allowedOrigins: options.allowedOrigins, requiredPath: options.requiredPath ?? "/api/analyze" });
   const url = new URL(validated.endpoint);
   const startedAt = Date.now();
   const hostname = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
@@ -160,7 +161,7 @@ export async function safePostJsonToRemote(
   const pinnedLookup = ((_: string, lookupOptions: { all?: boolean }, callback: (...args: unknown[]) => void) => {
     if (lookupOptions?.all) callback(null, [{ address: pinned.address, family: pinned.family }]);
     else callback(null, pinned.address, pinned.family);
-  }) as unknown as RequestOptions["lookup"];
+  }) as unknown as HttpsRequestOptions["lookup"];
 
   return new Promise<SafeRemotePostResult>((resolve, reject) => {
     let settled = false;
@@ -241,4 +242,186 @@ export async function safePostJsonToRemote(
     });
     request.end(options.jsonBody);
   });
+}
+
+
+export interface SafePublicGetOptions {
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  maxRedirects?: number;
+  signal?: AbortSignal;
+}
+
+export interface SafePublicGetResult {
+  finalUrl: string;
+  statusCode: number;
+  headers: IncomingHttpHeaders;
+  body: string;
+  pinnedAddress: string;
+}
+
+/**
+ * Fetches a public HTTP(S) page without a DNS-rebinding window. Every redirect
+ * is independently validated and pinned; response bytes and request time are bounded.
+ */
+export async function safeGetPublicUrl(
+  rawUrl: string,
+  options: SafePublicGetOptions = {},
+): Promise<SafePublicGetResult> {
+  const timeoutMs = Math.max(1000, Math.min(60_000, options.timeoutMs ?? 15_000));
+  const maxResponseBytes = Math.max(1, Math.min(5_000_000, options.maxResponseBytes ?? 5_000_000));
+  const maxRedirects = Math.max(0, Math.min(5, options.maxRedirects ?? 3));
+  const startedAt = Date.now();
+  let current: URL;
+  try {
+    current = new URL(rawUrl.trim());
+  } catch {
+    throw new Error("A valid absolute HTTP(S) URL is required.");
+  }
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    if (options.signal?.aborted) throw new Error("Public URL request was cancelled.");
+    if (current.protocol !== "http:" && current.protocol !== "https:") {
+      throw new Error("Only HTTP and HTTPS public URLs are permitted.");
+    }
+    if (current.username || current.password) throw new Error("Credentials in public URLs are forbidden.");
+    if (current.port) throw new Error("Non-standard public URL ports are forbidden.");
+
+    const hostname = current.hostname.startsWith("[") && current.hostname.endsWith("]")
+      ? current.hostname.slice(1, -1)
+      : current.hostname.toLowerCase();
+    if (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal") ||
+      hostname.endsWith(".home.arpa") ||
+      hostname.endsWith(".test") ||
+      hostname.endsWith(".invalid")
+    ) {
+      throw new Error("Local and reserved hostnames are forbidden.");
+    }
+
+    const remainingBeforeDns = timeoutMs - (Date.now() - startedAt);
+    if (remainingBeforeDns <= 0) throw new Error("Public URL request timed out.");
+    let dnsTimer: ReturnType<typeof setTimeout> | undefined;
+    let pinned: { address: string; family: 4 | 6 };
+    try {
+      const dnsTimeout = new Promise<never>((_, reject) => {
+        dnsTimer = setTimeout(() => reject(new Error("DNS resolution timed out.")), remainingBeforeDns);
+      });
+      pinned = await Promise.race([
+        resolvePinnedPublicAddress(hostname),
+        dnsTimeout,
+      ]);
+    } finally {
+      if (dnsTimer) clearTimeout(dnsTimer);
+    }
+
+    const remaining = timeoutMs - (Date.now() - startedAt);
+    if (remaining <= 0) throw new Error("Public URL request timed out during DNS resolution.");
+    const lookup = ((_: string, lookupOptions: { all?: boolean }, callback: (...args: unknown[]) => void) => {
+      if (lookupOptions?.all) callback(null, [{ address: pinned.address, family: pinned.family }]);
+      else callback(null, pinned.address, pinned.family);
+    }) as unknown as HttpRequestOptions["lookup"] & HttpsRequestOptions["lookup"];
+
+    const response = await new Promise<{ statusCode: number; headers: IncomingHttpHeaders; body: string }>((resolve, reject) => {
+      let settled = false;
+      let receivedBytes = 0;
+      const chunks: Buffer[] = [];
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let request: ReturnType<typeof httpRequest> | ReturnType<typeof httpsRequest>;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onAbort);
+      };
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const onAbort = () => request.destroy(new Error("Public URL request was cancelled."));
+      const onResponse = (incoming: IncomingMessage) => {
+        const encoding = String(incoming.headers["content-encoding"] ?? "identity").toLowerCase();
+        if (encoding !== "identity") {
+          incoming.destroy();
+          fail(new Error("Compressed public URL responses are not accepted."));
+          return;
+        }
+        const declaredLength = Number(incoming.headers["content-length"] ?? 0);
+        if (declaredLength > maxResponseBytes) {
+          incoming.destroy();
+          fail(new Error("Public URL response exceeds the configured byte limit."));
+          return;
+        }
+        incoming.on("data", (chunk: Buffer | string) => {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          receivedBytes += buffer.length;
+          if (receivedBytes > maxResponseBytes) {
+            incoming.destroy(new Error("Public URL response exceeded the streaming byte limit."));
+            return;
+          }
+          chunks.push(buffer);
+        });
+        incoming.on("error", fail);
+        incoming.on("aborted", () => fail(new Error("Public URL response was aborted.")));
+        incoming.on("end", () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve({
+            statusCode: incoming.statusCode ?? 0,
+            headers: incoming.headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      };
+
+      const headers = {
+        "user-agent": "PROMPTGPT-SafeFetcher/1.0",
+        accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+        "accept-encoding": "identity",
+        connection: "close",
+      };
+      if (current.protocol === "https:") {
+        request = httpsRequest(current, {
+          method: "GET",
+          headers,
+          lookup,
+          servername: isIP(hostname) ? undefined : hostname,
+          rejectUnauthorized: true,
+        } as HttpsRequestOptions, onResponse);
+      } else {
+        request = httpRequest(current, {
+          method: "GET",
+          headers,
+          lookup,
+        } as HttpRequestOptions, onResponse);
+      }
+      timer = setTimeout(() => request.destroy(new Error("Public URL request timed out.")), remaining);
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      request.on("error", fail);
+      request.end();
+    });
+
+    if (response.statusCode >= 300 && response.statusCode < 400) {
+      const location = response.headers.location;
+      if (!location) throw new Error(`Public URL redirect ${response.statusCode} has no Location header.`);
+      if (hop === maxRedirects) throw new Error("Too many redirects while fetching public URL.");
+      current = new URL(String(location), current);
+      continue;
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(`Public URL returned HTTP ${response.statusCode}.`);
+    }
+    return {
+      finalUrl: current.toString(),
+      statusCode: response.statusCode,
+      headers: response.headers,
+      body: response.body,
+      pinnedAddress: pinned.address,
+    };
+  }
+  throw new Error("Too many redirects while fetching public URL.");
 }
