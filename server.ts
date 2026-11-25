@@ -2374,7 +2374,7 @@ app.post('/api/sloptotal/analyze', legacyAnalysisRateLimit, async (req, res) => 
     }
 
     if (typeof remoteUrl === 'string' && remoteUrl.trim()) {
-      const cleanRemote = remoteUrl.trim().replace(/\\/+$/, '');
+      const cleanRemote = remoteUrl.trim().replace(/\/+$/, '');
       try {
         const remoteData = await postConfiguredRemoteJson(
           cleanRemote,
@@ -2683,7 +2683,7 @@ app.post('/api/mgt-eval/detect', legacyAnalysisRateLimit, async (req, res) => {
           : null;
 
     if (typeof remoteUrl === 'string' && remoteUrl.trim()) {
-      const cleanRemote = remoteUrl.trim().replace(/\\/+$/, '');
+      const cleanRemote = remoteUrl.trim().replace(/\/+$/, '');
       try {
         const remoteData = await postConfiguredRemoteJson(
           cleanRemote,
