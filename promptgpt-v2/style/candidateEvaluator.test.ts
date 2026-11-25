@@ -33,7 +33,7 @@ export function runCandidateEvaluatorSelfTests(): { passed: number; names: strin
     propositionAssessments: [],
     donorBaseline: baseline,
     candidateProfile: profile(outputText),
-  });
+  }, { requireStyleTransfer: true });
   assert(accepted.disposition === "rejected" && !accepted.admissible,
     "a near-verbatim candidate must not be accepted even when its meaning and donor profile match");
   assert(accepted.rejectionReasons.some((reason) => reason.includes("почти дословно")),
