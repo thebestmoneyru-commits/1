@@ -3052,7 +3052,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Ключ доступа (опционально)</label>
+                  <label className="block text-[11px] text-slate-400 mb-1">Ключ доступа PROMPTGPT v2 (обязателен)</label>
                   <input
                     type="password"
                     value={v2AccessKey}
