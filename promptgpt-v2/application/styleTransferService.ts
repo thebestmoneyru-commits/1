@@ -669,9 +669,8 @@ export class StyleTransferService {
               candidateProfile: profile,
             },
             {
-              minimumStyleScore: Math.max(76, request.minimumStyleScore ?? 76),
+              minimumStyleScore: request.minimumStyleScore,
               minimumStyleConfidence: request.minimumStyleConfidence,
-              requireStyleTransfer: request.requireStyleTransfer !== false,
               semanticPolicy: request.semanticPolicy,
             },
           );
@@ -782,7 +781,7 @@ export class StyleTransferService {
               semanticReport: currentEvaluation.semanticReport,
               donorBaseline: request.donorBaseline,
             });
-            for (let restorationAttempt = 1; restorationAttempt <= 2; restorationAttempt++) {
+            for (let restorationAttempt = 1; restorationAttempt <= 1; restorationAttempt++) {
               const rAt = this.now();
               try {
                 const restoredText = (
@@ -882,9 +881,8 @@ export class StyleTransferService {
                       candidateProfile: restoredProfile,
                     },
                     {
-                      minimumStyleScore: Math.max(76, request.minimumStyleScore ?? 76),
+                      minimumStyleScore: request.minimumStyleScore,
                       minimumStyleConfidence: request.minimumStyleConfidence,
-                      requireStyleTransfer: request.requireStyleTransfer !== false,
                       semanticPolicy: request.semanticPolicy,
                     },
                   );
@@ -977,7 +975,7 @@ export class StyleTransferService {
             durationMs: semanticRestorationDurationMs,
           });
 
-          const polishThreshold = request.criticPolishThreshold;
+          const polishThreshold = request.criticPolishThreshold ?? 70;
           const preCriticScore = currentEvaluation.styleReport.score ?? 0;
           const wasAcceptedBeforeCritic = currentEvaluation.disposition === "accepted";
           const needsCriticPolish =
@@ -1147,9 +1145,8 @@ export class StyleTransferService {
                 repair: request.repair,
                 verification: {
                   ...request.verification,
-                  minimumStyleScore: Math.max(76, request.minimumStyleScore ?? request.verification?.minimumStyleScore ?? 76),
+                  minimumStyleScore: request.minimumStyleScore ?? request.verification?.minimumStyleScore,
                   minimumStyleConfidence: request.minimumStyleConfidence ?? request.verification?.minimumStyleConfidence,
-                  requireStyleTransfer: request.requireStyleTransfer !== false,
                 },
               },
             );

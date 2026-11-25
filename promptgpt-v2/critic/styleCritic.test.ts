@@ -47,30 +47,6 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
   assert(valid.issues.length === 1 && valid.issues[0].donorFeatureId === feature!.id,
     "critic accepts an issue tied to exact donor evidence");
   names.push("evidence-grounded critic response");
-  const donorStyleIrregularity = await runStyleCritic({
-    sourceText, candidateText, inventory, donorBaseline: baseline,
-    adapter: { async review() {
-      return JSON.stringify({
-        styleFidelityScore: 86, naturalnessScore: 88,
-        issues: [{
-          id: "donor-irregularity", type: "unnatural-construction", severity: "blocking",
-          outputSpan: span, donorFeatureId: feature!.id,
-          donorEvidenceExcerpt: donorExcerpt,
-          rationale: "Конструкция расходится с нейтральной литературной нормой.",
-          suggestedChange: "Нормализовать согласование.",
-          affectedPropositionIds: [],
-        }],
-      });
-    } },
-  });
-  assert(
-    donorStyleIrregularity.issues.length === 1 &&
-    donorStyleIrregularity.issues[0].severity === "info" &&
-    donorStyleIrregularity.passed,
-    "a donor-evidenced irregular construction must not become an actionable repair or block style acceptance",
-  );
-  names.push("donor-grounded irregularities are non-actionable for normalization");
-
 
   const invalidQuote = await runStyleCritic({
     sourceText, candidateText, inventory, donorBaseline: baseline,

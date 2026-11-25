@@ -243,6 +243,83 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
     features.push(feature(`tracked.${phrase}`,"lexical",`Заданный маркер: «${phrase}»`,positions.length,nWords,"per-1000-words",corpusConfidence,positions.length,examples,"Маркер задан явно; его наличие не означает, что его нужно механически добавлять.",1000));
   }
 
+
+  // Authorial quirks & anomalies (proportionally tracked per 1000 words / per sentence)
+  const missingSpaceAfterPunctCount = countPattern(text, /[.,!?;:][\p{L}\p{N}]/gu);
+  const spaceBeforeCommaCount = countPattern(text, /\s+[,;]/gu);
+  const adjacentWordRepeatCount = (() => {
+    let repeats = 0;
+    for (let i = 1; i < words.length; i++) {
+      if (words[i].length >= 3 && words[i] === words[i - 1]) repeats++;
+    }
+    return repeats;
+  })();
+  const nearbyWindowRepeatCount = (() => {
+    let repeats = 0;
+    const window = 6;
+    for (let i = 0; i < words.length; i++) {
+      if (words[i].length < 5 || COMMON_FUNCTION_WORDS.has(words[i])) continue;
+      for (let j = i + 1; j <= Math.min(words.length - 1, i + window); j++) {
+        if (words[i] === words[j]) {
+          repeats++;
+          break;
+        }
+      }
+    }
+    return repeats;
+  })();
+  const punctuationQuirkSentences = sentences.filter((s) =>
+    /[.,!?;:][\p{L}\p{N}]|\s+[,;]/u.test(s.text),
+  );
+  features.push(
+    feature(
+      "syntax.punctuation-quirks",
+      "syntax",
+      "Пунктуационные шероховатости и сбои пробелов",
+      punctuationQuirkSentences.length,
+      nSent,
+      "share",
+      corpusConfidence,
+      punctuationQuirkSentences.length,
+      evidenceFor(punctuationQuirkSentences, config.maxEvidencePerFeature),
+      "Доля предложений с нестандартной постановкой знаков препинания или пробелов вокруг них.",
+      1,
+    ),
+  );
+  features.push(
+    feature(
+      "lexical.adjacent-repeat",
+      "lexical",
+      "Смежные повторы слов (тавтология/опечатки)",
+      adjacentWordRepeatCount,
+      nWords,
+      "per-1000-words",
+      corpusConfidence,
+      adjacentWordRepeatCount,
+      [],
+      "Частота подряд идущих одинаковых слов на 1000 слов.",
+      1000,
+    ),
+  );
+  features.push(
+    feature(
+      "lexical.nearby-repeat",
+      "lexical",
+      "Ближние повторы знаменательных слов",
+      nearbyWindowRepeatCount,
+      nWords,
+      "per-1000-words",
+      corpusConfidence,
+      nearbyWindowRepeatCount,
+      [],
+      "Частота повтора знаменательных слов в пределах 6 слов на 1000 слов.",
+      1000,
+    ),
+  );
+  if (missingSpaceAfterPunctCount + spaceBeforeCommaCount > 0) {
+    warnings.push("Зафиксированы пунктуационные или пробельные отклонения в тексте; учитываются как элемент манеры при переносе ДНК.");
+  }
+
   if (stats.words < config.minWordsForReliableProfile) warnings.push(`Мало слов: ${stats.words}; надёжный профиль требует около ${config.minWordsForReliableProfile}.`);
   if (stats.sentences < config.minSentencesForReliableProfile) warnings.push(`Мало предложений: ${stats.sentences}; надёжная оценка требует около ${config.minSentencesForReliableProfile}.`);
   if (!stats.paragraphs) warnings.push("Текст не содержит анализируемых абзацев.");

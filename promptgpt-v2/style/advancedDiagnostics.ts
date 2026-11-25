@@ -87,6 +87,16 @@ export function buildAdvancedDiagnostics(
   for (const [key, value] of Object.entries(input.latency ?? {})) {
     metrics[`latency_${key}`] = typeof value === "number" && Number.isFinite(value) ? value : null;
   }
+  if (input.candidateProfile?.features) {
+    const quirkMap = new Map(
+      input.candidateProfile.features
+        .filter((f) => f.id === "syntax.punctuation-quirks" || f.id === "lexical.adjacent-repeat" || f.id === "lexical.nearby-repeat")
+        .map((f) => [f.id, Number(f.rate.toFixed(3))]),
+    );
+    metrics.quirkPunctuationShare = quirkMap.get("syntax.punctuation-quirks") ?? 0;
+    metrics.adjacentWordRepeatPer1k = quirkMap.get("lexical.adjacent-repeat") ?? 0;
+    metrics.nearbyWordRepeatPer1k = quirkMap.get("lexical.nearby-repeat") ?? 0;
+  }
   if (input.stageDeltas) {
     metrics.stageDeltaCount = input.stageDeltas.length;
     metrics.stageRepairsApplied = input.stageDeltas.filter((item) => item.repaired).length;

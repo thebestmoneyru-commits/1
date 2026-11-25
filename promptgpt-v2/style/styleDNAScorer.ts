@@ -221,7 +221,14 @@ export function scoreStyleDNA(
     const reliability = featureReliability(donorFeature) * (candidateFeature ? featureReliability(candidateFeature) : clamp(candidate.confidence));
     const tolerance = toleranceFor(donorFeature, donorValue, options, minCorpusWords, minCorpusSentences);
     const similarity = similarityFor(donorValue, candidateValue, tolerance, options.penaltyExponent);
-    const passiveFactor = bothZero ? 0.15 : 1;
+    const isDonorQuirkOrRepeat =
+      id === "syntax.punctuation-quirks" ||
+      id === "lexical.adjacent-repeat" ||
+      id === "lexical.nearby-repeat";
+    const isConnectorOrSyntax = id.startsWith("connectors.") || id.startsWith("syntax.");
+    const quirkBonus = isDonorQuirkOrRepeat && donorValue > 0 && similarity >= 0.65 ? 1.2 : 1;
+    const syntaxAlignmentBonus = isConnectorOrSyntax && similarity >= 0.72 ? 1.1 : 1;
+    const passiveFactor = (bothZero ? 0.15 : 1) * quirkBonus * syntaxAlignmentBonus;
     const weight = (options.familyWeights[donorFeature.family] ?? 0) * featureWeight(donorFeature) * passiveFactor;
     comparisons.push({
       featureId: id, family: donorFeature.family, label: donorFeature.label,

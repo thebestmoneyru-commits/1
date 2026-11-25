@@ -360,11 +360,10 @@ export function createRouterAdapters(
         const sourceText = extractSourceTextFromCandidatePrompt(prompt);
         if (!sourceText || sourceText.length < 120) return firstDraft;
         const firstOverlap = computeWordTrigramOverlap(sourceText, firstDraft);
-        // Normal candidates stay one-pass. Only near-verbatim drafts receive
-        // one bounded rewrite, regardless of candidate index; this prevents a
-        // later candidate from bypassing the anti-copy recovery path.
-        const overlapThreshold = 0.82;
-        if (firstOverlap < overlapThreshold) return firstDraft;
+        // Avoid multiplying model calls for every candidate: only candidate 1
+        // may receive one extra pass, and only for substantial copied passages.
+        const overlapThreshold = 0.55;
+        if (candidateIndex !== 0 || firstOverlap < overlapThreshold) return firstDraft;
 
         options.onModelNote?.(
           `Кандидат ${candidateIndex + 1}: обнаружено дословное совпадение с исходником (${Math.round(firstOverlap * 100)}%); запускается глубокая синтаксическая пересборка под стиль донора.`,
@@ -382,9 +381,8 @@ export function createRouterAdapters(
           });
           if (!rewritten.trim()) return firstDraft;
           const rewrittenOverlap = computeWordTrigramOverlap(sourceText, rewritten);
-          const reasonableLength = rewritten.trim().length >= sourceText.trim().length * 0.72;
-          const meaningfulImprovement = rewrittenOverlap <= firstOverlap - 0.10;
-          if (reasonableLength && meaningfulImprovement) {
+          const reasonableLength = rewritten.trim().length >= sourceText.trim().length * 0.45;
+          if (reasonableLength && rewrittenOverlap < firstOverlap) {
             return rewritten;
           }
         } catch {

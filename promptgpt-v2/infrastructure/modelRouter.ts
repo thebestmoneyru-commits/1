@@ -114,9 +114,9 @@ interface ModelState {
 }
 
 const DEFAULT_COOLDOWNS: Record<ModelErrorKind, number> = {
-  "rate-limit": 20_000,
+  "rate-limit": 8_000,
   "quota-exhausted": 5 * 60_000,
-  timeout: 5_000,
+  timeout: 2_000,
   "queue-timeout": 0,
   "queue-full": 0,
   "no-eligible-model": 0,
@@ -132,9 +132,9 @@ const DEFAULT_COOLDOWNS: Record<ModelErrorKind, number> = {
   cancelled: 0,
 };
 
-const MAX_ATTEMPTS = 4;
-const MAX_INLINE_RETRY_DELAY_MS = 22_000;
-const MAX_COOLDOWN_WAIT_MS = 22_000;
+const MAX_ATTEMPTS = 3;
+const MAX_INLINE_RETRY_DELAY_MS = 8_000;
+const MAX_COOLDOWN_WAIT_MS = 8_000;
 
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;

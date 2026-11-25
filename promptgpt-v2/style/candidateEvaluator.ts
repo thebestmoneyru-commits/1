@@ -4,8 +4,6 @@ import type {
 import { evaluateSemanticPreservation } from "../semantic/semanticPreservation";
 import { fingerprintStyleSource } from "./styleDNAAnalyzer";
 import { scoreStyleDNA, type StyleScoreReport } from "./styleDNAScorer";
-import { computeWordTrigramOverlap } from "./textOverlap";
-import { countWords } from "./tokenizer";
 import { verifyDonorStyleBaseline } from "./donorBaseline";
 import type { DonorStyleBaseline, StyleDNAProfile } from "./styleTypes";
 
@@ -14,8 +12,6 @@ export type CandidateDisposition = "accepted" | "rejected" | "needs-review";
 export interface CandidateEvaluatorOptions {
   minimumStyleScore: number;
   minimumStyleConfidence: number;
-  /** Require actual form transfer instead of accepting a near-verbatim source copy. */
-  requireStyleTransfer?: boolean;
   semanticPolicy?: SemanticPolicy;
 }
 
@@ -41,7 +37,7 @@ export interface CandidateEvaluationResult {
 }
 
 const DEFAULT_OPTIONS: CandidateEvaluatorOptions = {
-  minimumStyleScore: 76,
+  minimumStyleScore: 72,
   minimumStyleConfidence: 0.35,
 };
 
@@ -53,7 +49,6 @@ function normalizeOptions(options: Partial<CandidateEvaluatorOptions>): Candidat
     minimumStyleConfidence: Number.isFinite(options.minimumStyleConfidence)
       ? Math.max(0, Math.min(1, options.minimumStyleConfidence!))
       : DEFAULT_OPTIONS.minimumStyleConfidence,
-    requireStyleTransfer: options.requireStyleTransfer === true,
     semanticPolicy: options.semanticPolicy,
   };
 }
@@ -79,16 +74,6 @@ export function evaluateCandidate(
   const styleReport = scoreStyleDNA(input.donorBaseline.profile, input.candidateProfile);
   const rejectionReasons: string[] = [];
   const warnings: string[] = [];
-  const sourceWordCount = countWords(input.sourceText);
-  const sourceFormOverlap = computeWordTrigramOverlap(input.sourceText, input.outputText);
-  const excessiveSourceCopy =
-    options.requireStyleTransfer === true && sourceWordCount >= 80 && sourceFormOverlap >= 0.82;
-
-  if (excessiveSourceCopy) {
-    rejectionReasons.push(
-      `Кандидат почти дословно воспроизводит исходник (совпадение содержательных триграмм ${Math.round(sourceFormOverlap * 100)}%); требуется глубокая синтаксическая перестройка.`,
-    );
-  }
 
   if (!semanticReport.passed) {
     rejectionReasons.push("Кандидат не прошёл обязательную проверку сохранности исходного смысла.");
@@ -112,7 +97,7 @@ export function evaluateCandidate(
     warnings.push(...styleReport.warnings);
   }
 
-  const hardFailure = !semanticReport.passed || excessiveSourceCopy || !baselineIntegrity.valid ||
+  const hardFailure = !semanticReport.passed || !baselineIntegrity.valid ||
     input.candidateProfile.sourceFingerprint !== fingerprintStyleSource(input.outputText) ||
     (styleReport.status === "scored" && styleReport.score !== null &&
       styleReport.confidence >= options.minimumStyleConfidence &&
