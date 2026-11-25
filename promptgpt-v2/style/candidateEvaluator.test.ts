@@ -45,15 +45,15 @@ export function runCandidateEvaluatorSelfTests(): { passed: number; names: strin
   const shortDonorBaseline = createDonorStyleBaseline(shortDonorProfile, shortDonorText);
   assert(shortDonorBaseline.ok && !!shortDonorBaseline.baseline, "short donor baseline is available");
   const shortSource = "В 1912 году автор описал событие.";
-  const shortOutput = "Автор описал событие в 1912 году.";
+  const shortDonorOutput = "Автор описал событие в 1912 году.";
   const shortDonorEvaluation = evaluateCandidate({
     candidateId: "short-donor",
     sourceText: shortSource,
-    outputText: shortOutput,
+    outputText: shortDonorOutput,
     inventory: buildFactInventory(shortSource),
     propositionAssessments: [],
     donorBaseline: shortDonorBaseline.baseline!,
-    candidateProfile: profile(shortOutput),
+    candidateProfile: profile(shortDonorOutput),
   });
   assert(shortDonorEvaluation.disposition === "accepted",
     "a short donor may lower style confidence but must not block semantically verified output");
