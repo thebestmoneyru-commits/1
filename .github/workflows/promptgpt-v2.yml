@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "promptgpt-v2/**"
+      - "shared/**"
       - "server.ts"
       - "src/**"
       - ".env.example"
