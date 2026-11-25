@@ -16,6 +16,7 @@ on:
   pull_request:
     paths:
       - "promptgpt-v2/**"
+      - "shared/**"
       - "server.ts"
       - "src/**"
       - ".env.example"
