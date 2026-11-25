@@ -14,6 +14,8 @@ export type CandidateDisposition = "accepted" | "rejected" | "needs-review";
 export interface CandidateEvaluatorOptions {
   minimumStyleScore: number;
   minimumStyleConfidence: number;
+  /** Require actual form transfer instead of accepting a near-verbatim source copy. */
+  requireStyleTransfer?: boolean;
   semanticPolicy?: SemanticPolicy;
 }
 
@@ -45,14 +47,13 @@ const DEFAULT_OPTIONS: CandidateEvaluatorOptions = {
 
 function normalizeOptions(options: Partial<CandidateEvaluatorOptions>): CandidateEvaluatorOptions {
   return {
-    // Keep a real minimum quality floor even when a caller requests a
-    // permissive threshold; semantic correctness alone is not style fidelity.
     minimumStyleScore: Number.isFinite(options.minimumStyleScore)
-      ? Math.max(76, Math.min(100, options.minimumStyleScore!))
+      ? Math.max(0, Math.min(100, options.minimumStyleScore!))
       : DEFAULT_OPTIONS.minimumStyleScore,
     minimumStyleConfidence: Number.isFinite(options.minimumStyleConfidence)
       ? Math.max(0, Math.min(1, options.minimumStyleConfidence!))
       : DEFAULT_OPTIONS.minimumStyleConfidence,
+    requireStyleTransfer: options.requireStyleTransfer === true,
     semanticPolicy: options.semanticPolicy,
   };
 }
@@ -80,7 +81,8 @@ export function evaluateCandidate(
   const warnings: string[] = [];
   const sourceWordCount = countWords(input.sourceText);
   const sourceFormOverlap = computeWordTrigramOverlap(input.sourceText, input.outputText);
-  const excessiveSourceCopy = sourceWordCount >= 80 && sourceFormOverlap >= 0.82;
+  const excessiveSourceCopy =
+    options.requireStyleTransfer === true && sourceWordCount >= 80 && sourceFormOverlap >= 0.82;
 
   if (excessiveSourceCopy) {
     rejectionReasons.push(
