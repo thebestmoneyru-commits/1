@@ -21,6 +21,8 @@ export interface RepairVerificationOptions {
   minimumStyleScore: number;
   minimumStyleConfidence: number;
   allowedStyleRegression: number;
+  /** Apply the anti-verbatim gate only when this repair belongs to a style-transfer run. */
+  requireStyleTransfer?: boolean;
 }
 export interface RepairVerificationReport {
   passed: boolean;
@@ -44,6 +46,7 @@ function normalizeOptions(input: Partial<RepairVerificationOptions>): RepairVeri
     minimumStyleScore: bounded(input.minimumStyleScore, DEFAULT_OPTIONS.minimumStyleScore, 0, 100),
     minimumStyleConfidence: bounded(input.minimumStyleConfidence, DEFAULT_OPTIONS.minimumStyleConfidence, 0, 1),
     allowedStyleRegression: bounded(input.allowedStyleRegression, DEFAULT_OPTIONS.allowedStyleRegression, 0, 10),
+    requireStyleTransfer: input.requireStyleTransfer === true,
   };
 }
 
@@ -73,6 +76,7 @@ export function verifyRepairedCandidate(
   const evaluationOptions = {
     minimumStyleScore: options.minimumStyleScore,
     minimumStyleConfidence: options.minimumStyleConfidence,
+    requireStyleTransfer: options.requireStyleTransfer,
     semanticPolicy: input.semanticPolicy,
   };
   const before = evaluateCandidate({

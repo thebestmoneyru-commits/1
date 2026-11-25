@@ -33,18 +33,27 @@ export function runCandidateEvaluatorSelfTests(): { passed: number; names: strin
     propositionAssessments: [],
     donorBaseline: baseline,
     candidateProfile: profile(outputText),
-  });
-  assert(accepted.disposition === "accepted" && accepted.admissible, "semantically preserved matching candidate is admissible");
-  names.push("semantic-first successful admission");
+  }, { requireStyleTransfer: true });
+  assert(accepted.disposition === "rejected" && !accepted.admissible,
+    "a near-verbatim candidate must not be accepted even when its meaning and donor profile match");
+  assert(accepted.rejectionReasons.some((reason) => reason.includes("почти дословно")),
+    "near-verbatim rejection must explain the source-form overlap");
+  names.push("near-verbatim source-copy quality gate");
 
   const shortDonorText = "Слишком короткий текст.";
   const shortDonorProfile = analyzeStyleDNA(shortDonorText);
   const shortDonorBaseline = createDonorStyleBaseline(shortDonorProfile, shortDonorText);
   assert(shortDonorBaseline.ok && !!shortDonorBaseline.baseline, "short donor baseline is available");
+  const shortSource = "В 1912 году автор описал событие.";
+  const shortDonorOutput = "Автор описал событие в 1912 году.";
   const shortDonorEvaluation = evaluateCandidate({
-    candidateId: "short-donor", sourceText, outputText, inventory,
-    propositionAssessments: [], donorBaseline: shortDonorBaseline.baseline!,
-    candidateProfile: profile(outputText),
+    candidateId: "short-donor",
+    sourceText: shortSource,
+    outputText: shortDonorOutput,
+    inventory: buildFactInventory(shortSource),
+    propositionAssessments: [],
+    donorBaseline: shortDonorBaseline.baseline!,
+    candidateProfile: profile(shortDonorOutput),
   });
   assert(shortDonorEvaluation.disposition === "accepted",
     "a short donor may lower style confidence but must not block semantically verified output");

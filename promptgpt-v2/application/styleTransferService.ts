@@ -669,8 +669,9 @@ export class StyleTransferService {
               candidateProfile: profile,
             },
             {
-              minimumStyleScore: request.minimumStyleScore,
+              minimumStyleScore: Math.max(76, request.minimumStyleScore ?? 76),
               minimumStyleConfidence: request.minimumStyleConfidence,
+              requireStyleTransfer: request.requireStyleTransfer !== false,
               semanticPolicy: request.semanticPolicy,
             },
           );
@@ -881,8 +882,9 @@ export class StyleTransferService {
                       candidateProfile: restoredProfile,
                     },
                     {
-                      minimumStyleScore: request.minimumStyleScore,
+                      minimumStyleScore: Math.max(76, request.minimumStyleScore ?? 76),
                       minimumStyleConfidence: request.minimumStyleConfidence,
+                      requireStyleTransfer: request.requireStyleTransfer !== false,
                       semanticPolicy: request.semanticPolicy,
                     },
                   );
@@ -1145,8 +1147,9 @@ export class StyleTransferService {
                 repair: request.repair,
                 verification: {
                   ...request.verification,
-                  minimumStyleScore: request.minimumStyleScore ?? request.verification?.minimumStyleScore,
+                  minimumStyleScore: Math.max(76, request.minimumStyleScore ?? request.verification?.minimumStyleScore ?? 76),
                   minimumStyleConfidence: request.minimumStyleConfidence ?? request.verification?.minimumStyleConfidence,
+                  requireStyleTransfer: request.requireStyleTransfer !== false,
                 },
               },
             );
