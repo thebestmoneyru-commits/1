@@ -2352,7 +2352,7 @@ export default function App() {
           `[v2 | ${data?.usedModel || chosenModel} | стиль ${v2StyleIntensity}/5] Т1: ${donorText.slice(0, 60)}... | Т2: ${contentText.slice(0, 80)}...`,
           'style-dna',
           {
-            promptUsed: `PromptGPT v2 | Модель: ${data?.usedModel || chosenModel} | Стиль: ${v2StyleIntensity}/5\\nИнструкции: ${v2CustomInstructions || '(нет)'}`,
+            promptUsed: `PromptGPT v2 | Модель: ${data?.usedModel || chosenModel} | Стиль: ${v2StyleIntensity}/5\nИнструкции: ${v2CustomInstructions || '(нет)'}`,
             modelUsed: data?.usedModel || chosenModel,
             durationMs: elapsed,
             metricsSnapshot: metricsSnap,
