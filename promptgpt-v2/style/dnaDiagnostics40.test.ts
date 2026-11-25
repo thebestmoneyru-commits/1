@@ -100,5 +100,48 @@ export function runDnaDiagnostics40SelfTests(): { passed: number; names: string[
   assert(verbatimReport.topCodeRecommendations.length > 0, "failing report must generate prioritized code recommendations");
   names.push("verbatim rollback detection and code improvement recommendations");
 
+  assert(
+    report.parameters.every((p) => Number.isFinite(p.confidence) && p.confidence >= 0 && p.confidence <= 1 && !!p.reliability),
+    "all 40 parameters must expose bounded confidence and a reliability band",
+  );
+  assert(report.profileQuality.donor.words > 0 && Array.isArray(report.profileQuality.warnings), "report must expose corpus quality and warnings");
+  names.push("per-parameter confidence and corpus-quality reporting");
+
+  const shortReport = buildDnaDiagnostics40({
+    donorText: "Короткий текст.",
+    sourceText: "Другой короткий текст.",
+    resultText: "Ещё один текст.",
+  });
+  const shortRhythm = shortReport.parameters.find((p) => p.id === "mean-sentence-words");
+  assert(shortRhythm?.status === "na", "profile-dependent metrics must be not-applicable for insufficient samples");
+  assert(shortRhythm?.confidence === 0 && shortRhythm.reliability === "unavailable", "unreliable profile metrics must not carry artificial confidence");
+  names.push("insufficient-sample guard against false style scores");
+
+  const anchorLossReport = buildDnaDiagnostics40({
+    donorText: donor,
+    sourceText: source,
+    resultText: goodResult,
+    v2Response: {
+      selectedCandidateId: "candidate-anchor-loss",
+      candidates: [{
+        candidateId: "candidate-anchor-loss",
+        finalEvaluation: {
+          semanticReport: {
+            passed: false,
+            mandatoryPropositionsPreserved: 4,
+            mandatoryPropositionsTotal: 4,
+            requiredAnchorsFound: 0,
+            requiredAnchorsTotal: 1,
+            issues: [{ code: "missing-anchor", message: "Required number was lost" }],
+          },
+        },
+      }],
+    },
+  });
+  const semanticParam = anchorLossReport.parameters.find((p) => p.id === "semantic-propositions-anchors");
+  assert(semanticParam?.status === "fail", "a failed semantic verifier must remain a hard failure even if all propositions passed");
+  assert(semanticParam?.resultValue.includes("4/4 проп.") && semanticParam.resultValue.includes("0/1 якор."), "semantic report must display proposition and anchor coverage separately");
+  names.push("combined proposition and required-anchor preservation");
+
   return { passed: names.length, names };
 }
