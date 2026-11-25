@@ -2278,18 +2278,18 @@ export default function App() {
     try {
       const headers: Record<string, string> = {};
       if (v2AccessKey.trim()) {
-        headers['x-promptgpt-key'] = v2AccessKey.trim();
+        headers['x-promptgpt-v2-key'] = v2AccessKey.trim();
       }
 
+      // Keep the client contract aligned with the authenticated PROMPTGPT v2 router.
       const data = await safePost(
-        '/api/v2/run',
+        '/api/v2/style-transfer',
         {
           donorText,
           sourceText: contentText,
-          modelId: chosenModel,
+          model: chosenModel,
           styleIntensity: v2StyleIntensity,
           customInstructions: v2CustomInstructions,
-          questionChoices: v2QuestionChoices,
           unfilteredMode,
         },
         3,
@@ -2298,60 +2298,69 @@ export default function App() {
 
       const elapsed = Math.round(performance.now() - t0);
       setDnaElapsedMs(elapsed);
+      setV2Diagnostics(data || null);
 
-      if (data?.status === 'needs_clarification') {
-        setV2Status('Требуются уточнения перед генерацией');
-        setV2Diagnostics(data);
-      } else if (data?.status === 'completed') {
-        setV2Status('Готово (PromptGPT v2)');
-        setV2Diagnostics(data.diagnostics || null);
-        const outStr = typeof data.outputText === 'string' ? data.outputText : '';
-        if (outStr) {
-          setDnaResultText(outStr);
-          setAuditTargetSource('result');
-          handleRunDetectorAudit(outStr);
-          const metricsSnap = Object.fromEntries(
-            computePlus40Metrics(outStr, donorText, contentText).map((m) => [m.label, m.value])
-          );
-          const diagLog: ExtendedDiagnosticsLog = {
-            operation: 'PromptGPT v2 Pipeline',
-            startedAt: startedIso,
-            finishedAt: new Date().toISOString(),
-            durationMs: elapsed,
-            model: chosenModel,
-            status: 'ok',
-            activeFlags: activeFlagNames,
-            activeShieldsCount,
-            inputChars: donorText.length + contentText.length,
-            outputChars: outStr.length,
-            warnings: Array.isArray(data.warnings) ? data.warnings : [],
-            steps: [
-              {
-                stage: 'PromptGPT v2 Pipeline (/api/v2/run)',
-                status: 'completed',
-                durationMs: elapsed,
-                detail: `Интенсивность ${v2StyleIntensity}/5, модель ${chosenModel}`,
-              },
-            ],
-          };
-          setDnaDiagnostics(diagLog);
-          saveToHistory(
-            outStr,
-            v2StyleIntensity * 20,
-            `[v2 | ${chosenModel} | стиль ${v2StyleIntensity}/5] Т1: ${donorText.slice(0, 60)}... | Т2: ${contentText.slice(0, 80)}...`,
-            'style-dna',
-            {
-              promptUsed: `PromptGPT v2 | Модель: ${chosenModel} | Стиль: ${v2StyleIntensity}/5\nИнструкции: ${v2CustomInstructions || '(нет)'}`,
-              modelUsed: chosenModel,
-              durationMs: elapsed,
-              metricsSnapshot: metricsSnap,
-              diagnosticsSnapshot: { v2Data: data, log: diagLog },
-            }
-          );
-        }
+      const outStr =
+        typeof data?.selectedText === 'string' && data.selectedText.trim()
+          ? data.selectedText
+          : typeof data?.bestAvailableText === 'string'
+            ? data.bestAvailableText
+            : '';
+
+      if (data?.status === 'accepted') {
+        setV2Status('Готово (PromptGPT v2): проверки пройдены');
+      } else if (data?.status === 'needs-review') {
+        setV2Status('Результат PromptGPT v2 готов: требуется проверка');
+      } else if (outStr) {
+        setV2Status('Получен резервный результат PromptGPT v2: проверьте предупреждения');
       } else {
-        setV2Status(data?.status || 'Завершено');
-        setV2Diagnostics(data || null);
+        setV2Status(data?.status === 'cancelled' ? 'Запуск PromptGPT v2 отменён' : 'Не удалось получить результат PromptGPT v2');
+      }
+
+      if (outStr) {
+        setDnaResultText(outStr);
+        setAuditTargetSource('result');
+        handleRunDetectorAudit(outStr);
+        const metricsSnap = Object.fromEntries(
+          computePlus40Metrics(outStr, donorText, contentText).map((m) => [m.label, m.value])
+        );
+        const diagLog: ExtendedDiagnosticsLog = {
+          operation: 'PromptGPT v2 Pipeline',
+          startedAt: startedIso,
+          finishedAt: new Date().toISOString(),
+          durationMs: elapsed,
+          model: data?.usedModel || chosenModel,
+          status: data?.status === 'accepted' ? 'ok' : 'degraded',
+          activeFlags: activeFlagNames,
+          activeShieldsCount,
+          inputChars: donorText.length + contentText.length,
+          outputChars: outStr.length,
+          warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+          steps: [
+            {
+              stage: 'PromptGPT v2 Pipeline (/api/v2/style-transfer)',
+              status: data?.status === 'accepted' || data?.status === 'needs-review' ? 'completed' : 'warning',
+              durationMs: elapsed,
+              detail: `Статус: ${data?.status || 'неизвестен'}; интенсивность ${v2StyleIntensity}/5; модель ${data?.usedModel || chosenModel}`,
+            },
+          ],
+        };
+        setDnaDiagnostics(diagLog);
+        saveToHistory(
+          outStr,
+          v2StyleIntensity * 20,
+          `[v2 | ${data?.usedModel || chosenModel} | стиль ${v2StyleIntensity}/5] Т1: ${donorText.slice(0, 60)}... | Т2: ${contentText.slice(0, 80)}...`,
+          'style-dna',
+          {
+            promptUsed: `PromptGPT v2 | Модель: ${data?.usedModel || chosenModel} | Стиль: ${v2StyleIntensity}/5\nИнструкции: ${v2CustomInstructions || '(нет)'}`,
+            modelUsed: data?.usedModel || chosenModel,
+            durationMs: elapsed,
+            metricsSnapshot: metricsSnap,
+            diagnosticsSnapshot: { v2Data: data, log: diagLog },
+          }
+        );
+      } else if (data?.error?.message) {
+        setError(data.error.message);
       }
     } catch (err: any) {
       const elapsed = Math.round(performance.now() - t0);
@@ -3043,12 +3052,12 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Ключ доступа (опционально)</label>
+                  <label className="block text-[11px] text-slate-400 mb-1">Ключ доступа PROMPTGPT v2 (обязателен)</label>
                   <input
                     type="password"
                     value={v2AccessKey}
                     onChange={(e) => setV2AccessKey(e.target.value)}
-                    placeholder="x-promptgpt-key"
+                    placeholder="Ключ PROMPTGPT_V2_ACCESS_KEY"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
                   />
                 </div>
