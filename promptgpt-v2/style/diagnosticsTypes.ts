@@ -1,4 +1,20 @@
-export type DiagnosticStatus = 'ok' | 'warn' | 'error' | 'skip' | 'pending';
+export type DiagnosticStatus = "ok" | "warn" | "error" | "skip" | "pending";
+export type StageNoGainReason =
+  | "none"
+  | "not-applied"
+  | "semantic-check-failed"
+  | "reverification-incomplete"
+  | "score-dropped-or-flat";
+
+export interface StageScoreDelta {
+  stage: string;
+  beforeScore: number | null;
+  afterScore: number | null;
+  deltaScore: number | null;
+  repaired: boolean;
+  repairPassed: boolean;
+  noGainReason: StageNoGainReason;
+}
 
 export interface DiagnosticStepItem {
   id?: string;
@@ -26,6 +42,6 @@ export interface AdvancedDiagnosticReport {
   createdAt: string;
   steps: DiagnosticStepItem[];
   summary: DiagnosticSummary;
-  metrics?: Record<string, number | string | boolean | null>;
+  metrics: Record<string, number | string | boolean | null>;
   metadata?: Record<string, unknown>;
 }
