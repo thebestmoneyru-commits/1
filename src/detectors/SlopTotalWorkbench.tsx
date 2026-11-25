@@ -77,6 +77,8 @@ interface SlopTotalWorkbenchProps {
   currentContentText?: string;
   currentDonorText?: string;
   embedded?: boolean;
+  initialText?: string;
+  onApplyScoreToMain?: (humanScore: number, aiScore: number, rawMetric: string) => void;
 }
 
 const SAMPLE_SLOPTOTAL_TEXT = `В рамках современной парадигмы развития гуманитарного знания следует отметить, что комплексный подход играет ключевую роль в понимании сложных социальных трансформаций. Более того, данное обстоятельство является неотъемлемым элементом устойчивого прогресса, позволяя выявлять скрытые взаимосвязи между традиционными ценностями и инновационными практиками. Подводя итог, важно подчеркнуть, что гармоничное сочетание анализа и синтеза открывает новые горизонты для дальнейших исследований.`;
@@ -137,11 +139,13 @@ export function SlopTotalWorkbench({
   currentContentText = '',
   currentDonorText = '',
   embedded = false,
+  initialText = '',
+  onApplyScoreToMain,
 }: SlopTotalWorkbenchProps) {
   const [mode, setMode] = useState<SlopMode>('analyze');
   const [inputKind, setInputKind] = useState<'text' | 'url'>('text');
   const [inputText, setInputText] = useState<string>(
-    () => currentDnaResult || currentContentText || currentDonorText || SAMPLE_SLOPTOTAL_TEXT
+    () => initialText || currentDnaResult || currentContentText || currentDonorText || SAMPLE_SLOPTOTAL_TEXT
   );
   const [inputUrl, setInputUrl] = useState<string>('');
   const [siteUrl, setSiteUrl] = useState<string>('');
@@ -169,6 +173,17 @@ export function SlopTotalWorkbench({
   const [copiedSummary, setCopiedSummary] = useState<boolean>(false);
   const [feedbackSent, setFeedbackSent] = useState<string | null>(null);
   const [stats, setStats] = useState<SlopStats | null>(null);
+
+  useEffect(() => {
+    if (initialText.trim()) setInputText(initialText);
+  }, [initialText]);
+
+  useEffect(() => {
+    if (!report || !onApplyScoreToMain) return;
+    const aiScore = Number(report.overallScore);
+    const humanScore = Number.isFinite(report.humanScore) ? Number(report.humanScore) : 100 - aiScore;
+    onApplyScoreToMain(humanScore, aiScore, `${aiScore}/100 · ${report.enginesFlagged}/${report.enginesTotal} движков`);
+  }, [report]);
 
   const selectedEngineKeys = useMemo(
     () => SLOPTOTAL_ENGINES.filter((e) => selectedEngines[e.key]).map((e) => e.key),
