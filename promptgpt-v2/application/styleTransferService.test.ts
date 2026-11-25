@@ -17,7 +17,7 @@ function fixture() {
     minWordsForReliableProfile: 1,
     minSentencesForReliableProfile: 1,
   });
-  const created = createDonorStyleBaseline(donorProfile);
+  const created = createDonorStyleBaseline(donorProfile, sourceText);
   assert(created.ok && created.baseline, "fixture donor baseline must be created");
   const built = buildSemanticInventory(sourceText, []);
   assert(built.valid && built.inventory, "fixture semantic inventory must be created");
@@ -72,6 +72,9 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(generationCalls === 1, "one candidate should cause one generation call");
     assert(criticCalls === 0, "an already accepted candidate should bypass critic and repair");
     assert(result.trace.some((event) => event.stage === "completed"), "successful execution should be traced");
+    assert(result.dnaDiagnostics40?.totalParameters === 40, "successful transfer must expose the complete 40-point Style DNA report");
+    assert(result.dnaDiagnostics40?.parameters.length === 40, "40-point diagnostics must contain all sequential parameters");
+    assert((result.dnaDiagnostics40?.profileQuality.donor.words ?? 0) > 0, "40-point diagnostics must analyze the original donor corpus");
     const audit = result.candidates[0]?.diagnosticSteps ?? [];
     assert(audit.some((step) => step.stage === "semantic-verification" && step.status === "completed"),
       "candidate diagnostics must record successful semantic verification");
