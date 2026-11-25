@@ -32,6 +32,9 @@ import {
   AlertTriangle,
   Maximize2,
   ShieldAlert,
+  Clock,
+  Eye,
+  Trash2,
 } from 'lucide-react';
 import { DetectorWorkbench } from './detectors/DetectorWorkbench';
 import { SlopTotalWorkbench } from './detectors/SlopTotalWorkbench';
@@ -42,6 +45,18 @@ import { runSlopTotalAnalysis } from '../shared/sloptotalCore';
 import { runMgtEvalDetection } from '../shared/mgtEvalCore';
 import { runMgtBenchDetection } from '../shared/mgtBenchCore';
 import { runDetectZooTextSuite } from '../shared/detectZooCore';
+import {
+  buildConfigAndHistoryExportPayload,
+  buildConfigExportFilename,
+} from './utils/configExport';
+import {
+  BUILT_IN_PROMPT_TEMPLATES,
+  PROMPT_TEMPLATES_STORAGE_KEY,
+  createCustomPromptTemplate,
+  parseStoredCustomTemplates,
+  type PromptTemplate,
+} from './utils/promptTemplates';
+import { PromptTemplateSidebar } from './components/PromptTemplateSidebar';
 
 /* ========================================================================= */
 /* TYPES                                                                     */
@@ -56,9 +71,24 @@ interface HistoryItem {
   strengthOrIntensity: number;
   inputText: string;
   outputText: string;
+  promptUsed?: string;
+  modelUsed?: string;
+  durationMs?: number;
+  metricsSnapshot?: Record<string, string | number>;
+  diagnosticsSnapshot?: any;
 }
 
-type TabId = 'style-dna' | 'sloptotal' | 'mgt-eval' | 'mgt-bench' | 'detect-zoo' | 'analysis' | 'sandbox' | 'draft-workshop' | 'academic-39' | 'history';
+type TabId =
+  | 'style-dna'
+  | 'sloptotal'
+  | 'mgt-eval'
+  | 'mgt-bench'
+  | 'detect-zoo'
+  | 'analysis'
+  | 'sandbox'
+  | 'draft-workshop'
+  | 'academic-39'
+  | 'history';
 
 type FlagKey =
   | 'basic'
@@ -72,6 +102,35 @@ type FlagKey =
   | 'perplexityTopics';
 
 type Flags = Record<FlagKey, boolean>;
+
+export interface ExtendedMetricItem {
+  key: string;
+  label: string;
+  category: 'Ритм и синтаксис' | 'Лексика и словарный запас' | 'Пунктуация и структура' | 'Анти-ИИ и стиль';
+  value: string | number;
+  note?: string;
+}
+
+export interface ExtendedDiagnosticsLog {
+  operation: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  model: string;
+  status: 'ok' | 'degraded' | 'error';
+  activeFlags: string[];
+  activeShieldsCount: number;
+  inputChars: number;
+  outputChars: number;
+  steps: Array<{
+    stage: string;
+    status: 'completed' | 'skipped' | 'warning' | 'failed';
+    durationMs: number;
+    detail: string;
+  }>;
+  warnings: string[];
+  error?: string;
+}
 
 /* ========================================================================= */
 /* SAMPLE TEXTS                                                              */
@@ -346,7 +405,6 @@ const THRESHOLDS: Record<string, string> = {
   detectLlama: '< 5%',
 };
 
-// Начальные значения нейтральные: пока текст не проверен, никаких «98% Человек» не показываем.
 export const INITIAL_DETECTOR_SCORES: Record<string, DetectorScoreData> = Object.fromEntries(
   DETECTORS_LIST.map((d) => [
     d.id,
@@ -466,8 +524,6 @@ export function DetectorDialGauge({
 
 const AUDIT_URL = '/api/audit-detectors';
 
-// Только действительно машинные штампы. Нормальные научные обороты
-// («таким образом», «с одной стороны», «в свою очередь») сюда не входят.
 const AI_CLICHES = [
   'в рамках',
   'при таком подходе',
@@ -495,7 +551,6 @@ const AI_CLICHES = [
   'детерминирующим фактором',
 ];
 
-// Без lookbehind: работает во всех браузерах, включая старые Safari.
 const splitSentences = (text: string): string[] =>
   (text.match(/[^.!?…]+(?:[.!?…]+|$)/g) ?? []).map((s) => s.trim()).filter((s) => s.length > 2);
 
@@ -504,6 +559,16 @@ const countWords = (s: string) => s.split(/\s+/).filter(Boolean).length;
 const wordCount = (t: string) => (t.trim() ? t.trim().split(/\s+/).length : 0);
 
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+const formatDuration = (ms?: number | null): string => {
+  if (typeof ms !== 'number' || Number.isNaN(ms) || ms < 0) return '—';
+  if (ms < 1000) return `${Math.round(ms)} мс`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(2)} с`;
+  const mins = Math.floor(sec / 60);
+  const remSec = (sec % 60).toFixed(1);
+  return `${mins} мин ${remSec} с`;
+};
 
 const downloadBlob = (content: string, mime: string, filename: string) => {
   const blob = new Blob([content], { type: mime });
@@ -558,7 +623,142 @@ const analyzeStyleMetrics = (text: string) => {
   };
 };
 
-// Эвристика, а не реальные детекторы. Полностью детерминирована (без Math.random).
+// Расширенный расчёт +40 метрик по всем разделам (ритм, лексика, пунктуация/структура, анти-ИИ/стиль)
+const computePlus40Metrics = (text: string, donorRefText?: string, sourceRefText?: string): ExtendedMetricItem[] => {
+  if (!text || !text.trim()) return [];
+
+  const sentences = splitSentences(text);
+  const sentLens = sentences.map(countWords);
+  const words = text.toLowerCase().match(/[а-яёa-z0-9-]+/gi) || [];
+  const wordLengths = words.map((w) => w.length);
+  const paragraphs = text.split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
+  const paraWordCounts = paragraphs.map(countWords);
+
+  const totalChars = text.length;
+  const nonSpaceChars = text.replace(/\s+/g, '').length;
+  const totalWords = words.length || 1;
+  const totalSentences = sentences.length || 1;
+  const totalParagraphs = paragraphs.length || 1;
+
+  const uniqueWords = new Set(words);
+  const freqMap = new Map<string, number>();
+  for (const w of words) freqMap.set(w, (freqMap.get(w) || 0) + 1);
+  const hapaxCount = Array.from(freqMap.values()).filter((c) => c === 1).length;
+  const disCount = Array.from(freqMap.values()).filter((c) => c === 2).length;
+  const longWordsCount = words.filter((w) => w.length >= 9).length;
+  const shortWordsCount = words.filter((w) => w.length <= 3).length;
+
+  const avgSentLen = totalWords / totalSentences;
+  const sentStd = Math.sqrt(sentLens.reduce((acc, n) => acc + Math.pow(n - avgSentLen, 2), 0) / totalSentences);
+  const medianSentLen = [...sentLens].sort((a, b) => a - b)[Math.floor(sentLens.length / 2)] || 0;
+  const iqrSentLen = (() => {
+    if (sentLens.length < 4) return Math.round(sentStd);
+    const sorted = [...sentLens].sort((a, b) => a - b);
+    const q1 = sorted[Math.floor(sorted.length * 0.25)];
+    const q3 = sorted[Math.floor(sorted.length * 0.75)];
+    return Number((q3 - q1).toFixed(1));
+  })();
+
+  const commas = (text.match(/,/g) || []).length;
+  const periods = (text.match(/\./g) || []).length;
+  const semicolons = (text.match(/;/g) || []).length;
+  const colons = (text.match(/:/g) || []).length;
+  const dashes = (text.match(/[—–-]{1,2}/g) || []).length;
+  const questions = (text.match(/\?/g) || []).length;
+  const exclamations = (text.match(/!/g) || []).length;
+  const quotes = (text.match(/[«»"“”]/g) || []).length;
+  const parens = (text.match(/[()]/g) || []).length;
+
+  const lower = text.toLowerCase();
+  const clicheHits = AI_CLICHES.reduce(
+    (sum, c) => sum + (lower.match(new RegExp(c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length,
+    0
+  );
+  const particlesHits = (lower.match(/\b(же|ведь|лишь|только|даже|уже|просто|именно|будто|словно|точно)\b/g) || []).length;
+  const introMarkersHits = (lower.match(/\b(однако|впрочем|напротив|тем не менее|кроме того|помимо этого|следовательно|итак)\b/g) || []).length;
+  const passiveMarkersHits = (lower.match(/\b(является|представляет собой|осуществляется|производится|выполняется|реализуется|рассматривается)\b/g) || []).length;
+  const firstPersonHits = (lower.match(/\b(я|мы|мой|наш|мне|нам|меня|нас)\b/g) || []).length;
+  const digitsCount = (text.match(/\d+/g) || []).length;
+
+  // Энтропия Шеннона по частотам слов
+  let entropy = 0;
+  for (const cnt of freqMap.values()) {
+    const p = cnt / totalWords;
+    entropy -= p * Math.log2(p);
+  }
+
+  // Yule's K (лексическое разнообразие)
+  let sumFreqSq = 0;
+  for (const cnt of freqMap.values()) sumFreqSq += cnt * cnt;
+  const yuleK = Number((((sumFreqSq - totalWords) / (totalWords * totalWords)) * 10000).toFixed(1));
+
+  // Сравнение с донором и источником (если переданы)
+  const donorWordsSet = new Set((donorRefText?.toLowerCase().match(/[а-яёa-z0-9-]+/gi) || []));
+  const overlapWithDonor = words.length > 0 && donorWordsSet.size > 0
+    ? Number(((words.filter((w) => donorWordsSet.has(w)).length / words.length) * 100).toFixed(1))
+    : 0;
+
+  const sourceWordCount = wordCount(sourceRefText || '');
+  const lengthRatioVsSource = sourceWordCount > 0 ? Number((words.length / sourceWordCount).toFixed(2)) : 1;
+
+  return [
+    // 1–12: Ритм и синтаксис
+    { key: 'm01_word_count', label: '01. Объём слов', category: 'Ритм и синтаксис', value: words.length },
+    { key: 'm02_char_total', label: '02. Символов всего', category: 'Ритм и синтаксис', value: totalChars },
+    { key: 'm03_char_nospace', label: '03. Символов без пробелов', category: 'Ритм и синтаксис', value: nonSpaceChars },
+    { key: 'm04_sent_count', label: '04. Число предложений', category: 'Ритм и синтаксис', value: sentences.length },
+    { key: 'm05_avg_sent_len', label: '05. Средняя длина предложения', category: 'Ритм и синтаксис', value: Number(avgSentLen.toFixed(1)), note: 'слов' },
+    { key: 'm06_median_sent_len', label: '06. Медиана длины предложения', category: 'Ритм и синтаксис', value: medianSentLen, note: 'слов' },
+    { key: 'm07_sent_stddev', label: '07. СКО длины предложения', category: 'Ритм и синтаксис', value: Number(sentStd.toFixed(2)) },
+    { key: 'm08_sent_iqr', label: '08. Межквартильный размах (IQR)', category: 'Ритм и синтаксис', value: iqrSentLen },
+    { key: 'm09_min_sent', label: '09. Минимум слов в предложении', category: 'Ритм и синтаксис', value: sentLens.length ? Math.min(...sentLens) : 0 },
+    { key: 'm10_max_sent', label: '10. Максимум слов в предложении', category: 'Ритм и синтаксис', value: sentLens.length ? Math.max(...sentLens) : 0 },
+    { key: 'm11_short_sent_share', label: '11. Доля коротких фраз (≤7 сл.)', category: 'Ритм и синтаксис', value: `${Math.round((sentLens.filter((n) => n <= 7).length / totalSentences) * 100)}%` },
+    { key: 'm12_long_sent_share', label: '12. Доля длинных фраз (≥25 сл.)', category: 'Ритм и синтаксис', value: `${Math.round((sentLens.filter((n) => n >= 25).length / totalSentences) * 100)}%` },
+
+    // 13–23: Лексика и словарный запас
+    { key: 'm13_unique_words', label: '13. Уникальных словоформ', category: 'Лексика и словарный запас', value: uniqueWords.size },
+    { key: 'm14_ttr', label: '14. Коэффициент TTR', category: 'Лексика и словарный запас', value: Number((uniqueWords.size / totalWords).toFixed(3)) },
+    { key: 'm15_hapax', label: '15. Hapax Legomena (1 раз)', category: 'Лексика и словарный запас', value: hapaxCount },
+    { key: 'm16_hapax_ratio', label: '16. Доля Hapax в словаре', category: 'Лексика и словарный запас', value: `${Math.round((hapaxCount / Math.max(1, uniqueWords.size)) * 100)}%` },
+    { key: 'm17_dis_legomena', label: '17. Dis Legomena (2 раза)', category: 'Лексика и словарный запас', value: disCount },
+    { key: 'm18_avg_word_len', label: '18. Средняя длина слова', category: 'Лексика и словарный запас', value: Number((wordLengths.reduce((a, b) => a + b, 0) / totalWords).toFixed(2)), note: 'букв' },
+    { key: 'm19_long_words_share', label: '19. Длинные слова (≥9 букв)', category: 'Лексика и словарный запас', value: `${Math.round((longWordsCount / totalWords) * 100)}%` },
+    { key: 'm20_short_words_share', label: '20. Короткие слова (≤3 букв)', category: 'Лексика и словарный запас', value: `${Math.round((shortWordsCount / totalWords) * 100)}%` },
+    { key: 'm21_word_entropy', label: '21. Энтропия лексики (бит)', category: 'Лексика и словарный запас', value: Number(entropy.toFixed(2)) },
+    { key: 'm22_yule_k', label: '22. Индекс Юла (Yule K)', category: 'Лексика и словарный запас', value: yuleK },
+    { key: 'm23_digits_count', label: '23. Числовых токенов', category: 'Лексика и словарный запас', value: digitsCount },
+
+    // 24–32: Пунктуация и структура
+    { key: 'm24_para_count', label: '24. Число абзацев', category: 'Пунктуация и структура', value: paragraphs.length },
+    { key: 'm25_avg_para_words', label: '25. Средний размер абзаца', category: 'Пунктуация и структура', value: Math.round(paraWordCounts.reduce((a, b) => a + b, 0) / totalParagraphs), note: 'слов' },
+    { key: 'm26_commas', label: '26. Запятых всего', category: 'Пунктуация и структура', value: commas },
+    { key: 'm27_commas_per_100', label: '27. Запятых на 100 слов', category: 'Пунктуация и структура', value: Number(((commas / totalWords) * 100).toFixed(1)) },
+    { key: 'm28_dashes', label: '28. Тире / дефисов', category: 'Пунктуация и структура', value: dashes },
+    { key: 'm29_colons_semicolons', label: '29. Двоеточий и точек с запятой', category: 'Пунктуация и структура', value: colons + semicolons },
+    { key: 'm30_questions_excl', label: '30. Вопросов (!) и восклицаний (?)', category: 'Пунктуация и структура', value: `${questions} / ${exclamations}` },
+    { key: 'm31_quotes_parens', label: '31. Кавычек / скобок', category: 'Пунктуация и структура', value: `${quotes} / ${parens}` },
+    { key: 'm32_periods', label: '32. Точек в тексте', category: 'Пунктуация и структура', value: periods },
+
+    // 33–42+: Анти-ИИ, голос и сопоставление
+    { key: 'm33_ai_cliches', label: '33. Машинных штампов', category: 'Анти-ИИ и стиль', value: clicheHits },
+    { key: 'm34_cliche_density', label: '34. Плотность штампов / 100 сл.', category: 'Анти-ИИ и стиль', value: Number(((clicheHits / totalWords) * 100).toFixed(2)) },
+    { key: 'm35_particles', label: '35. Живых частиц («же», «ведь»...)', category: 'Анти-ИИ и стиль', value: particlesHits },
+    { key: 'm36_intro_markers', label: '36. Вводных и связок', category: 'Анти-ИИ и стиль', value: introMarkersHits },
+    { key: 'm37_passive_markers', label: '37. Канцелярских глаголов', category: 'Анти-ИИ и стиль', value: passiveMarkersHits },
+    { key: 'm38_first_person', label: '38. Маркеров 1-го лица (я/мы)', category: 'Анти-ИИ и стиль', value: firstPersonHits },
+    { key: 'm39_donor_overlap', label: '39. Пересечение словаря с донором', category: 'Анти-ИИ и стиль', value: `${overlapWithDonor}%` },
+    { key: 'm40_len_ratio_source', label: '40. Коэф. длины к исходнику', category: 'Анти-ИИ и стиль', value: `${lengthRatioVsSource}x` },
+    { key: 'm41_burstiness_idx', label: '41. Индекс Burstiness', category: 'Анти-ИИ и стиль', value: Number((sentStd / Math.max(1, avgSentLen)).toFixed(3)) },
+    { key: 'm42_dialog_cadence', label: '42. Ритмический контраст соседних фраз', category: 'Анти-ИИ и стиль', value: (() => {
+      if (sentLens.length < 2) return 0;
+      let diffs = 0;
+      for (let i = 1; i < sentLens.length; i++) diffs += Math.abs(sentLens[i] - sentLens[i - 1]);
+      return Number((diffs / (sentLens.length - 1)).toFixed(1));
+    })() },
+  ];
+};
+
 const calculateLocalAudit = (text: string) => {
   const rawSentences = splitSentences(text);
   const sentenceWordCounts = rawSentences.map(countWords);
@@ -989,6 +1189,135 @@ function ErrorBox({ message }: { message: string | null }) {
   return <div className="p-3 rounded-xl bg-red-950/50 border border-red-800 text-red-300 text-xs">{message}</div>;
 }
 
+function Plus40MetricsPanel({
+  metrics,
+  title = 'Расширенный набор метрик (+42 показателя по всем разделам)',
+}: {
+  metrics: ExtendedMetricItem[];
+  title?: string;
+}) {
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  if (!metrics || metrics.length === 0) return null;
+
+  const categories = ['ALL', 'Ритм и синтаксис', 'Лексика и словарный запас', 'Пунктуация и структура', 'Анти-ИИ и стиль'];
+  const filtered = selectedCategory === 'ALL' ? metrics : metrics.filter((m) => m.category === selectedCategory);
+
+  return (
+    <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800/80 pb-2">
+        <div className="flex items-center gap-2 text-xs font-bold text-cyan-300">
+          <BarChart3 className="h-4 w-4 text-cyan-400" />
+          <span>{title}</span>
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setSelectedCategory(cat)}
+              className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer ${
+                selectedCategory === cat
+                  ? 'bg-cyan-900/80 text-cyan-200 border-cyan-500'
+                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              {cat === 'ALL' ? `Все (${metrics.length})` : cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-2 max-h-72 overflow-y-auto pr-1">
+        {filtered.map((m) => (
+          <div key={m.key} className="rounded-lg bg-slate-900/90 border border-slate-800/90 p-2">
+            <div className="text-[10px] text-slate-400 truncate" title={m.label}>
+              {m.label}
+            </div>
+            <div className="text-xs font-bold font-mono text-white mt-0.5">
+              {m.value} {m.note ? <span className="text-[10px] font-normal text-slate-400">{m.note}</span> : null}
+            </div>
+            <div className="text-[9px] text-slate-500 truncate mt-0.5">{m.category}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExtendedDiagnosticsPanel({ log }: { log: ExtendedDiagnosticsLog | null }) {
+  if (!log) return null;
+  return (
+    <details open className="rounded-xl border border-indigo-800/60 bg-slate-950/90 p-4 space-y-3 text-xs">
+      <summary className="cursor-pointer font-bold text-indigo-300 flex items-center justify-between flex-wrap gap-2">
+        <span>Расширенная диагностика выполнения: {log.operation}</span>
+        <span className="font-mono text-[11px] text-emerald-300">
+          Время: {formatDuration(log.durationMs)} · Модель: {log.model}
+        </span>
+      </summary>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 pt-2">
+        <div className="rounded-lg bg-slate-900 border border-slate-800 p-2">
+          <div className="text-[10px] text-slate-400">Длительность</div>
+          <div className="font-mono font-bold text-emerald-300">{formatDuration(log.durationMs)}</div>
+        </div>
+        <div className="rounded-lg bg-slate-900 border border-slate-800 p-2">
+          <div className="text-[10px] text-slate-400">Статус</div>
+          <div className="font-bold text-white">{log.status.toUpperCase()}</div>
+        </div>
+        <div className="rounded-lg bg-slate-900 border border-slate-800 p-2">
+          <div className="text-[10px] text-slate-400">Активных щитов</div>
+          <div className="font-mono font-bold text-cyan-300">{log.activeShieldsCount}</div>
+        </div>
+        <div className="rounded-lg bg-slate-900 border border-slate-800 p-2">
+          <div className="text-[10px] text-slate-400">Вход / Выход</div>
+          <div className="font-mono font-bold text-slate-200">
+            {log.inputChars} / {log.outputChars} симв.
+          </div>
+        </div>
+        <div className="rounded-lg bg-slate-900 border border-slate-800 p-2">
+          <div className="text-[10px] text-slate-400">Окончание</div>
+          <div className="font-mono text-[11px] text-slate-300">{log.finishedAt}</div>
+        </div>
+      </div>
+
+      {log.activeFlags.length > 0 && (
+        <div className="text-[11px] text-slate-400">
+          Активные модули: <span className="text-slate-200 font-medium">{log.activeFlags.join(', ')}</span>
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        {log.steps.map((st, idx) => (
+          <div key={idx} className="rounded-lg bg-slate-900/80 border border-slate-800 px-3 py-2 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <span className="font-semibold text-slate-200">{st.stage}</span>
+              <span className="text-slate-400 ml-2">— {st.detail}</span>
+            </div>
+            <span className="shrink-0 font-mono text-[10px] text-cyan-300 tabular-nums">{formatDuration(st.durationMs)}</span>
+          </div>
+        ))}
+      </div>
+
+      {log.warnings.length > 0 && (
+        <div className="rounded-lg bg-amber-950/20 border border-amber-800/50 p-2.5 text-amber-200">
+          <div className="font-bold mb-1">Предупреждения:</div>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {log.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {log.error && (
+        <div className="rounded-lg bg-red-950/40 border border-red-800 p-2.5 text-red-200 font-semibold">
+          Ошибка: {log.error}
+        </div>
+      )}
+    </details>
+  );
+}
+
 function OutputPanel({
   title,
   titleColor,
@@ -1000,6 +1329,9 @@ function OutputPanel({
   withDoc = true,
   spinnerColor = 'text-indigo-500',
   Icon = BookOpen,
+  elapsedMs,
+  metrics,
+  diagnostics,
 }: {
   title: string;
   titleColor: string;
@@ -1011,11 +1343,21 @@ function OutputPanel({
   withDoc?: boolean;
   spinnerColor?: string;
   Icon?: React.ComponentType<{ className?: string }>;
+  elapsedMs?: number | null;
+  metrics?: ExtendedMetricItem[];
+  diagnostics?: ExtendedDiagnosticsLog | null;
 }) {
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4 flex flex-col min-h-[520px]">
       <div className="flex items-center justify-between border-b border-slate-800 pb-4 flex-wrap gap-2">
-        <span className={`${titleColor} font-semibold text-sm`}>{title}</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`${titleColor} font-semibold text-sm`}>{title}</span>
+          {typeof elapsedMs === 'number' && elapsedMs > 0 && (
+            <span className="px-2 py-0.5 rounded-md bg-slate-950 border border-slate-700 text-[11px] font-mono text-emerald-300 flex items-center gap-1">
+              <Clock className="h-3 w-3" /> {formatDuration(elapsedMs)}
+            </span>
+          )}
+        </div>
         {text && <OutputActions text={text} baseName={baseName} withDoc={withDoc} />}
       </div>
       <div className="flex-1 bg-slate-950 border border-slate-800/80 rounded-xl p-5 text-sm text-slate-200 leading-relaxed overflow-y-auto max-h-[500px] whitespace-pre-wrap">
@@ -1033,6 +1375,8 @@ function OutputPanel({
           </div>
         )}
       </div>
+      {text && metrics && metrics.length > 0 && <Plus40MetricsPanel metrics={metrics} />}
+      {diagnostics && <ExtendedDiagnosticsPanel log={diagnostics} />}
     </div>
   );
 }
@@ -1151,9 +1495,69 @@ export default function App() {
   const [donorText, setDonorText] = useState(SAMPLE_DONOR_TEXT);
   const [contentText, setContentText] = useState(SAMPLE_CONTENT_TEXT);
   const [dnaResultText, setDnaResultText] = useState('');
+  const [dnaElapsedMs, setDnaElapsedMs] = useState<number | null>(null);
+  const [dnaDiagnostics, setDnaDiagnostics] = useState<ExtendedDiagnosticsLog | null>(null);
   const [v2AccessKey, setV2AccessKey] = useState('');
+  const [v2ModelId, setV2ModelId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('promptgpt_v2_model_id') || 'gemini-3.1-flash-lite';
+    } catch {
+      return 'gemini-3.1-flash-lite';
+    }
+  });
   const [v2Status, setV2Status] = useState('');
   const [v2Diagnostics, setV2Diagnostics] = useState<any>(null);
+  const [v2QuestionChoices, setV2QuestionChoices] = useState<Record<string, string>>({});
+  const [unfilteredMode, setUnfilteredMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('promptgpt_unfiltered_mode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const toggleUnfilteredMode = () => {
+    setUnfilteredMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('promptgpt_unfiltered_mode', String(next));
+      } catch {
+        /* ignore storage error */
+      }
+      return next;
+    });
+  };
+  const [v2StyleIntensity, setV2StyleIntensity] = useState<1 | 2 | 3 | 4 | 5>(() => {
+    try {
+      const saved = Number(localStorage.getItem('promptgpt_v2_style_intensity'));
+      if (saved >= 1 && saved <= 5) return Math.round(saved) as 1 | 2 | 3 | 4 | 5;
+    } catch {
+      /* ignore storage error */
+    }
+    return 5;
+  });
+  const handleChangeV2StyleIntensity = (next: 1 | 2 | 3 | 4 | 5) => {
+    setV2StyleIntensity(next);
+    try {
+      localStorage.setItem('promptgpt_v2_style_intensity', String(next));
+    } catch {
+      /* ignore storage error */
+    }
+  };
+  const [v2CustomInstructions, setV2CustomInstructions] = useState<string>(() => {
+    try {
+      return localStorage.getItem('promptgpt_v2_custom_instructions') ?? '';
+    } catch {
+      return '';
+    }
+  });
+  const handleChangeV2CustomInstructions = (value: string) => {
+    setV2CustomInstructions(value);
+    try {
+      localStorage.setItem('promptgpt_v2_custom_instructions', value);
+    } catch {
+      /* ignore storage error */
+    }
+  };
   const [isGeneratingDna, setIsGeneratingDna] = useState(false);
   const [showPromptDetails, setShowPromptDetails] = useState(false);
   const [showActivePromptSummary, setShowActivePromptSummary] = useState(false);
@@ -1163,10 +1567,84 @@ export default function App() {
   const toggleFlag = (k: FlagKey) => setFlags((prev) => ({ ...prev, [k]: !prev[k] }));
 
   // Model
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-3.1-flash-lite');
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    try {
+      return localStorage.getItem('promptgpt_selected_model') || 'gemini-3.1-flash-lite';
+    } catch {
+      return 'gemini-3.1-flash-lite';
+    }
+  });
+  const handleSelectModel = (modelId: string) => {
+    setSelectedModel(modelId);
+    setV2ModelId(modelId);
+    try {
+      localStorage.setItem('promptgpt_selected_model', modelId);
+      localStorage.setItem('promptgpt_v2_model_id', modelId);
+    } catch {
+      /* ignore storage error */
+    }
+  };
+  const handleChangeV2ModelId = (value: string) => {
+    setV2ModelId(value);
+    const trimmed = value.trim();
+    if (GEMINI_FREE_MODELS.some((m) => m.id === trimmed)) {
+      setSelectedModel(trimmed);
+      try {
+        localStorage.setItem('promptgpt_selected_model', trimmed);
+      } catch {
+        /* ignore storage error */
+      }
+    }
+    try {
+      localStorage.setItem('promptgpt_v2_model_id', value);
+    } catch {
+      /* ignore storage error */
+    }
+  };
   const [lastUsedModel, setLastUsedModel] = useState('');
   const [fallbackOccurred, setFallbackOccurred] = useState(false);
   const selectedModelName = GEMINI_FREE_MODELS.find((m) => m.id === selectedModel)?.name || selectedModel;
+
+  // Sidebar prompt template library
+  const [isTemplateSidebarOpen, setIsTemplateSidebarOpen] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('promptgpt_template_sidebar_open');
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+  const toggleTemplateSidebar = () => {
+    setIsTemplateSidebarOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('promptgpt_template_sidebar_open', String(next));
+      } catch {
+        /* ignore storage error */
+      }
+      return next;
+    });
+  };
+  const [customTemplates, setCustomTemplates] = useState<PromptTemplate[]>(() => {
+    try {
+      return parseStoredCustomTemplates(localStorage.getItem(PROMPT_TEMPLATES_STORAGE_KEY));
+    } catch {
+      return [];
+    }
+  });
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
+  const allTemplates = useMemo(
+    () => [...customTemplates, ...BUILT_IN_PROMPT_TEMPLATES],
+    [customTemplates],
+  );
+  const persistCustomTemplates = (next: PromptTemplate[]) => {
+    setCustomTemplates(next);
+    try {
+      localStorage.setItem(PROMPT_TEMPLATES_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore storage error */
+    }
+  };
 
   const [dnaRefinementMeta, setDnaRefinementMeta] = useState<{
     passes: number;
@@ -1211,6 +1689,7 @@ export default function App() {
   const [scanningDetectors, setScanningDetectors] = useState<Record<string, boolean>>({});
   const [auditTargetSource, setAuditTargetSource] = useState<'result' | 'content' | 'donor'>('result');
   const [auditResult, setAuditResult] = useState<any>(null);
+  const [auditElapsedMs, setAuditElapsedMs] = useState<number | null>(null);
   const [isAuditing, setIsAuditing] = useState(false);
 
   const getTextToAudit = (source = auditTargetSource): string => {
@@ -1224,6 +1703,8 @@ export default function App() {
   const [transformedText, setTransformedText] = useState('');
   const [styleIntensity, setStyleIntensity] = useState(9);
   const [promptStrategy, setPromptStrategy] = useState('');
+  const [humanizerElapsedMs, setHumanizerElapsedMs] = useState<number | null>(null);
+  const [humanizerDiagnostics, setHumanizerDiagnostics] = useState<ExtendedDiagnosticsLog | null>(null);
   const [isGeneratingHumanizer, setIsGeneratingHumanizer] = useState(false);
 
   // Draft
@@ -1231,22 +1712,26 @@ export default function App() {
   const [draftStrength, setDraftStrength] = useState(10);
   const [draftCustomInstructions] = useState('');
   const [draftOutputText, setDraftOutputText] = useState('');
+  const [draftElapsedMs, setDraftElapsedMs] = useState<number | null>(null);
+  const [draftDiagnostics, setDraftDiagnostics] = useState<ExtendedDiagnosticsLog | null>(null);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
 
   // Academic
   const [academicInputText, setAcademicInputText] = useState(TEXT_AI);
   const [academicCustomInstructions, setAcademicCustomInstructions] = useState('');
   const [academicOutputText, setAcademicOutputText] = useState('');
+  const [academicElapsedMs, setAcademicElapsedMs] = useState<number | null>(null);
+  const [academicDiagnostics, setAcademicDiagnostics] = useState<ExtendedDiagnosticsLog | null>(null);
   const [isGeneratingAcademic, setIsGeneratingAcademic] = useState(false);
 
   // History & local request counter
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [selectedHistoryItemId, setSelectedHistoryItemId] = useState<string | null>(null);
   const [dailyUsage, setDailyUsage] = useState<{ count: number; date: string }>({
     count: 0,
     date: new Date().toDateString(),
   });
 
-  // Ошибка привязана к вкладке, на которой возникла
   const [error, setErrorState] = useState<{ tab: TabId; msg: string } | null>(null);
   const setError = (msg: string | null) => setErrorState(msg ? { tab: activeTab, msg } : null);
   const tabError = error && error.tab === activeTab ? error.msg : null;
@@ -1254,7 +1739,13 @@ export default function App() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem('unified_app_history');
-      if (saved) setHistory(JSON.parse(saved));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setHistory(parsed);
+          if (parsed[0]?.id) setSelectedHistoryItemId(parsed[0].id);
+        }
+      }
     } catch (e) {
       console.error(e);
     }
@@ -1275,7 +1766,6 @@ export default function App() {
     }
   }, []);
 
-  // Счётчик реально выполненных запросов к модели (приблизительный, локальный)
   const bumpUsage = () => {
     const today = new Date().toDateString();
     setDailyUsage((prev) => {
@@ -1289,35 +1779,172 @@ export default function App() {
     });
   };
 
-  const saveToHistory = (output: string, strOrInt: number, input: string, type: HistoryType) => {
+  const saveToHistory = (
+    output: string,
+    strOrInt: number,
+    input: string,
+    type: HistoryType,
+    extra?: {
+      promptUsed?: string;
+      modelUsed?: string;
+      durationMs?: number;
+      metricsSnapshot?: Record<string, string | number>;
+      diagnosticsSnapshot?: any;
+    }
+  ) => {
+    const metricsList = computePlus40Metrics(output, donorText, input);
+    const compactMetrics: Record<string, string | number> =
+      extra?.metricsSnapshot ||
+      Object.fromEntries(metricsList.slice(0, 20).map((m) => [m.label, m.value]));
+
     const newItem: HistoryItem = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       timestamp: Date.now(),
       type,
       strengthOrIntensity: strOrInt,
-      inputText: input.slice(0, 600),
-      outputText: output.slice(0, 4000),
+      inputText: input,
+      outputText: output,
+      promptUsed: extra?.promptUsed,
+      modelUsed: extra?.modelUsed || selectedModelName,
+      durationMs: extra?.durationMs,
+      metricsSnapshot: compactMetrics,
+      diagnosticsSnapshot: extra?.diagnosticsSnapshot,
     };
     setHistory((prev) => {
-      const next = [newItem, ...prev].slice(0, 20);
+      const next = [newItem, ...prev].slice(0, 40);
       try {
         localStorage.setItem('unified_app_history', JSON.stringify(next));
       } catch {
-        // Переполнение: оставляем только последние записи
         try {
-          localStorage.setItem('unified_app_history', JSON.stringify(next.slice(0, 5)));
+          localStorage.setItem('unified_app_history', JSON.stringify(next.slice(0, 10)));
         } catch {
           /* игнорируем */
         }
       }
       return next;
     });
+    setSelectedHistoryItemId(newItem.id);
+  };
+
+  const handleDeleteHistoryItem = (id: string) => {
+    setHistory((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      try {
+        localStorage.setItem('unified_app_history', JSON.stringify(next));
+      } catch {
+        /* игнорируем */
+      }
+      return next;
+    });
+    if (selectedHistoryItemId === id) setSelectedHistoryItemId(null);
+  };
+
+  const handleClearHistory = () => {
+    setHistory([]);
+    setSelectedHistoryItemId(null);
+    try {
+      localStorage.removeItem('unified_app_history');
+    } catch {
+      /* игнорируем */
+    }
+  };
+
+  const [exportJustCompleted, setExportJustCompleted] = useState(false);
+
+  const handleExportConfigAndHistory = () => {
+    const payload = buildConfigAndHistoryExportPayload({
+      activeTab,
+      selectedModel,
+      selectedModelName,
+      unfilteredMode,
+      v2ModelId,
+      v2StyleIntensity,
+      v2CustomInstructions,
+      flags,
+      detectorShields,
+      styleIntensity,
+      promptStrategy,
+      draftStrength,
+      draftCustomInstructions,
+      academicCustomInstructions,
+      history,
+    });
+    const json = JSON.stringify(payload, null, 2);
+    downloadBlob(json, 'application/json;charset=utf-8', buildConfigExportFilename());
+    setExportJustCompleted(true);
+    setTimeout(() => setExportJustCompleted(false), 2500);
+  };
+
+  const buildCurrentTemplateConfig = () => ({
+    flags: { ...flags },
+    v2StyleIntensity,
+    v2CustomInstructions,
+    styleIntensity,
+    promptStrategy,
+    academicCustomInstructions,
+    draftStrength,
+    selectedModel,
+    unfilteredMode,
+  });
+
+  const handleSavePromptTemplate = (input: { name: string; category: string; description: string }) => {
+    const created = createCustomPromptTemplate({
+      ...input,
+      config: buildCurrentTemplateConfig(),
+    });
+    persistCustomTemplates([created, ...customTemplates]);
+    setActiveTemplateId(created.id);
+  };
+
+  const handleApplyPromptTemplate = (tpl: PromptTemplate) => {
+    setFlags({ ...tpl.config.flags });
+    handleChangeV2StyleIntensity(tpl.config.v2StyleIntensity);
+    handleChangeV2CustomInstructions(tpl.config.v2CustomInstructions);
+    setStyleIntensity(tpl.config.styleIntensity);
+    setPromptStrategy(tpl.config.promptStrategy);
+    setAcademicCustomInstructions(tpl.config.academicCustomInstructions);
+    setDraftStrength(tpl.config.draftStrength);
+    if (tpl.config.selectedModel) {
+      handleSelectModel(tpl.config.selectedModel);
+    }
+    if (typeof tpl.config.unfilteredMode === 'boolean' && tpl.config.unfilteredMode !== unfilteredMode) {
+      toggleUnfilteredMode();
+    }
+    setActiveTemplateId(tpl.id);
+  };
+
+  const handleUpdateCustomTemplate = (templateId: string) => {
+    const updatedAt = Date.now();
+    const next = customTemplates.map((tpl) =>
+      tpl.id === templateId
+        ? { ...tpl, updatedAt, config: buildCurrentTemplateConfig() }
+        : tpl,
+    );
+    persistCustomTemplates(next);
+    setActiveTemplateId(templateId);
+  };
+
+  const handleDeleteCustomTemplate = (templateId: string) => {
+    const next = customTemplates.filter((tpl) => tpl.id !== templateId);
+    persistCustomTemplates(next);
+    if (activeTemplateId === templateId) {
+      setActiveTemplateId(null);
+    }
+  };
+
+  const handleDuplicatePromptTemplate = (tpl: PromptTemplate) => {
+    const copy = createCustomPromptTemplate({
+      name: `${tpl.name} (копия)`,
+      category: tpl.category,
+      description: tpl.description,
+      config: { ...tpl.config, flags: { ...tpl.config.flags } },
+    });
+    persistCustomTemplates([copy, ...customTemplates]);
+    setActiveTemplateId(copy.id);
   };
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  // Повторяем ТОЛЬКО когда сервер прогревается (502/503 или «Starting Server...»).
-  // Любая другая ошибка (429, 400, парсинг) выбрасывается сразу и не тратит квоту.
   const safePost = async (url: string, body: any, maxRetries = 3, extraHeaders: Record<string, string> = {}): Promise<any> => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -1402,11 +2029,13 @@ export default function App() {
       setError('Нет текста для проверки детектора.');
       return;
     }
+    const t0 = performance.now();
     setScanningDetectors((prev) => ({ ...prev, [detectorId]: true }));
     setError(null);
 
     try {
       const [data] = await Promise.all([safePost(AUDIT_URL, { text, detectorId }), sleep(300)]);
+      setAuditElapsedMs(Math.round(performance.now() - t0));
       if (data && data.singleDetector) {
         applyScores([{ id: detectorId, ...data.singleDetector }]);
       } else {
@@ -1415,6 +2044,7 @@ export default function App() {
     } catch {
       const single = calculateLocalAudit(text).results.find((r) => r.id === detectorId);
       if (single) applyScores([single]);
+      setAuditElapsedMs(Math.round(performance.now() - t0));
     } finally {
       setScanningDetectors((prev) => ({ ...prev, [detectorId]: false }));
     }
@@ -1426,16 +2056,19 @@ export default function App() {
       setError(`Нет текста для аудита по ${DETECTORS_LIST.length} детекторам.`);
       return;
     }
+    const t0 = performance.now();
     setIsAuditing(true);
     setError(null);
     setScanningDetectors(Object.fromEntries(DETECTORS_LIST.map((d) => [d.id, true])));
 
     try {
       const [data] = await Promise.all([safePost(AUDIT_URL, { text: textToCheck }), sleep(350)]);
+      setAuditElapsedMs(Math.round(performance.now() - t0));
       setAuditResult(data);
       if (data?.results && Array.isArray(data.results)) applyScores(data.results);
     } catch {
       const local = calculateLocalAudit(textToCheck);
+      setAuditElapsedMs(Math.round(performance.now() - t0));
       setAuditResult(local);
       applyScores(local.results);
     } finally {
@@ -1456,6 +2089,7 @@ export default function App() {
       return;
     }
 
+    const t0 = performance.now();
     setIsAuditing(true);
     setError(null);
     setScanningDetectors(Object.fromEntries(selectedIds.map((id) => [id, true])));
@@ -1465,10 +2099,12 @@ export default function App() {
         safePost(AUDIT_URL, { text: textToCheck, detectorIds: selectedIds }),
         sleep(300),
       ]);
+      setAuditElapsedMs(Math.round(performance.now() - t0));
       setAuditResult(data);
       if (data?.results && Array.isArray(data.results)) applyScores(data.results);
     } catch {
       const local = calculateLocalAudit(textToCheck);
+      setAuditElapsedMs(Math.round(performance.now() - t0));
       const allowed = new Set(selectedIds);
       const filteredResults = local.results.filter((r) => allowed.has(r.id));
       const subsetAvgHuman =
@@ -1502,11 +2138,25 @@ export default function App() {
       setError('Пожалуйста, заполните оба поля: Текст 1 (образец стиля) и Текст 2 (содержание).');
       return;
     }
+    const startedPerf = performance.now();
+    const startedIso = new Date().toISOString();
     setIsGeneratingDna(true);
     setError(null);
     setDnaRefinementMeta(null);
     setDnaResultText('');
+    setDnaElapsedMs(null);
+    setDnaDiagnostics(null);
+
+    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
+    const composedPromptSummary = [
+      `Режим: Style DNA Transfer V5.0 | Модель: ${selectedModel}`,
+      `Модули (${activeFlagNames.length}): ${activeFlagNames.join('; ')}`,
+      `Щитов детекции: ${activeShieldsCount} | Без фильтрации: ${unfilteredMode ? 'да' : 'нет'}`,
+      `Донор (Т1, ${wordCount(donorText)} сл.) -> Материал (Т2, ${wordCount(contentText)} сл.)`,
+    ].join('\n');
+
     try {
+      const reqStart = performance.now();
       const data = await safePost('/api/style-dna-transfer', {
         text1: donorText,
         text2: contentText,
@@ -1514,14 +2164,52 @@ export default function App() {
         shields: detectorShields,
         enable20CycleCheck: flags.twentyCycles,
         model: selectedModel,
+        unfilteredMode,
       });
+      const reqDuration = Math.round(performance.now() - reqStart);
+      const totalDuration = Math.round(performance.now() - startedPerf);
+
       setDnaResultText(data.result);
+      setDnaElapsedMs(totalDuration);
       setDnaRefinementMeta(data.refinementMeta || null);
+
+      const usedModelLabel = data.usedModel
+        ? GEMINI_FREE_MODELS.find((m) => m.id === data.usedModel)?.name || data.usedModel
+        : selectedModelName;
+
       if (data.usedModel) {
-        const found = GEMINI_FREE_MODELS.find((m) => m.id === data.usedModel);
-        setLastUsedModel(found?.name || data.usedModel);
+        setLastUsedModel(usedModelLabel);
         setFallbackOccurred(!!data.fallbackOccurred);
       }
+
+      const diag: ExtendedDiagnosticsLog = {
+        operation: 'Style DNA Transfer V5.0',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: totalDuration,
+        model: usedModelLabel,
+        status: data.refinementMeta?.issuesRemaining > 0 ? 'degraded' : 'ok',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: donorText.length + contentText.length,
+        outputChars: (data.result || '').length,
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        steps: [
+          {
+            stage: 'Извлечение ДНК донора и синтез результата',
+            status: 'completed',
+            durationMs: reqDuration,
+            detail: `Модель ${usedModelLabel}, циклов: ${data.refinementMeta?.cyclesRun ?? 0}, проходов: ${data.refinementMeta?.passes ?? 1}`,
+          },
+          {
+            stage: 'Запуск аудита по 16 детекторам',
+            status: 'completed',
+            durationMs: Math.max(10, totalDuration - reqDuration),
+            detail: 'Обновление циферблатов и расчёт метрик',
+          },
+        ],
+      };
+      setDnaDiagnostics(diag);
 
       setAuditTargetSource('result');
       handleRunDetectorAudit(data.result);
@@ -1529,118 +2217,169 @@ export default function App() {
       const activeList = MODULES.filter((m) => flags[m.key]).map((m) => m.short);
       if (activeShieldsCount > 0) activeList.push(`${activeShieldsCount} щитов детекции`);
 
+      const metricsSnap = Object.fromEntries(
+        computePlus40Metrics(data.result, donorText, contentText).map((m) => [m.label, m.value])
+      );
+
       saveToHistory(
         data.result,
         Math.min(100, activeEnginesCount * 12),
-        `[${selectedModelName} | ${activeList.join(' + ') || 'Без модулей'}] Т1: ${donorText.slice(0, 35)}... | Т2: ${contentText.slice(0, 35)}...`,
-        'style-dna'
+        `[${usedModelLabel} | ${activeList.join(' + ') || 'Без модулей'}] Т1: ${donorText.slice(0, 60)}... | Т2: ${contentText.slice(0, 80)}...`,
+        'style-dna',
+        {
+          promptUsed: composedPromptSummary,
+          modelUsed: usedModelLabel,
+          durationMs: totalDuration,
+          metricsSnapshot: metricsSnap,
+          diagnosticsSnapshot: { refinementMeta: data.refinementMeta, log: diag },
+        }
       );
     } catch (err: any) {
-      setError(err.message || 'Ошибка переноса стилевой ДНК');
+      const totalDuration = Math.round(performance.now() - startedPerf);
+      setDnaElapsedMs(totalDuration);
+      setError(err.message || 'Ошибка при переносе ДНК стиля.');
+      setDnaDiagnostics({
+        operation: 'Style DNA Transfer V5.0',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: totalDuration,
+        model: selectedModelName,
+        status: 'error',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: donorText.length + contentText.length,
+        outputChars: 0,
+        warnings: [],
+        error: err.message || 'Ошибка при переносе ДНК стиля.',
+        steps: [
+          {
+            stage: 'Вызов /api/style-dna-transfer',
+            status: 'failed',
+            durationMs: totalDuration,
+            detail: err.message || 'Ошибка выполнения',
+          },
+        ],
+      });
     } finally {
       setIsGeneratingDna(false);
     }
   };
 
-  const handleRunDnaTransferV2 = async () => {
-    if (!donorText.trim() || !contentText.trim()) {
-      setError('Пожалуйста, заполните оба поля: Текст 1 (образец стиля) и Текст 2 (содержание).');
-      return;
-    }
-    if (!v2AccessKey.trim()) {
-      setError('Введите ключ PROMPTGPT_V2_ACCESS_KEY, заданный в настройках сервера.');
-      return;
-    }
-
+  const handleRunV2Pipeline = async () => {
+    const t0 = performance.now();
+    const startedIso = new Date().toISOString();
     setIsGeneratingDna(true);
     setError(null);
-    setV2Status('');
-    setV2Diagnostics(null);
-    setDnaResultText('');
+    setV2Status('Запуск PromptGPT v2...');
+
+    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
+    const chosenModel = v2ModelId.trim() || selectedModel;
 
     try {
-      let res: Response | null = null;
-      let rawText = '';
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        res = await fetch('/api/v2/style-transfer', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-PromptGPT-V2-Key': v2AccessKey.trim(),
-          },
-          body: JSON.stringify({ donorText, sourceText: contentText }),
-        });
-
-        const contentType = res.headers.get('content-type') || '';
-        rawText = await res.text();
-        const isWarmup =
-          (contentType.includes('text/html') && rawText.includes('Starting Server...')) ||
-          res.status === 502 ||
-          res.status === 503;
-
-        if (isWarmup && !rawText.trim().startsWith('{') && attempt < 3) {
-          await sleep(1200);
-          continue;
-        }
-        break;
+      const headers: Record<string, string> = {};
+      if (v2AccessKey.trim()) {
+        headers['x-promptgpt-key'] = v2AccessKey.trim();
       }
 
-      if (!res) {
-        throw new Error('Не удалось связаться с сервером. Пожалуйста, повторите попытку.');
-      }
+      const data = await safePost(
+        '/api/v2/run',
+        {
+          donorText,
+          sourceText: contentText,
+          modelId: chosenModel,
+          styleIntensity: v2StyleIntensity,
+          customInstructions: v2CustomInstructions,
+          questionChoices: v2QuestionChoices,
+          unfilteredMode,
+        },
+        3,
+        headers
+      );
 
-      let data: any = null;
-      try {
-        data = rawText ? JSON.parse(rawText) : null;
-      } catch {
-        data = null;
-      }
+      const elapsed = Math.round(performance.now() - t0);
+      setDnaElapsedMs(elapsed);
 
-      if (data && typeof data === 'object' && 'status' in data) {
-        bumpUsage();
+      if (data?.status === 'needs_clarification') {
+        setV2Status('Требуются уточнения перед генерацией');
         setV2Diagnostics(data);
-        setV2Status(
-          `PROMPTGPT v2: ${data.status || 'неизвестный статус'}; создано вариантов: ${data.generation?.generated ?? 0}.`
-        );
-
-        if (data.status !== 'accepted' || typeof data.selectedText !== 'string' || !data.selectedText.trim()) {
-          const firstCandidate = Array.isArray(data.candidates) ? data.candidates[0] : undefined;
-          const firstEval = firstCandidate?.finalEvaluation || firstCandidate?.initial;
-          const detail =
-            data.error?.message ||
-            firstEval?.rejectionReasons?.[0] ||
-            data.warnings?.[0] ||
-            firstCandidate?.warnings?.[0] ||
-            'Ни один вариант не прошёл обязательные проверки смысла и стиля.';
-          throw new Error(`PROMPTGPT v2 завершил работу со статусом «${data.status || 'unknown'}». ${detail}`);
+      } else if (data?.status === 'completed') {
+        setV2Status('Готово (PromptGPT v2)');
+        setV2Diagnostics(data.diagnostics || null);
+        const outStr = typeof data.outputText === 'string' ? data.outputText : '';
+        if (outStr) {
+          setDnaResultText(outStr);
+          setAuditTargetSource('result');
+          handleRunDetectorAudit(outStr);
+          const metricsSnap = Object.fromEntries(
+            computePlus40Metrics(outStr, donorText, contentText).map((m) => [m.label, m.value])
+          );
+          const diagLog: ExtendedDiagnosticsLog = {
+            operation: 'PromptGPT v2 Pipeline',
+            startedAt: startedIso,
+            finishedAt: new Date().toISOString(),
+            durationMs: elapsed,
+            model: chosenModel,
+            status: 'ok',
+            activeFlags: activeFlagNames,
+            activeShieldsCount,
+            inputChars: donorText.length + contentText.length,
+            outputChars: outStr.length,
+            warnings: Array.isArray(data.warnings) ? data.warnings : [],
+            steps: [
+              {
+                stage: 'PromptGPT v2 Pipeline (/api/v2/run)',
+                status: 'completed',
+                durationMs: elapsed,
+                detail: `Интенсивность ${v2StyleIntensity}/5, модель ${chosenModel}`,
+              },
+            ],
+          };
+          setDnaDiagnostics(diagLog);
+          saveToHistory(
+            outStr,
+            v2StyleIntensity * 20,
+            `[v2 | ${chosenModel} | стиль ${v2StyleIntensity}/5] Т1: ${donorText.slice(0, 60)}... | Т2: ${contentText.slice(0, 80)}...`,
+            'style-dna',
+            {
+              promptUsed: `PromptGPT v2 | Модель: ${chosenModel} | Стиль: ${v2StyleIntensity}/5\nИнструкции: ${v2CustomInstructions || '(нет)'}`,
+              modelUsed: chosenModel,
+              durationMs: elapsed,
+              metricsSnapshot: metricsSnap,
+              diagnosticsSnapshot: { v2Data: data, log: diagLog },
+            }
+          );
         }
-
-        setDnaResultText(data.selectedText);
-        setDnaRefinementMeta(null);
-        setAuditTargetSource('result');
-        handleRunDetectorAudit(data.selectedText);
-        saveToHistory(
-          data.selectedText,
-          100,
-          `[PROMPTGPT v2] Т1: ${donorText.slice(0, 35)}... | Т2: ${contentText.slice(0, 35)}...`,
-          'style-dna'
-        );
-        return;
+      } else {
+        setV2Status(data?.status || 'Завершено');
+        setV2Diagnostics(data || null);
       }
-
-      if (!res.ok) {
-        const errorMessage =
-          (typeof data?.error === 'string' ? data.error : data?.error?.message) ||
-          data?.message ||
-          (rawText.includes('Starting Server...')
-            ? 'Сервер инициализируется. Пожалуйста, подождите несколько секунд и повторите запуск.'
-            : `Ошибка сервера (${res.status}).`);
-        throw new Error(errorMessage);
-      }
-
-      throw new Error('Сервер вернул неожиданный ответ от PROMPTGPT v2.');
     } catch (err: any) {
-      setError(err.message || 'Ошибка PROMPTGPT v2');
+      const elapsed = Math.round(performance.now() - t0);
+      setDnaElapsedMs(elapsed);
+      setV2Status('Ошибка выполнения PromptGPT v2');
+      setError(err?.message || 'Ошибка при запуске PromptGPT v2');
+      setDnaDiagnostics({
+        operation: 'PromptGPT v2 Pipeline',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: elapsed,
+        model: chosenModel,
+        status: 'error',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: donorText.length + contentText.length,
+        outputChars: 0,
+        warnings: [],
+        error: err?.message || 'Ошибка при запуске PromptGPT v2',
+        steps: [
+          {
+            stage: 'Вызов /api/v2/run',
+            status: 'failed',
+            durationMs: elapsed,
+            detail: err?.message || 'Ошибка',
+          },
+        ],
+      });
     } finally {
       setIsGeneratingDna(false);
     }
@@ -1648,24 +2387,83 @@ export default function App() {
 
   const handleTransformHumanizer = async () => {
     if (!inputTextAI.trim()) {
-      setError('Пожалуйста, введите текст для преобразования.');
+      setError('Пожалуйста, введите текст для гуманизации.');
       return;
     }
+    const t0 = performance.now();
+    const startedIso = new Date().toISOString();
     setIsGeneratingHumanizer(true);
     setError(null);
+    setTransformedText('');
+    setHumanizerElapsedMs(null);
+    setHumanizerDiagnostics(null);
+
+    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
+    const promptSummary = `Режим: Humanizer | Интенсивность: ${styleIntensity}/10 | Модель: ${selectedModelName}\nСтратегия: ${promptStrategy || '(стандартная)'}`;
+
     try {
-      const data = await safePost('/api/transform-text', {
+      const data = await safePost('/api/humanizer', {
         text: inputTextAI,
-        promptStrategy,
         styleIntensity,
-        flags,
-        shields: detectorShields,
+        promptStrategy,
         model: selectedModel,
+        unfilteredMode,
       });
-      setTransformedText(data.transformedText);
-      saveToHistory(data.transformedText, styleIntensity, inputTextAI, 'humanizer');
+      const elapsed = Math.round(performance.now() - t0);
+      setHumanizerElapsedMs(elapsed);
+      setTransformedText(data.result);
+
+      const diag: ExtendedDiagnosticsLog = {
+        operation: 'Humanizer Переработка',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: elapsed,
+        model: selectedModelName,
+        status: 'ok',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: inputTextAI.length,
+        outputChars: (data.result || '').length,
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        steps: [
+          {
+            stage: 'Стилистическая переработка (/api/humanizer)',
+            status: 'completed',
+            durationMs: elapsed,
+            detail: `Интенсивность ${styleIntensity}/10, модель ${selectedModelName}`,
+          },
+        ],
+      };
+      setHumanizerDiagnostics(diag);
+
+      saveToHistory(data.result, styleIntensity, inputTextAI, 'humanizer', {
+        promptUsed: promptSummary,
+        modelUsed: selectedModelName,
+        durationMs: elapsed,
+        metricsSnapshot: Object.fromEntries(
+          computePlus40Metrics(data.result, donorText, inputTextAI).map((m) => [m.label, m.value])
+        ),
+        diagnosticsSnapshot: { log: diag },
+      });
     } catch (err: any) {
-      setError(err.message || 'Ошибка трансформации');
+      const elapsed = Math.round(performance.now() - t0);
+      setHumanizerElapsedMs(elapsed);
+      setError(err.message || 'Произошла ошибка при обработке запроса.');
+      setHumanizerDiagnostics({
+        operation: 'Humanizer Переработка',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: elapsed,
+        model: selectedModelName,
+        status: 'error',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: inputTextAI.length,
+        outputChars: 0,
+        warnings: [],
+        error: err.message || 'Произошла ошибка при обработке запроса.',
+        steps: [{ stage: 'Вызов /api/humanizer', status: 'failed', durationMs: elapsed, detail: err.message || 'Ошибка' }],
+      });
     } finally {
       setIsGeneratingHumanizer(false);
     }
@@ -1673,1451 +2471,1318 @@ export default function App() {
 
   const handleGenerateDraft = async () => {
     if (!draftInputText.trim()) {
-      setError('Пожалуйста, введите текст для создания черновика.');
+      setError('Введите текст для черновика.');
       return;
     }
+    const t0 = performance.now();
+    const startedIso = new Date().toISOString();
     setIsGeneratingDraft(true);
     setError(null);
+    setDraftOutputText('');
+    setDraftElapsedMs(null);
+    setDraftDiagnostics(null);
+
+    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
+    const promptSummary = `Режим: Draft Workshop | Сила: ${draftStrength}/10 | Модель: ${selectedModelName}\nИнструкции: ${draftCustomInstructions || '(нет)'}`;
+
     try {
-      const data = await safePost('/api/generate-draft', {
+      const data = await safePost('/api/draft-workshop', {
         text: draftInputText,
-        strength: draftStrength,
+        draftStrength,
         customInstructions: draftCustomInstructions,
         model: selectedModel,
+        unfilteredMode,
       });
-      setDraftOutputText(data.draft);
-      saveToHistory(data.draft, draftStrength, draftInputText, 'draft');
+      const elapsed = Math.round(performance.now() - t0);
+      setDraftElapsedMs(elapsed);
+      setDraftOutputText(data.result);
+
+      const diag: ExtendedDiagnosticsLog = {
+        operation: 'Draft Workshop (Черновик)',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: elapsed,
+        model: selectedModelName,
+        status: 'ok',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: draftInputText.length,
+        outputChars: (data.result || '').length,
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        steps: [
+          {
+            stage: 'Генерация черновика (/api/draft-workshop)',
+            status: 'completed',
+            durationMs: elapsed,
+            detail: `Сила ${draftStrength}/10, модель ${selectedModelName}`,
+          },
+        ],
+      };
+      setDraftDiagnostics(diag);
+
+      saveToHistory(data.result, draftStrength, draftInputText, 'draft', {
+        promptUsed: promptSummary,
+        modelUsed: selectedModelName,
+        durationMs: elapsed,
+        metricsSnapshot: Object.fromEntries(
+          computePlus40Metrics(data.result, donorText, draftInputText).map((m) => [m.label, m.value])
+        ),
+        diagnosticsSnapshot: { log: diag },
+      });
     } catch (err: any) {
-      setError(err.message || 'Ошибка генерации черновика');
+      const elapsed = Math.round(performance.now() - t0);
+      setDraftElapsedMs(elapsed);
+      setError(err.message || 'Ошибка при генерации черновика.');
+      setDraftDiagnostics({
+        operation: 'Draft Workshop (Черновик)',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: elapsed,
+        model: selectedModelName,
+        status: 'error',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: draftInputText.length,
+        outputChars: 0,
+        warnings: [],
+        error: err.message || 'Ошибка при генерации черновика.',
+        steps: [{ stage: 'Вызов /api/draft-workshop', status: 'failed', durationMs: elapsed, detail: err.message || 'Ошибка' }],
+      });
     } finally {
       setIsGeneratingDraft(false);
     }
   };
 
-  const handleAcademicEdit = async () => {
+  const handleGenerateAcademic39 = async () => {
     if (!academicInputText.trim()) {
-      setError('Пожалуйста, введите текст для редактирования по 39 правилам.');
+      setError('Введите текст для академической переработки.');
       return;
     }
+    const t0 = performance.now();
+    const startedIso = new Date().toISOString();
     setIsGeneratingAcademic(true);
     setError(null);
+    setAcademicOutputText('');
+    setAcademicElapsedMs(null);
+    setAcademicDiagnostics(null);
+
+    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
+    const promptSummary = `Режим: Academic 39 Rules | Модель: ${selectedModelName}\nИнструкции: ${academicCustomInstructions || '(стандартные 39 правил)'}`;
+
     try {
-      const data = await safePost('/api/academic-edit', {
+      const data = await safePost('/api/academic-39', {
         text: academicInputText,
         customInstructions: academicCustomInstructions,
         model: selectedModel,
+        unfilteredMode,
       });
-      setAcademicOutputText(data.editedText);
-      saveToHistory(data.editedText, 39, academicInputText, 'academic-39');
+      const elapsed = Math.round(performance.now() - t0);
+      setAcademicElapsedMs(elapsed);
+      setAcademicOutputText(data.result);
+
+      const diag: ExtendedDiagnosticsLog = {
+        operation: 'Academic 39 Rules',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: elapsed,
+        model: selectedModelName,
+        status: 'ok',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: academicInputText.length,
+        outputChars: (data.result || '').length,
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        steps: [
+          {
+            stage: 'Академическая обработка (/api/academic-39)',
+            status: 'completed',
+            durationMs: elapsed,
+            detail: `Модель ${selectedModelName}, доп. инструкций: ${academicCustomInstructions ? 'да' : 'нет'}`,
+          },
+        ],
+      };
+      setAcademicDiagnostics(diag);
+
+      saveToHistory(data.result, 39, academicInputText, 'academic-39', {
+        promptUsed: promptSummary,
+        modelUsed: selectedModelName,
+        durationMs: elapsed,
+        metricsSnapshot: Object.fromEntries(
+          computePlus40Metrics(data.result, donorText, academicInputText).map((m) => [m.label, m.value])
+        ),
+        diagnosticsSnapshot: { log: diag },
+      });
     } catch (err: any) {
-      setError(err.message || 'Ошибка академического редактирования');
+      const elapsed = Math.round(performance.now() - t0);
+      setAcademicElapsedMs(elapsed);
+      setError(err.message || 'Ошибка при генерации по правилам 39.');
+      setAcademicDiagnostics({
+        operation: 'Academic 39 Rules',
+        startedAt: startedIso,
+        finishedAt: new Date().toISOString(),
+        durationMs: elapsed,
+        model: selectedModelName,
+        status: 'error',
+        activeFlags: activeFlagNames,
+        activeShieldsCount,
+        inputChars: academicInputText.length,
+        outputChars: 0,
+        warnings: [],
+        error: err.message || 'Ошибка при генерации по правилам 39.',
+        steps: [{ stage: 'Вызов /api/academic-39', status: 'failed', durationMs: elapsed, detail: err.message || 'Ошибка' }],
+      });
     } finally {
       setIsGeneratingAcademic(false);
     }
   };
 
-  const dnaMetrics = useMemo(() => analyzeStyleMetrics(dnaResultText), [dnaResultText]);
+  const metricsHuman = analyzeStyleMetrics(TEXT_HUMAN);
+  const metricsAI = analyzeStyleMetrics(inputTextAI);
+  const metricsTransformed = analyzeStyleMetrics(transformedText);
 
-  if (activeWorkbenchDetector) {
-    return (
-      <DetectorWorkbench
-        detectorId={activeWorkbenchDetector}
-        onSelectDetector={(id: string) => setActiveWorkbenchDetector(id)}
-        onBack={() => setActiveWorkbenchDetector(null)}
-        currentDnaResult={dnaResultText}
-        currentContentText={contentText}
-        currentDonorText={donorText}
-      />
-    );
-  }
+  const activeDnaMetrics = useMemo(
+    () => (dnaResultText ? computePlus40Metrics(dnaResultText, donorText, contentText) : []),
+    [dnaResultText, donorText, contentText]
+  );
+  const activeHumanizerMetrics = useMemo(
+    () => (transformedText ? computePlus40Metrics(transformedText, donorText, inputTextAI) : []),
+    [transformedText, donorText, inputTextAI]
+  );
+  const activeDraftMetrics = useMemo(
+    () => (draftOutputText ? computePlus40Metrics(draftOutputText, donorText, draftInputText) : []),
+    [draftOutputText, donorText, draftInputText]
+  );
+  const activeAcademicMetrics = useMemo(
+    () => (academicOutputText ? computePlus40Metrics(academicOutputText, donorText, academicInputText) : []),
+    [academicOutputText, donorText, academicInputText]
+  );
 
-  const NAV_TABS: { id: TabId; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
-    { id: 'academic-39', label: '39 правил регламента', Icon: CheckSquare },
-    { id: 'sandbox', label: 'Алхимик Человечности', Icon: Sparkles },
-    { id: 'draft-workshop', label: 'Черновики (Ур. 1-10)', Icon: BookOpen },
-    { id: 'analysis', label: 'Анализ Различий', Icon: Search },
-  ];
+  const selectedHistoryItem = useMemo(
+    () => history.find((item) => item.id === selectedHistoryItemId) || history[0] || null,
+    [history, selectedHistoryItemId]
+  );
 
-  const tabBtn = (active: boolean) =>
-    `px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-      active ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-    }`;
-
-  const authorModules = MODULES.filter((m) => m.group === 'author');
+  const donorModules = MODULES.filter((m) => m.group === 'author');
   const externalModules = MODULES.filter((m) => m.group === 'external');
 
+  const combinedPromptPreview = [
+    '=== ПЕРЕНОС СТИЛЯ ДНК АВТОРА ===',
+    `ТЕКСТ 1 (ОБРАЗЕЦ СТИЛЯ): "${donorText}"`,
+    `ТЕКСТ 2 (ИСХОДНОЕ СОДЕРЖАНИЕ): "${contentText}"`,
+    `АКТИВНЫЕ МОДУЛИ (${activeEnginesCount}/${ALL_FLAG_KEYS.length}):`,
+    ...MODULES.filter((m) => flags[m.key]).map((m) => `  • ${m.summary}`),
+    ...(activeEnginesCount === 0 ? ['  (Нет включенных модулей)'] : []),
+    `ЩИТЫ ДЕТЕКЦИИ (${activeShieldsCount}/${DETECTORS_LIST.length}): ${
+      activeShieldsCount > 0 ? `${activeShieldsCount} активных` : 'Нет'
+    }`,
+    `ЦИКЛЫ ПРОВЕРКИ: ${flags.twentyCycles ? 'Включено (20 циклов)' : 'Стандартный режим'}`,
+  ].join('\n');
+
+  const currentSourceText = getTextToAudit();
+
+  const renderDetectorCards = (list: DetectorInfo[]) => (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {list.map((det) => {
+        const scoreData = detectorScores[det.id] || INITIAL_DETECTOR_SCORES[det.id];
+        const isScanning = !!scanningDetectors[det.id];
+        const isShielded = !!detectorShields[det.id];
+        const notTested = scoreData.status === 'Не проверено' && !isScanning;
+
+        return (
+          <div
+            key={det.id}
+            className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
+              isShielded
+                ? 'bg-slate-900/95 border-indigo-500/50 shadow-md'
+                : 'bg-slate-900/60 border-slate-800 opacity-75'
+            }`}
+          >
+            <div>
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={isShielded}
+                    onChange={() => setDetectorShields((prev) => ({ ...prev, [det.id]: !prev[det.id] }))}
+                    className="h-3.5 w-3.5 rounded accent-indigo-500 cursor-pointer shrink-0"
+                    title="Включить щит / выбрать для сканирования"
+                  />
+                  <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 truncate">
+                    {det.category}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono text-slate-400 shrink-0">{scoreData.threshold}</span>
+              </div>
+
+              <div className="mt-1.5">
+                <h4 className="text-xs font-extrabold text-white leading-snug">{det.name}</h4>
+                <a
+                  href={det.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-mono text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1 mt-0.5 break-all"
+                >
+                  {det.repo} <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                </a>
+              </div>
+
+              <DetectorDialGauge
+                humanScore={scoreData.humanScore}
+                aiScore={scoreData.aiScore}
+                isScanning={isScanning}
+                notTested={notTested}
+              />
+
+              <div className="bg-slate-950/90 border border-slate-800/80 rounded-lg p-2 text-center space-y-1 mb-2">
+                <div className="text-[11px] font-mono text-slate-300">
+                  Метрика: <strong className="text-white">{scoreData.rawMetric}</strong>
+                </div>
+                <div
+                  className={`text-[11px] font-bold ${
+                    notTested
+                      ? 'text-slate-400'
+                      : scoreData.humanScore >= 80
+                      ? 'text-emerald-400'
+                      : scoreData.humanScore >= 60
+                      ? 'text-amber-400'
+                      : 'text-rose-400'
+                  }`}
+                >
+                  {isScanning ? 'Проверка...' : scoreData.verdictLabel}
+                </div>
+              </div>
+
+              <p className="text-[10px] text-slate-400 leading-relaxed mb-2">{det.description}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="pt-2 border-t border-slate-800/80 text-[10px] text-slate-400 leading-snug">
+                <span className="text-indigo-300 font-semibold">Щит:</span> {det.shieldRule}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleRunSingleDetector(det.id)}
+                  disabled={isScanning}
+                  className="py-1.5 px-2 rounded-lg bg-slate-800 hover:bg-indigo-600 disabled:opacity-50 text-slate-200 hover:text-white text-[10px] font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
+                >
+                  <RefreshCw className={`h-3 w-3 ${isScanning ? 'animate-spin' : ''}`} />
+                  {isScanning ? 'Скан...' : 'Тест'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveWorkbenchDetector(det.id)}
+                  className="py-1.5 px-2 rounded-lg bg-indigo-950/80 hover:bg-indigo-700 border border-indigo-700/60 text-indigo-200 hover:text-white text-[10px] font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
+                >
+                  <Maximize2 className="h-3 w-3" />
+                  Стенд
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const navTabs: Array<{ id: TabId; label: string; Icon: React.ComponentType<{ className?: string }> }> = [
+    { id: 'style-dna', label: 'Стиль ДНК и 16 детекторов', Icon: Dna },
+    { id: 'sloptotal', label: 'SlopTotal (23 движка)', Icon: ShieldAlert },
+    { id: 'mgt-eval', label: 'MGT-Eval (26 моделей)', Icon: Activity },
+    { id: 'mgt-bench', label: 'MGTBench (14 методов)', Icon: Layers },
+    { id: 'detect-zoo', label: 'DetectZoo (37 моделей)', Icon: Sparkles },
+    { id: 'analysis', label: 'Сравнение и 16 детекторов', Icon: Search },
+    { id: 'sandbox', label: 'Гуманизатор текста', Icon: Sliders },
+    { id: 'draft-workshop', label: 'Черновик', Icon: FileCode },
+    { id: 'academic-39', label: 'Стиль 39 правил', Icon: BookOpen },
+    { id: 'history', label: `История (${history.length})`, Icon: History },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-950/90 backdrop-blur sticky top-0 z-30 px-6 py-4 flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center space-x-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-            <Dna className="h-5 w-5 text-white animate-pulse" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              PROMPTGPT ∞ Style DNA Transfer Engine
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-medium border border-indigo-500/30">
-                v5.0 Pro
-              </span>
-            </h1>
-            <p className="text-xs text-slate-400">
-              Глубокое извлечение и перенос стилевой ДНК автора (Текст 1: КАК писать ➔ Текст 2: ЧТО писать)
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-2 bg-slate-900/90 p-1 rounded-xl border border-slate-800 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setActiveTab('style-dna')}
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
-              activeTab === 'style-dna'
-                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md'
-                : 'text-indigo-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Dna className="h-3.5 w-3.5" />
-            🧬 ДНК-Трансфер (PROMPTGPT V5.0)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('sloptotal')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'sloptotal'
-                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md'
-                : 'bg-emerald-950/70 text-emerald-300 hover:text-white hover:bg-emerald-900 border border-emerald-700/60'
-            }`}
-            title="Полноценный SlopTotal: 23 движка, поабзацная тепловая карта и сканер сайтов"
-          >
-            <ShieldAlert className="h-3.5 w-3.5" />
-            🛡️ SlopTotal (23 движка)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('mgt-eval')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'mgt-eval'
-                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
-                : 'bg-purple-950/70 text-purple-300 hover:text-white hover:bg-purple-900 border border-purple-700/60'
-            }`}
-            title="Полноценный MGT-Eval: 26 моделей, 14 атак VIPER/ASR, Platt Calibration и ROC/AUROC бенчмарк"
-          >
-            <Activity className="h-3.5 w-3.5" />
-            🧪 MGT-Eval (26 моделей)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('mgt-bench')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'mgt-bench'
-                ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-md'
-                : 'bg-cyan-950/70 text-cyan-300 hover:text-white hover:bg-cyan-900 border border-cyan-700/60'
-            }`}
-            title="Полноценный MGTBench (TrustAIRLab): 14 методов, PHD Prim MST, 7-классовая атрибуция LLM и Multi-Length Curve"
-          >
-            <BarChart3 className="h-3.5 w-3.5" />
-            📐 MGTBench (14 методов)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('detect-zoo')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'detect-zoo'
-                ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md'
-                : 'bg-amber-950/70 text-amber-300 hover:text-white hover:bg-amber-900 border border-amber-700/60'
-            }`}
-            title="Полноценный DetectZoo (sadjadeb/DetectZoo): 37 текст-детекторов, OOD/BiScope/Fluoroscopy, BenchmarkEvaluator EER и каталог 70 моделей"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            🦁 DetectZoo (37+70 мод.)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveWorkbenchDetector('gltr')}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 bg-indigo-950/80 text-indigo-300 hover:text-white hover:bg-indigo-900 border border-indigo-700/60 cursor-pointer shadow-sm"
-            title={`Открыть лабораторию с полным функционалом каждого из ${DETECTORS_LIST.length} детекторов`}
-          >
-            <Maximize2 className="h-3.5 w-3.5 text-indigo-400" />
-            🔬 Стенды {DETECTORS_LIST.length} Детекторов
-          </button>
-          {NAV_TABS.map(({ id, label, Icon }) => (
-            <button key={id} type="button" onClick={() => setActiveTab(id)} className={tabBtn(activeTab === id)}>
-              <Icon className={`h-3.5 w-3.5 ${id === 'academic-39' ? 'text-amber-400' : ''}`} />
-              {label}
-            </button>
-          ))}
-          <button type="button" onClick={() => setActiveTab('history')} className={tabBtn(activeTab === 'history')}>
-            <History className="h-3.5 w-3.5" />
-            История ({history.length})
-          </button>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-        {/* Local request counter */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg flex items-center justify-between flex-wrap gap-4">
+      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center space-x-3">
-            <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-              <Zap className="h-5 w-5" />
+            <div className="p-2 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-500/20">
+              <Sparkles className="h-6 w-6 text-white" />
             </div>
             <div>
-              <div className="text-xs font-bold text-white flex items-center gap-2">
-                <span>Запросы к модели сегодня ({selectedModelName})</span>
-              </div>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+                PromptGPT Studio &amp; Анти-Детектор
+              </h1>
               <p className="text-xs text-slate-400">
-                Выполнено в этом браузере: <strong className="text-slate-200">{dailyUsage.count}</strong>. Это локальный счётчик: реальный лимит определяет ваш API-ключ.
+                Стиль ДНК • {DETECTORS_LIST.length} детекторов • Черновики и анализ
               </p>
             </div>
           </div>
+
+          <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+            <button
+              type="button"
+              onClick={toggleTemplateSidebar}
+              data-testid="toggle-template-sidebar-btn"
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition flex items-center gap-1.5 cursor-pointer ${
+                isTemplateSidebarOpen
+                  ? 'bg-amber-950/70 text-amber-200 border-amber-600/70'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title="Открыть или скрыть библиотеку шаблонов промптов"
+            >
+              <BookOpen className="h-3.5 w-3.5 text-amber-300" />
+              <span>Шаблоны ({allTemplates.length})</span>
+            </button>
+            <span className="px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">
+              Запросов сегодня (локально): <strong>{dailyUsage.count}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={handleExportConfigAndHistory}
+              data-testid="export-config-history-btn"
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+              title="Скачать все настройки и историю в JSON-файл"
+            >
+              {exportJustCompleted ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-200" />
+                  <span>Экспортировано</span>
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Экспорт настроек и истории</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
-        {/* ===================== TAB: STYLE DNA ===================== */}
+        {/* Navigation Tabs */}
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-1 overflow-x-auto pb-1">
+          {navTabs.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setActiveTab(id);
+                setError(null);
+              }}
+              className={`flex items-center space-x-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+                activeTab === id
+                  ? 'border-indigo-500 text-indigo-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col lg:flex-row gap-6 items-start">
+        {isTemplateSidebarOpen && (
+          <PromptTemplateSidebar
+            templates={allTemplates}
+            activeTemplateId={activeTemplateId}
+            currentConfig={buildCurrentTemplateConfig()}
+            onApply={handleApplyPromptTemplate}
+            onSaveNew={handleSavePromptTemplate}
+            onUpdateExisting={handleUpdateCustomTemplate}
+            onDeleteCustom={handleDeleteCustomTemplate}
+            onDuplicate={handleDuplicatePromptTemplate}
+            onClose={toggleTemplateSidebar}
+          />
+        )}
+
+        <main className="flex-1 min-w-0 w-full space-y-8">
+        <ErrorBox message={tabError} />
+
+        {/* ==================== TAB 1: STYLE DNA & DETECTORS ==================== */}
         {activeTab === 'style-dna' && (
-          <div className="space-y-6">
-            <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-purple-950 border border-indigo-800/60 rounded-2xl p-6 shadow-2xl space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div className="flex items-center space-x-3">
-                  <div className="p-3 rounded-2xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-                    <Dna className="h-7 w-7" />
+          <div className="space-y-8">
+            {/* Hero */}
+            <div className="bg-gradient-to-r from-indigo-950/60 via-slate-900 to-purple-950/60 border border-indigo-500/30 rounded-2xl p-6 shadow-xl">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center space-x-2 px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 text-xs font-medium mb-2">
+                    <Dna className="h-3.5 w-3.5" />
+                    <span>ПЕРЕНОС СТИЛЯ ДНК АВТОРА + {DETECTORS_LIST.length} ДЕТЕКТОРОВ</span>
                   </div>
-                  <div>
-                    <h2 className="text-lg font-bold text-white">
-                      Глубокий перенос авторской стилевой ДНК (Style DNA Transfer Engine V5.0)
-                    </h2>
-                    <p className="text-xs text-slate-300">
-                      <strong>Текст 1 (Донор)</strong> определяет <span className="text-indigo-400 font-semibold">КАК писать</span>.{' '}
-                      <strong>Текст 2 (Материал)</strong> определяет <span className="text-purple-400 font-semibold">ЧТО писать</span>.
-                    </p>
-                  </div>
+                  <h2 className="text-xl font-bold text-white">Генератор стиля по образцу + защита от детекторов</h2>
+                  <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                    <strong>Текст 1</strong> задаёт стиль письма (синтаксис, длину фраз, пунктуацию), <strong>Текст 2</strong> — содержание и факты. Нажмите переключатели модулей и щиты детекторов ниже.
+                  </p>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowPromptDetails(!showPromptDetails)}
-                  className="px-3.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-xs text-slate-300 flex items-center gap-1.5 border border-slate-700 transition-colors"
-                >
-                  <FileCode className="h-3.5 w-3.5 text-indigo-400" />
-                  {showPromptDetails ? 'Скрыть регламент V5.0' : 'Показать регламент V5.0'}
-                </button>
-              </div>
-
-              {/* Model selector */}
-              <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center space-x-2">
-                    <Cpu className="h-4 w-4 text-emerald-400" />
-                    <span className="text-xs font-bold text-slate-200">Модель Gemini (от мощной к быстрой):</span>
+                <div className="flex items-center space-x-3 shrink-0">
+                  <div className="text-right">
+                    <div className="text-xs text-slate-400">Активно модулей</div>
+                    <div className="text-2xl font-black text-indigo-400">
+                      {activeEnginesCount} / {ALL_FLAG_KEYS.length}
+                    </div>
                   </div>
-                  <span className="text-[11px] text-slate-400 bg-slate-800/60 px-2.5 py-0.5 rounded-full border border-slate-700/60">
-                    Активная: <strong className="text-emerald-300">{selectedModelName}</strong>
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {GEMINI_FREE_MODELS.map((m) => {
-                    const isSelected = selectedModel === m.id;
-                    return (
-                      <div
-                        key={m.id}
-                        onClick={() => setSelectedModel(m.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setSelectedModel(m.id);
-                          }
-                        }}
-                        role="button"
-                        aria-pressed={isSelected}
-                        tabIndex={0}
-                        className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer relative flex flex-col justify-between ${
-                          isSelected
-                            ? 'bg-slate-900 border-emerald-500/80 ring-2 ring-emerald-500/30 shadow-lg'
-                            : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 hover:bg-slate-900/60'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
-                            <span className="font-bold text-xs text-white flex items-center gap-1.5">
-                              <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-                              {m.name}
-                            </span>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${m.badgeColor}`}>{m.badge}</span>
-                          </div>
-                          <div className="text-[11px] font-semibold text-slate-300 mb-1">{m.tier}</div>
-                          <p className="text-[10.5px] text-slate-400 leading-relaxed mb-2.5">{m.description}</p>
-                        </div>
-                        <div className="flex items-center justify-between text-[10.5px] text-slate-400 border-t border-slate-800/80 pt-2">
-                          <span>
-                            Скорость: <strong className="text-slate-200">{m.speed}</strong>
-                          </span>
-                          <span>
-                            Мощность: <strong className="text-emerald-400">{m.power}</strong>
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
-
-              {showPromptDetails && (
-                <div className="mt-4 p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 space-y-2 leading-relaxed">
-                  <p className="font-semibold text-indigo-300">📌 Ключевые протоколы движка V5.0:</p>
-                  <ul className="list-disc list-inside space-y-1 text-slate-400">
-                    <li>
-                      <strong>Не улучшать, а воспроизводить:</strong> копируются реальные синтаксические привычки и неровности автора, без приглаживания под усредненный стандарт.
-                    </li>
-                    <li>
-                      <strong>Сохранение 100% содержания:</strong> ни один факт, тезис или аргумент Текста 2 не теряется; факты Текста 1 не примешиваются.
-                    </li>
-                    <li>
-                      <strong>Многоступенчатая конвергенция:</strong> чертёж синтаксиса донора + де-скелетизация Текста 2 + выбор лучшего из 2 кандидатов + до 6 циклов хирургического дожима по 15 метрикам и LLM-критику (с запретом ухудшения качества и потери фактов).
-                    </li>
-                  </ul>
-                </div>
-              )}
             </div>
 
-            {/* Modules */}
-            <div className="space-y-5">
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center space-x-2.5">
-                    <Sliders className="h-5 w-5 text-indigo-400" />
-                    <div>
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
-                        <span>Стек хуманизаторов и алгоритмов (независимые переключатели)</span>
-                        <span
-                          className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${
-                            activeEnginesCount > 0
-                              ? 'bg-emerald-950 text-emerald-300 border-emerald-600/60'
-                              : 'bg-red-950 text-red-300 border-red-800'
-                          }`}
-                        >
-                          Активно: {activeEnginesCount} из {MODULES.length} модулей
-                        </span>
-                      </h3>
-                      <p className="text-xs text-slate-400">
-                        Каждый модуль включается отдельно и комбинируется со всеми остальными в единый промт.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 flex-wrap text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setFlags(PRESET_ALL)}
-                      className="px-2.5 py-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800 transition-colors font-medium flex items-center gap-1"
-                    >
-                      <Sparkles className="h-3 w-3" /> Все {MODULES.length} модулей (Максимум)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFlags(PRESET_RECOMMENDED)}
-                      className="px-2.5 py-1.5 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 transition-colors font-medium flex items-center gap-1"
-                    >
-                      <ShieldCheck className="h-3 w-3" /> Рекомендуемый набор
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFlags(PRESET_AUTHOR)}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors"
-                    >
-                      Только авторские V5
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFlags(PRESET_NONE)}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-red-950 hover:text-red-300 text-slate-400 border border-slate-700 transition-colors"
-                    >
-                      Сброс
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowActivePromptSummary(!showActivePromptSummary)}
-                      className="px-2.5 py-1.5 rounded-lg bg-purple-950 hover:bg-purple-900 text-purple-300 border border-purple-800 transition-colors flex items-center gap-1"
-                    >
-                      <FileCode className="h-3 w-3" />
-                      {showActivePromptSummary ? 'Скрыть промт' : 'Инспектор промта'}
-                    </button>
-                  </div>
+            {/* Model selector */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-2">
+                  <Cpu className="h-4 w-4 text-emerald-400" />
+                  <h3 className="text-sm font-bold text-white">Модель генерации</h3>
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
+                    Бесплатный уровень
+                  </span>
                 </div>
-
-                {showActivePromptSummary && (
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-indigo-900/40 text-xs text-slate-300 space-y-2">
-                    <div className="font-semibold text-indigo-300 flex items-center gap-1.5">
-                      <Terminal className="h-3.5 w-3.5 text-indigo-400" />
-                      <span>Состав активного промта ({activeEnginesCount} модулей):</span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
-                      {MODULES.filter((m) => flags[m.key]).map((m) => (
-                        <div key={m.key} className={`p-2 rounded bg-slate-900 border ${COLOR_STYLES[m.color].box}`}>
-                          ✓ {m.summary}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div className="text-xs text-slate-400">
+                  Выбрана: <strong className="text-emerald-400">{selectedModelName}</strong>
+                  {lastUsedModel && (
+                    <span className="ml-2 text-slate-500">
+                      (последний ответ: <strong className="text-slate-300">{lastUsedModel}</strong>
+                      {fallbackOccurred ? ' — авто-переход при лимите' : ''})
+                    </span>
+                  )}
+                </div>
               </div>
 
-              <div className="space-y-2.5">
-                <div className="flex items-center space-x-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
-                  <Dna className="h-4 w-4 text-emerald-400" />
-                  <span>Блок 1: авторские модули PROMPTGPT V5.0</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {GEMINI_FREE_MODELS.map((m) => {
+                  const isSelected = selectedModel === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleSelectModel(m.id)}
+                      className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-gradient-to-br from-slate-900 via-emerald-950/30 to-slate-900 border-emerald-500 ring-1 ring-emerald-500/40 shadow-md'
+                          : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 opacity-80 hover:opacity-100'
+                      }`}
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                            #{m.rank}
+                          </span>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border truncate ${m.badgeColor}`}>
+                            {m.badge}
+                          </span>
+                        </div>
+                        <div className="text-xs font-bold text-white leading-snug">{m.name}</div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">{m.description}</p>
+                      </div>
+                      <div className="pt-2 mt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
+                        <span className="text-slate-400">
+                          Ум: <strong className="text-amber-300">{'★'.repeat(m.intelligenceRating)}</strong>
+                        </span>
+                        <span className={isSelected ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                          {isSelected ? '● Выбрана' : 'Выбрать'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* PromptGPT v2 Unified Pipeline */}
+            <div className="bg-slate-900/90 border border-cyan-700/50 rounded-2xl p-5 shadow-xl space-y-4" data-testid="promptgpt-v2-panel">
+              <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Sparkles className="h-4 w-4 text-cyan-400" />
+                  <h3 className="text-sm font-bold text-white">PromptGPT v2 (Единый конвейер)</h3>
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800">
+                    /api/v2/run
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleUnfilteredMode}
+                    data-testid="unfiltered-mode-toggle"
+                    className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold transition cursor-pointer ${
+                      unfilteredMode
+                        ? 'bg-amber-950/90 text-amber-200 border-amber-500/80'
+                        : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-slate-200'
+                    }`}
+                    title="Включает режим без смягчений и цензуры для генерации и анализа"
+                  >
+                    {unfilteredMode ? 'Без фильтрации: ВКЛ' : 'Без фильтрации: ВЫКЛ'}
+                  </button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
-                  {authorModules.map((m) => (
+                <div className="text-xs font-mono text-cyan-300" data-testid="v2-status-label">
+                  {v2Status || 'Ожидание запуска'}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Модель v2 (modelId)</label>
+                  <input
+                    type="text"
+                    value={v2ModelId}
+                    onChange={(e) => handleChangeV2ModelId(e.target.value)}
+                    placeholder="gemini-3.1-flash-lite"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    Интенсивность стиля (1–5): <strong className="text-cyan-300">{v2StyleIntensity}</strong>
+                  </label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={5}
+                    value={v2StyleIntensity}
+                    onChange={(e) => handleChangeV2StyleIntensity(Number(e.target.value) as 1 | 2 | 3 | 4 | 5)}
+                    className="w-full accent-cyan-500 cursor-pointer mt-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Ключ доступа (опционально)</label>
+                  <input
+                    type="password"
+                    value={v2AccessKey}
+                    onChange={(e) => setV2AccessKey(e.target.value)}
+                    placeholder="x-promptgpt-key"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">Дополнительные инструкции v2</label>
+                <input
+                  type="text"
+                  value={v2CustomInstructions}
+                  onChange={(e) => handleChangeV2CustomInstructions(e.target.value)}
+                  placeholder="Например: сохраняй цитаты и даты без изменений..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              {v2Diagnostics?.status === 'needs_clarification' && Array.isArray(v2Diagnostics.questions) && (
+                <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-700/60 space-y-2.5" data-testid="v2-clarification-box">
+                  <div className="text-xs font-bold text-amber-300">Уточняющие вопросы перед генерацией:</div>
+                  {v2Diagnostics.questions.map((q: any) => (
+                    <div key={q.id} className="space-y-1">
+                      <div className="text-xs text-slate-200">{q.prompt}</div>
+                      <input
+                        type="text"
+                        value={v2QuestionChoices[q.id] ?? ''}
+                        onChange={(e) =>
+                          setV2QuestionChoices((prev) => ({ ...prev, [q.id]: e.target.value }))
+                        }
+                        placeholder="Ваш ответ..."
+                        className="w-full bg-slate-950 border border-amber-800/70 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleRunV2Pipeline}
+                  disabled={isGeneratingDna}
+                  data-testid="run-v2-btn"
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 transition cursor-pointer"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Запустить PromptGPT v2</span>
+                </button>
+
+                {v2Diagnostics && v2Diagnostics.status !== 'needs_clarification' && (
+                  <details className="text-xs text-slate-300">
+                    <summary className="cursor-pointer text-cyan-300 hover:text-cyan-200 font-semibold">
+                      Диагностика v2
+                    </summary>
+                    <pre className="mt-2 p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto max-w-2xl">
+                      {JSON.stringify(v2Diagnostics, null, 2)}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            </div>
+
+            {/* 9 Modules */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-3 border-b border-slate-800 pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                    <Sliders className="h-4 w-4 text-purple-400" />
+                    <span>9 модулей стиля и анти-детектора</span>
+                    <span className="text-xs font-normal text-slate-400">
+                      (включено: <strong className="text-purple-400">{activeEnginesCount}</strong> из {ALL_FLAG_KEYS.length})
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Включайте и выключайте любые модули — они объединяются в единый промпт без конфликтов.
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                  <button
+                    type="button"
+                    onClick={() => setFlags(PRESET_ALL)}
+                    className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold"
+                  >
+                    Включить все (9)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFlags(PRESET_RECOMMENDED)}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold"
+                  >
+                    Рекомендуемые (7)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFlags(PRESET_AUTHOR)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700"
+                  >
+                    Только ДНК автора (3)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFlags(PRESET_NONE)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-medium border border-slate-700"
+                  >
+                    Сбросить все
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1.5">
+                  <Dna className="h-3.5 w-3.5" />
+                  <span>Часть А: ДНК автора и вариативность (4 модуля)</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {donorModules.map((m) => (
                     <ModuleCard key={m.key} mod={m} on={flags[m.key]} onToggle={() => toggleFlag(m.key)} />
                   ))}
                 </div>
               </div>
 
-              <div className="space-y-2.5 pt-2">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center space-x-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
-                    <Terminal className="h-4 w-4 text-indigo-400" />
-                    <span>Блок 2: внешние программы и открытые хуманизаторы (GitHub)</span>
-                  </div>
-                  <span className="text-[11px] text-slate-400">Работают независимо или вместе с любыми авторскими правилами</span>
+              <div className="space-y-2 pt-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-cyan-400 flex items-center space-x-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>Часть Б: Анти-детекторы и перплексия (5 модулей)</span>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
                   {externalModules.map((m) => (
                     <ModuleCard key={m.key} mod={m} on={flags[m.key]} onToggle={() => toggleFlag(m.key)} />
                   ))}
                 </div>
               </div>
-            </div>
 
-            {/* Inputs */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-              <TextInputCard
-                borderColor="border-indigo-800/40"
-                titleColor="text-indigo-400"
-                Icon={UserCheck}
-                title="ТЕКСТ 1 — Образец авторской манеры (Донор стиля)"
-                sampleLabel="Загрузить пример 1 (Аскетизм)"
-                sampleBtnClass="bg-indigo-950 border-indigo-800 text-indigo-300 hover:bg-indigo-900"
-                hint="Вставьте сюда фрагмент автора, чей синтаксис, лексику, ритм и обороты нужно извлечь как стилевую ДНК. Лучше брать живой текст реального автора."
-                focusBorder="focus:border-indigo-500"
-                value={donorText}
-                onChange={setDonorText}
-                onSample={() => setDonorText(SAMPLE_DONOR_TEXT)}
-                placeholder="Вставьте образец авторского письма..."
-              />
-              <TextInputCard
-                borderColor="border-purple-800/40"
-                titleColor="text-purple-400"
-                Icon={FileText}
-                title="ТЕКСТ 2 — Материал для переработки (Содержание)"
-                sampleLabel="Загрузить пример 2 (Атеизм)"
-                sampleBtnClass="bg-purple-950 border-purple-800 text-purple-300 hover:bg-purple-900"
-                hint="Вставьте сюда исходный текст, тезисы и факты которого должны быть полностью переписаны в стиле Текста 1."
-                focusBorder="focus:border-purple-500"
-                value={contentText}
-                onChange={setContentText}
-                onSample={() => setContentText(SAMPLE_CONTENT_TEXT)}
-                placeholder="Вставьте текст с фактами и содержанием..."
-              />
-            </div>
-
-            <div className="rounded-xl border border-cyan-800/60 bg-cyan-950/20 p-4 space-y-2">
-              <label htmlFor="promptgpt-v2-access-key" className="block text-xs font-semibold text-cyan-200">
-                Ключ доступа к новому движку PROMPTGPT v2
-              </label>
-              <input
-                id="promptgpt-v2-access-key"
-                type="password"
-                autoComplete="off"
-                value={v2AccessKey}
-                onChange={(event) => setV2AccessKey(event.target.value)}
-                placeholder="Введите значение PROMPTGPT_V2_ACCESS_KEY из настроек сервера"
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
-              />
-              <p className="text-[11px] text-slate-400">
-                Ключ не сохраняется в истории и передаётся только серверу в заголовке запроса. Для работы v2 администратор должен задать такой же ключ в переменных окружения.
-              </p>
-              {v2Status && <p className="text-xs text-cyan-200">{v2Status}</p>}
-            </div>
-
-            {tabError && <div className="p-4 rounded-xl bg-red-950/50 border border-red-800 text-red-300 text-xs">{tabError}</div>}
-
-            <div className="flex justify-center">
-              <button
-                type="button"
-                onClick={handleRunDnaTransfer}
-                disabled={isGeneratingDna || !donorText.trim() || !contentText.trim() || activeEnginesCount === 0}
-                className="w-full max-w-lg py-4 rounded-2xl font-bold shadow-xl flex items-center justify-center space-x-3 disabled:opacity-50 transition-all text-sm bg-gradient-to-r from-emerald-600 via-indigo-600 to-purple-600 hover:from-emerald-500 hover:to-purple-500 text-white shadow-indigo-600/30 cursor-pointer"
-              >
-                {isGeneratingDna ? (
-                  <>
-                    <RefreshCw className="h-5 w-5 animate-spin" />
-                    <span>
-                      Синтез {activeEnginesCount} модулей + {activeShieldsCount} щитов ({selectedModelName})...
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-5 w-5 text-amber-300" />
-                    <span>
-                      {activeEnginesCount === 0
-                        ? 'Выберите хотя бы 1 модуль'
-                        : `🧬 Запустить ДНК-перенос (Стек: ${activeEnginesCount} мод. + ${activeShieldsCount} щитов)`}
-                    </span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="flex justify-center">
-              <button
-                type="button"
-                onClick={handleRunDnaTransferV2}
-                disabled={isGeneratingDna || !donorText.trim() || !contentText.trim() || !v2AccessKey.trim()}
-                className="w-full max-w-lg rounded-2xl border border-cyan-500/60 bg-cyan-950/50 px-5 py-3 font-bold text-sm text-cyan-100 shadow-lg shadow-cyan-950/30 transition-colors hover:bg-cyan-900/70 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {isGeneratingDna ? 'PROMPTGPT v2 выполняет проверки...' : '🧬 Запустить новый PROMPTGPT v2 (семантическая защита + Style DNA)'}
-              </button>
-            </div>
-
-            {v2Diagnostics && (
-              <div className="rounded-2xl border border-cyan-800/60 bg-slate-900/90 p-5 space-y-4">
+              {/* Active prompt summary */}
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <h3 className="text-base font-bold text-cyan-300">Диагностика PROMPTGPT v2</h3>
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
-                    v2Diagnostics.status === 'accepted'
-                      ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
-                      : v2Diagnostics.status === 'needs-review'
-                        ? 'bg-amber-950 text-amber-300 border-amber-700'
-                        : 'bg-red-950 text-red-300 border-red-700'
-                  }`}>
-                    {v2Diagnostics.status || 'Неизвестный статус'}
+                  <span className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                    <Terminal className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Сводка активного промпта ({activeEnginesCount} модулей + {activeShieldsCount} щитов)</span>
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowActivePromptSummary(!showActivePromptSummary)}
+                    className="text-[11px] text-indigo-400 hover:text-indigo-300 underline"
+                  >
+                    {showActivePromptSummary ? 'Скрыть сводку' : 'Показать сводку'}
+                  </button>
                 </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {[
-                    ['Создано вариантов', v2Diagnostics.generation?.generated],
-                    ['Не удалось создать', v2Diagnostics.generation?.failed],
-                    ['Проверено кандидатов', v2Diagnostics.candidates?.length],
-                    ['Этапов обработки', v2Diagnostics.trace?.length]
-                  ].map(([label, value]) => (
-                    <div key={String(label)} className="rounded-xl bg-slate-950 p-3 border border-slate-800">
-                      <div className="text-xs text-slate-400">{label}</div>
-                      <div className="text-xl font-bold text-white">{value ?? 0}</div>
-                    </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {MODULES.filter((m) => flags[m.key]).map((m) => (
+                    <span
+                      key={m.key}
+                      className="text-[10px] px-2 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800/60"
+                    >
+                      ✓ {m.short}
+                    </span>
                   ))}
+                  {activeEnginesCount === 0 && (
+                    <span className="text-[10px] text-slate-500">Нет активных модулей</span>
+                  )}
                 </div>
-
-                {v2Diagnostics.error?.message && (
-                  <div className="rounded-xl border border-red-800 bg-red-950/40 p-3">
-                    <div className="text-sm font-bold text-red-300">Ошибка обработки</div>
-                    <p className="text-sm text-red-200 mt-1">{v2Diagnostics.error.message}</p>
-                  </div>
-                )}
-
-                {Array.isArray(v2Diagnostics.generation?.candidates) && v2Diagnostics.generation.candidates.some((item: any) => item.status === 'failed') && (
-                  <div className="rounded-xl border border-red-900/60 bg-red-950/10 p-3">
-                    <div className="text-xs font-bold text-red-300 mb-2">Неудачные попытки генерации</div>
-                    {v2Diagnostics.generation.candidates.filter((item: any) => item.status === 'failed').map((item: any) => (
-                      <div key={item.candidateId} className="mb-2 text-xs text-red-200">
-                        <span className="font-semibold">{item.candidateId}:</span> {item.error || 'Причина не передана модельным адаптером.'}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {Array.isArray(v2Diagnostics.generation?.candidates) && v2Diagnostics.generation.candidates
-                  .filter((generated: any) => generated.status === 'generated' && !v2Diagnostics.candidates?.some((evaluated: any) => evaluated.candidateId === generated.candidateId))
-                  .map((generated: any) => (
-                    <details key={generated.candidateId} open className="rounded-xl border border-amber-800/60 bg-amber-950/10 p-3">
-                      <summary className="cursor-pointer text-xs font-bold text-amber-300">
-                        Сгенерирован, но не дошёл до итоговой оценки: {generated.candidateId}
-                      </summary>
-                      <p className="mt-2 whitespace-pre-wrap text-xs text-slate-200">{generated.text}</p>
-                    </details>
-                  ))}
-
-                {Array.isArray(v2Diagnostics.candidates) && v2Diagnostics.candidates.map((candidate: any, index: number) => {
-                  const evaluation = candidate.finalEvaluation || candidate.initial;
-                  const semantic = evaluation?.semanticReport;
-                  const style = evaluation?.styleReport;
-                  return (
-                    <div key={candidate.candidateId || index} className="rounded-xl border border-slate-700 bg-slate-950/80 p-4 space-y-3">
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <div className="font-semibold text-white">Кандидат {index + 1}</div>
-                        <span className="text-xs text-cyan-300">{evaluation?.disposition || 'Статус неизвестен'}</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div className="rounded-lg bg-slate-900 p-2">
-                          <div className="text-xs text-slate-400">Стилевое сходство</div>
-                          <div className="font-bold text-white">{style?.score != null ? `${style.score} / 100` : 'Нет оценки'}</div>
-                        </div>
-                        <div className="rounded-lg bg-slate-900 p-2">
-                          <div className="text-xs text-slate-400">Сохранение смысла</div>
-                          <div className={semantic?.passed ? 'font-bold text-emerald-300' : 'font-bold text-red-300'}>
-                            {semantic?.passed == null ? 'Нет данных' : semantic.passed ? 'Пройдено' : 'Не пройдено'}
-                          </div>
-                        </div>
-                      </div>
-                      {Array.isArray(evaluation?.rejectionReasons) && evaluation.rejectionReasons.length > 0 && (
-                        <div>
-                          <div className="text-xs font-bold text-red-300 mb-2">Причины отклонения</div>
-                          <ul className="list-disc pl-5 space-y-1 text-xs text-red-200">
-                            {evaluation.rejectionReasons.map((reason: string, i: number) => <li key={i}>{reason}</li>)}
-                          </ul>
-                        </div>
-                      )}
-                      {Array.isArray(evaluation?.warnings) && evaluation.warnings.length > 0 && (
-                        <div>
-                          <div className="text-xs font-bold text-amber-300 mb-2">Предупреждения</div>
-                          <ul className="list-disc pl-5 space-y-1 text-xs text-amber-200">
-                            {evaluation.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
-                          </ul>
-                        </div>
-                      )}
-                      {Array.isArray(candidate.warnings) && candidate.warnings.length > 0 && (
-                        <ul className="list-disc pl-5 space-y-1 text-xs text-amber-200">
-                          {candidate.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
-                        </ul>
-                      )}
-                      {Array.isArray(candidate.diagnosticSteps) && candidate.diagnosticSteps.length > 0 && (
-                        <details open className="rounded-lg border border-cyan-900/70 bg-slate-900/60 p-3">
-                          <summary className="cursor-pointer text-xs font-bold text-cyan-300">
-                            Что программа фактически выполнила ({candidate.diagnosticSteps.length} этапов)
-                          </summary>
-                          <div className="mt-3 space-y-2">
-                            {candidate.diagnosticSteps.map((step: any, i: number) => (
-                              <div key={i} className="flex gap-2 border-b border-slate-800 pb-2 last:border-0">
-                                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                                  step.status === 'completed' ? 'bg-emerald-950 text-emerald-300'
-                                    : step.status === 'failed' ? 'bg-red-950 text-red-300'
-                                      : step.status === 'skipped' ? 'bg-slate-800 text-slate-400'
-                                        : 'bg-amber-950 text-amber-300'
-                                }`}>
-                                  {step.status === 'completed' ? 'ВЫПОЛНЕН' : step.status === 'failed' ? 'ОШИБКА' : step.status === 'skipped' ? 'ПРОПУЩЕН' : 'НЕ ЗАВЕРШЁН'}
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="text-xs font-semibold text-slate-200">{step.stage}</div>
-                                  <div className="text-xs text-slate-400 whitespace-pre-wrap">{step.detail}</div>
-                                  {typeof step.durationMs === 'number' && (
-                                    <div className="mt-1 text-[10px] text-cyan-400/80 tabular-nums">
-                                      Время этапа: {step.durationMs < 1000
-                                        ? String(Math.round(step.durationMs)) + ' мс'
-                                        : (step.durationMs / 1000).toFixed(2) + ' с'}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      )}
-                      {Array.isArray(semantic?.issues) && semantic.issues.length > 0 && (
-                        <details className="rounded-lg border border-red-900/60 bg-red-950/10 p-2">
-                          <summary className="cursor-pointer text-xs font-semibold text-red-300">
-                            Детали семантической проверки ({semantic.issues.length})
-                          </summary>
-                          <ul className="mt-2 list-disc pl-5 space-y-1 text-xs text-red-200">
-                            {semantic.issues.map((issue: any, i: number) => (
-                              <li key={i}><span className="font-semibold">{issue.code}</span>: {issue.message}</li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
-                      {Array.isArray(style?.familyScores) && style.familyScores.length > 0 && (
-                        <details className="rounded-lg border border-slate-800 bg-slate-900/60 p-2">
-                          <summary className="cursor-pointer text-xs font-semibold text-slate-300">
-                            Разбивка стилевой оценки по семействам признаков
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {style.familyScores.map((family: any) => (
-                              <div key={family.family} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-xs">
-                                <div className="text-slate-300">{family.family} <span className="text-slate-500">({family.comparedFeatures} признаков)</span></div>
-                                <div className="font-semibold text-white">{Number(family.score).toFixed(1)}/100</div>
-                                <div className="col-span-2 h-1.5 rounded bg-slate-800 overflow-hidden">
-                                  <div className="h-full bg-cyan-500" style={{ width: `${Math.max(0, Math.min(100, family.score))}%` }} />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      )}
-                      {Array.isArray(style?.comparisons) && style.comparisons.length > 0 && (
-                        <details className="rounded-lg border border-slate-800 bg-slate-900/60 p-2">
-                          <summary className="cursor-pointer text-xs font-semibold text-slate-300">
-                            Все сравнения отдельных стилевых признаков ({style.comparisons.length})
-                          </summary>
-                          <div className="mt-2 max-h-96 overflow-y-auto space-y-2">
-                            {[...style.comparisons].sort((a: any, b: any) => a.similarity - b.similarity).map((item: any) => (
-                              <div key={item.featureId} className="rounded bg-slate-950 p-2 text-xs">
-                                <div className="flex justify-between gap-2">
-                                  <span className="font-semibold text-slate-200">{item.label}</span>
-                                  <span className={item.similarity < 0.5 ? 'text-red-300' : item.similarity < 0.8 ? 'text-amber-300' : 'text-emerald-300'}>
-                                    {(item.similarity * 100).toFixed(1)}% сходства
-                                  </span>
-                                </div>
-                                <div className="mt-1 text-slate-400">Донор: {Number(item.donorValue).toFixed(3)} · Кандидат: {Number(item.candidateValue).toFixed(3)} · {item.direction}</div>
-                                <div className="mt-1 text-slate-500">{item.explanation}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      )}
-                      {typeof candidate.finalText === 'string' && candidate.finalText.trim() && (
-                        <details open className="rounded-lg border border-cyan-700/60 bg-slate-900/80 p-3">
-                          <summary className="cursor-pointer text-sm font-bold text-cyan-200">
-                            Текст результата кандидата ({candidate.finalText.length} симв.) — {evaluation?.disposition === 'accepted' ? 'прошёл проверки' : 'отклонённый черновик для диагностики'}
-                          </summary>
-                          <p className="mt-3 whitespace-pre-wrap text-sm text-slate-200 leading-relaxed select-text">
-                            {candidate.finalText}
-                          </p>
-                        </details>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {Array.isArray(v2Diagnostics.warnings) && v2Diagnostics.warnings.length > 0 && (
-                  <div className="rounded-xl border border-amber-800/60 bg-amber-950/20 p-3">
-                    <div className="font-bold text-sm text-amber-300 mb-2">Общие предупреждения системы</div>
-                    <ul className="list-disc pl-5 space-y-1 text-xs text-amber-200">
-                      {v2Diagnostics.warnings.map((warning: string, i: number) => <li key={i}>{warning}</li>)}
-                    </ul>
-                  </div>
-                )}
-
-                {Array.isArray(v2Diagnostics.trace) && v2Diagnostics.trace.length > 0 && (
-                  <details open className="rounded-xl border border-slate-700 p-3">
-                    <summary className="cursor-pointer text-sm font-semibold text-cyan-300">
-                      Журнал этапов обработки ({v2Diagnostics.trace.length})
-                    </summary>
-                    <div className="mt-3 space-y-2">
-                      {v2Diagnostics.trace.map((event: any, i: number) => (
-                        <div key={i} className="border-l-2 border-cyan-800 pl-3 py-1">
-                          <div className="text-xs font-bold text-slate-200">{event.stage}</div>
-                          <div className="text-xs text-slate-400">{event.message}</div>
-                          {event.candidateId && <div className="text-[10px] text-slate-500">{event.candidateId}</div>}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
+                {showActivePromptSummary && (
+                  <pre className="mt-2 p-3 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-300 font-mono whitespace-pre-wrap max-h-60 overflow-y-auto">
+                    {combinedPromptPreview}
+                  </pre>
                 )}
               </div>
-            )}
+            </div>
 
-            {/* Detectors */}
-            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
-              <div className="flex items-center justify-between flex-wrap gap-4 border-b border-slate-800 pb-4">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2.5 rounded-xl bg-indigo-950/80 border border-indigo-700/50 text-indigo-400">
-                    <ShieldCheck className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                      <h3 className="text-base font-bold text-white">Щиты и эвристический аудит {DETECTORS_LIST.length} ИИ-детекторов</h3>
-                      <span
-                        className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${
-                          activeShieldsCount > 0
-                            ? 'bg-emerald-950 text-emerald-300 border-emerald-600/70'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}
-                      >
-                        Активно щитов: {activeShieldsCount} из {DETECTORS_LIST.length}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Каждый флажок добавляет в промт правила против детектора и позволяет запустить сканирование только выбранных циферблатов.
-                    </p>
-                  </div>
+            {/* 16 Detectors & Shields */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-3 border-b border-slate-800 pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                    <ShieldCheck className="h-5 w-5 text-indigo-400" />
+                    <span>{DETECTORS_LIST.length} детекторов ИИ + щиты со стрелочными циферблатами</span>
+                    <span className="text-xs font-normal text-slate-400">
+                      (щитов включено: <strong className="text-indigo-400">{activeShieldsCount}</strong> из {DETECTORS_LIST.length})
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Нажмите <strong>«Проверить все 16 детекторов»</strong> — каждый циферблат покажет % вероятности человека и вердикт по выбранному тексту.
+                  </p>
                 </div>
-
-                <div className="flex items-center gap-2 flex-wrap text-xs">
+                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                   <button
                     type="button"
-                    onClick={handleSelectAllShields}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800 transition-colors font-medium flex items-center gap-1.5 cursor-pointer"
+                    onClick={() => handleRunDetectorAudit()}
+                    disabled={isAuditing}
+                    className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center space-x-1.5 shadow"
                   >
-                    <CheckSquare className="h-3.5 w-3.5 text-indigo-400" />
-                    Все {DETECTORS_LIST.length} щитов
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleKeyAcademicShields}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800 transition-colors font-medium flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Zap className="h-3.5 w-3.5 text-emerald-400" />
-                    Ключевые (8 шт.)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleResetShields}
-                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700 transition-colors cursor-pointer"
-                  >
-                    Сбросить
+                    <Activity className={`h-3.5 w-3.5 ${isAuditing ? 'animate-spin' : ''}`} />
+                    <span>{isAuditing ? 'Сканирование...' : `Проверить все ${DETECTORS_LIST.length}`}</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => handleRunSelectedDetectors()}
                     disabled={isAuditing || activeShieldsCount === 0}
-                    className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-md"
-                    title="Запустить сканирование только тех детекторов, которые отмечены галочками"
+                    className="px-3 py-1.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 text-white text-xs font-semibold flex items-center space-x-1.5"
                   >
-                    {isAuditing ? (
-                      <>
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        <span>Проверка выбранных...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckSquare className="h-3.5 w-3.5" />
-                        <span>🎯 Запустить выбранные ({activeShieldsCount} шт.)</span>
-                      </>
-                    )}
+                    <Search className="h-3.5 w-3.5" />
+                    <span>Проверить выбранные ({activeShieldsCount})</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleRunDetectorAudit()}
-                    disabled={isAuditing}
-                    className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white font-bold transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-md"
+                    onClick={handleSelectAllShields}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold"
                   >
-                    {isAuditing ? (
-                      <>
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        <span>Сканирование всех {DETECTORS_LIST.length} циферблатов...</span>
-                      </>
-                    ) : (
-                      <>
-                        <BarChart3 className="h-3.5 w-3.5" />
-                        <span>⚡ Запустить все {DETECTORS_LIST.length} циферблатов</span>
-                      </>
-                    )}
+                    Включить все щиты ({DETECTORS_LIST.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleKeyAcademicShields}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700"
+                  >
+                    Ключевые (8)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetShields}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-medium border border-slate-700"
+                  >
+                    Сбросить щиты
                   </button>
                 </div>
               </div>
 
-              <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-800/50 text-xs text-amber-200 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                <span>
-                  Циферблаты показывают <strong>эвристическую оценку</strong> (длина предложений, разнообразие лексики, список штампов), а не результат работы реальных детекторов. Зелёный циферблат не гарантирует, что настоящий Turnitin, GPTZero или другой сервис пропустит текст.
-                </span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between flex-wrap gap-3 text-xs">
-                <div className="flex items-center space-x-2 text-slate-300">
-                  <Activity className="h-4 w-4 text-indigo-400" />
-                  <span className="font-semibold">Проверяемый текст для циферблатов:</span>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
+              {/* Source selector */}
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center space-x-2 text-xs flex-wrap gap-y-1">
+                  <span className="text-slate-400 font-medium">Текст для проверки:</span>
                   {(
                     [
-                      { id: 'result', label: `🟢 Результат ДНК V5 (${dnaResultText ? 'Готов' : 'Пока пуст'})`, text: dnaResultText, on: 'bg-emerald-950 text-emerald-300 border-emerald-600' },
-                      { id: 'content', label: '🟣 Исходный Текст 2 (ИИ-материал)', text: contentText, on: 'bg-purple-950 text-purple-300 border-purple-600' },
-                      { id: 'donor', label: '🔵 Текст 1 (Автор-Донор)', text: donorText, on: 'bg-indigo-950 text-indigo-300 border-indigo-600' },
+                      ['result', 'Результат переноса ДНК'],
+                      ['content', 'Исходный Текст 2'],
+                      ['donor', 'Образец Текст 1'],
                     ] as const
-                  ).map((s) => (
+                  ).map(([key, label]) => (
                     <button
-                      key={s.id}
+                      key={key}
                       type="button"
-                      onClick={() => {
-                        setAuditTargetSource(s.id);
-                        if (s.text) handleRunDetectorAudit(s.text);
-                      }}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition border ${
-                        auditTargetSource === s.id
-                          ? `${s.on} shadow-sm`
-                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                      onClick={() => setAuditTargetSource(key)}
+                      className={`px-2.5 py-1 rounded-lg font-semibold transition-colors ${
+                        auditTargetSource === key
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
                       }`}
                     >
-                      {s.label}
+                      {label}
                     </button>
                   ))}
                 </div>
+                <div className="text-[11px] text-slate-400 truncate max-w-md">
+                  К проверке: <strong className="text-slate-200">{wordCount(currentSourceText)} слов</strong> — «
+                  {currentSourceText.slice(0, 55)}...»
+                </div>
               </div>
 
+              {renderDetectorCards(DETECTORS_LIST)}
+
+              {activeWorkbenchDetector && (
+                <DetectorWorkbench
+                  detectorId={activeWorkbenchDetector}
+                  text={currentSourceText}
+                  onClose={() => setActiveWorkbenchDetector(null)}
+                  onApplyToMainScore={(detId, patch) => {
+                    setDetectorScores((prev) => ({
+                      ...prev,
+                      [detId]: {
+                        ...(prev[detId] || INITIAL_DETECTOR_SCORES[detId]),
+                        ...patch,
+                        lastTestedAt: Date.now(),
+                      },
+                    }));
+                  }}
+                />
+              )}
+
+              {/* Audit summary */}
               {auditResult && (
-                <div className="p-4 rounded-xl bg-slate-950 border border-indigo-900/60 space-y-4">
-                  <div className="flex items-center justify-between flex-wrap gap-3 border-b border-slate-800/80 pb-3">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <BarChart3 className="h-4 w-4 text-emerald-400" />
-                      <span className="text-xs font-bold text-white">
-                        Эвристическая оценка ({auditResult.auditedWords || 0} слов):
-                      </span>
-                      <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-slate-800 text-slate-200 border border-slate-600">
-                        {auditResult.overallHumanScore}% Человек / {auditResult.overallAiScore ?? 100 - auditResult.overallHumanScore}% ИИ
-                      </span>
-                      <span className="text-xs text-slate-400">
-                        ({auditResult.flaggedCount} из {auditResult.totalAudited || DETECTORS_LIST.length} оценок ниже порога
-                        {auditResult.selectedMode ? ' • выборочный скан' : ''})
-                      </span>
+                <div className="bg-slate-950 border border-indigo-500/40 rounded-xl p-5 space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-3">
+                    <div className="flex items-center space-x-2">
+                      <BarChart3 className="h-5 w-5 text-indigo-400" />
+                      <h4 className="text-sm font-bold text-white">
+                        Сводный отчёт по {auditResult.totalAudited} детекторам
+                      </h4>
                     </div>
-                    <div className="text-[11px] text-slate-400">
-                      Вывод: <strong className="text-slate-200">{auditResult.verdict}</strong>
-                    </div>
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-700 font-semibold">
+                      {auditResult.verdict}
+                    </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                    {auditResult.gltrDistribution && (
-                      <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5">
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-slate-400 font-semibold">GLTR-подобное распределение:</span>
-                          <span className="text-emerald-400 font-mono">
-                            {auditResult.gltrDistribution.top1000 + auditResult.gltrDistribution.outOf1000}% редких
-                          </span>
-                        </div>
-                        <div className="h-2 rounded-full overflow-hidden flex bg-slate-800">
-                          <div style={{ width: `${auditResult.gltrDistribution.top10}%` }} className="bg-emerald-500" />
-                          <div style={{ width: `${auditResult.gltrDistribution.top100}%` }} className="bg-amber-400" />
-                          <div style={{ width: `${auditResult.gltrDistribution.top1000}%` }} className="bg-red-400" />
-                          <div style={{ width: `${auditResult.gltrDistribution.outOf1000}%` }} className="bg-purple-500" />
-                        </div>
-                        <div className="flex justify-between text-[9px] text-slate-500 font-mono">
-                          <span className="text-emerald-400">Зел:{auditResult.gltrDistribution.top10}%</span>
-                          <span className="text-amber-400">Жел:{auditResult.gltrDistribution.top100}%</span>
-                          <span className="text-red-400">Крас:{auditResult.gltrDistribution.top1000}%</span>
-                          <span className="text-purple-400">Фиол:{auditResult.gltrDistribution.outOf1000}%</span>
-                        </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-3">
+                      <div className="text-[11px] text-slate-400">Средний балл «Человек»</div>
+                      <div className="text-2xl font-black text-emerald-400 mt-0.5">{auditResult.overallHumanScore}%</div>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-3">
+                      <div className="text-[11px] text-slate-400">Средний риск ИИ</div>
+                      <div className="text-2xl font-black text-rose-400 mt-0.5">{auditResult.overallAiScore}%</div>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-3">
+                      <div className="text-[11px] text-slate-400">Binoculars / DetectGPT</div>
+                      <div className="text-sm font-mono font-bold text-indigo-300 mt-1.5">
+                        {auditResult.binocularsScore} / Z={auditResult.detectGptCurvature}
                       </div>
-                    )}
-
-                    {auditResult.binocularsScore && (
-                      <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-slate-400 font-semibold">Binoculars-подобная метрика:</span>
-                          <span className="text-slate-200 font-mono font-bold">{auditResult.binocularsScore}</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400">
-                          Порог: &lt; 0.901 ({Number(auditResult.binocularsScore) < 0.901 ? 'ниже порога' : 'на грани или выше'})
-                        </p>
+                    </div>
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-3">
+                      <div className="text-[11px] text-slate-400">GLTR (Top-10 / &gt;1000)</div>
+                      <div className="text-sm font-mono font-bold text-purple-300 mt-1.5">
+                        {auditResult.gltrDistribution?.top10}% / {auditResult.gltrDistribution?.outOf1000}%
                       </div>
-                    )}
-
-                    {auditResult.detectGptCurvature && (
-                      <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-slate-400 font-semibold">DetectGPT-подобная кривизна:</span>
-                          <span className="text-slate-200 font-mono font-bold">{auditResult.detectGptCurvature}</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400">Порог: &lt; 0.15.</p>
-                      </div>
-                    )}
-
-                    {auditResult.sloptotalSummary && (
-                      <div
-                        onClick={() => setActiveTab('sloptotal')}
-                        className="p-2.5 rounded-lg bg-slate-900 hover:bg-slate-800/80 border border-indigo-700/60 space-y-1 cursor-pointer transition"
-                        title="Открыть полный отчёт SlopTotal (23 движка)"
-                      >
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-indigo-300 font-semibold">SlopTotal (23 движка):</span>
-                          <span className="text-white font-mono font-bold">{auditResult.sloptotalSummary.overallScore}/100</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400">
-                          {auditResult.sloptotalSummary.overallVerdict} • флагов: {auditResult.sloptotalSummary.enginesFlagged}/{auditResult.sloptotalSummary.enginesTotal} →
-                        </p>
-                      </div>
-                    )}
-
-                    {auditResult.mgtEvalSummary && (
-                      <div
-                        onClick={() => setActiveTab('mgt-eval')}
-                        className="p-2.5 rounded-lg bg-slate-900 hover:bg-slate-800/80 border border-purple-700/60 space-y-1 cursor-pointer transition"
-                        title="Открыть полный отчёт MGT-Eval (26 моделей)"
-                      >
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-purple-300 font-semibold">MGT-Eval (26 моделей):</span>
-                          <span className="text-white font-mono font-bold">{auditResult.mgtEvalSummary.overallAiPct}% AI</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400">
-                          {auditResult.mgtEvalSummary.overallVerdict} • флагов: {auditResult.mgtEvalSummary.flaggedCount}/{auditResult.mgtEvalSummary.totalRun} →
-                        </p>
-                      </div>
-                    )}
-
-                    {auditResult.mgtBenchSummary && (
-                      <div
-                        onClick={() => setActiveTab('mgt-bench')}
-                        className="p-2.5 rounded-lg bg-slate-900 hover:bg-slate-800/80 border border-cyan-700/60 space-y-1 cursor-pointer transition"
-                        title="Открыть полный отчёт MGTBench (14 методов + PHD MST + Атрибуция)"
-                      >
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-cyan-300 font-semibold">MGTBench (14 методов):</span>
-                          <span className="text-white font-mono font-bold">{auditResult.mgtBenchSummary.overallAiPct}% AI</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400">
-                          PHD={auditResult.mgtBenchSummary.phdIntrinsicDim} • флагов: {auditResult.mgtBenchSummary.flaggedCount}/{auditResult.mgtBenchSummary.totalRun} →
-                        </p>
-                      </div>
-                    )}
-
-                    {auditResult.detectZooSummary && (
-                      <div
-                        onClick={() => setActiveTab('detect-zoo')}
-                        className="p-2.5 rounded-lg bg-slate-900 hover:bg-slate-800/80 border border-amber-700/60 space-y-1 cursor-pointer transition"
-                        title="Открыть полный отчёт DetectZoo (37 моделей + BenchmarkEvaluator + 70-Zoo)"
-                      >
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-amber-300 font-semibold">DetectZoo (37 моделей):</span>
-                          <span className="text-white font-mono font-bold">{auditResult.detectZooSummary.overallAiPct}% AI</span>
-                        </div>
-                        <p className="text-[10px] text-slate-400">
-                          Conf={(auditResult.detectZooSummary.meanConfidence * 100).toFixed(0)}% • флагов: {auditResult.detectZooSummary.flaggedCount}/{auditResult.detectZooSummary.totalRun} →
-                        </p>
-                      </div>
-                    )}
+                    </div>
                   </div>
                 </div>
               )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {DETECTORS_LIST.map((d) => {
-                  const isChecked = !!detectorShields[d.id];
-                  const score = detectorScores[d.id] || INITIAL_DETECTOR_SCORES[d.id];
-                  const isScanning = !!scanningDetectors[d.id];
-                  const notTested = !score.lastTestedAt;
-
-                  return (
-                    <div
-                      key={d.id}
-                      className={`p-4 rounded-2xl border transition-all duration-300 text-xs flex flex-col justify-between ${
-                        isChecked
-                          ? 'bg-slate-950 border-indigo-600/70 shadow-lg ring-1 ring-indigo-500/30'
-                          : 'bg-slate-950/70 border-slate-800/80 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="space-y-3">
-                        <div className="flex items-start justify-between gap-2 border-b border-slate-800/60 pb-2.5">
-                          <div className="flex items-center space-x-2.5 flex-1 min-w-0">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => setDetectorShields((prev) => ({ ...prev, [d.id]: e.target.checked }))}
-                              aria-label={`Щит: ${d.name}`}
-                              className="w-4 h-4 rounded text-indigo-600 bg-slate-800 border-slate-700 focus:ring-indigo-500 focus:ring-offset-slate-900 cursor-pointer shrink-0"
-                            />
-                            <div
-                              onClick={() => setActiveWorkbenchDetector(d.id)}
-                              className="min-w-0 flex-1 cursor-pointer group"
-                              title="Нажмите, чтобы открыть полный лабораторный стенд детектора"
-                            >
-                              <span className="font-bold text-white text-xs block leading-tight truncate group-hover:text-indigo-300 transition-colors">
-                                {d.name}
-                              </span>
-                              <span className="text-[10px] font-mono text-indigo-400 block mt-0.5 truncate">{d.repo}</span>
-                            </div>
-                          </div>
-
-                          <a
-                            href={d.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title={`Открыть репозиторий ${d.repo}`}
-                            className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[9.5px] px-2 py-0.5 rounded font-mono font-medium bg-slate-900 text-slate-300 border border-slate-800">
-                            {d.category}
-                          </span>
-                          {d.shieldFocus && (
-                            <span className="text-[9.5px] px-2 py-0.5 rounded font-semibold bg-indigo-950/70 text-indigo-300 border border-indigo-800/50">
-                              {d.shieldFocus}
-                            </span>
-                          )}
-                        </div>
-
-                        <div
-                          onClick={() => setActiveWorkbenchDetector(d.id)}
-                          className="bg-slate-900/70 hover:bg-slate-900/90 rounded-xl p-2.5 border border-slate-800/80 hover:border-indigo-600/70 transition-all flex flex-col items-center justify-center relative overflow-hidden cursor-pointer"
-                          title="Нажмите на циферблат для перехода в полный режим детектора"
-                        >
-                          <DetectorDialGauge
-                            humanScore={score.humanScore}
-                            aiScore={score.aiScore}
-                            isScanning={isScanning}
-                            notTested={notTested}
-                          />
-
-                          <div className="w-full flex items-center justify-between gap-2 mt-1 px-1">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-700/60">
-                              Человек: {notTested ? '—' : `${score.humanScore}%`}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-rose-950/80 text-rose-300 border border-rose-700/60">
-                              ИИ: {notTested ? '—' : `${score.aiScore}%`}
-                            </span>
-                          </div>
-
-                          <div className="w-full mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
-                            <span>
-                              Показатель: <strong className="text-slate-200 font-mono">{score.rawMetric}</strong>
-                            </span>
-                            <span>
-                              Порог: <strong className="text-slate-400 font-mono">{score.threshold}</strong>
-                            </span>
-                          </div>
-                        </div>
-
-                        <p className="text-[11px] text-slate-400 leading-relaxed">{d.description}</p>
-                      </div>
-
-                      <div className="mt-3 pt-2.5 border-t border-slate-800/80 space-y-2">
-                        <div className="flex items-center justify-between text-[10px]">
-                          <span className={`font-medium ${isChecked ? 'text-emerald-400' : 'text-slate-500'}`}>
-                            {isChecked ? '🛡️ Щит в промте: ВКЛ' : 'Щит отключен'}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded-full font-bold border text-[9.5px] ${
-                              notTested
-                                ? 'bg-slate-900 text-slate-400 border-slate-700'
-                                : score.humanScore >= 80
-                                ? 'bg-emerald-950 text-emerald-300 border-emerald-700/60'
-                                : score.humanScore >= 60
-                                ? 'bg-amber-950 text-amber-300 border-amber-700/60'
-                                : 'bg-rose-950 text-rose-300 border-rose-700/60'
-                            }`}
-                          >
-                            {score.status}
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setActiveWorkbenchDetector(d.id)}
-                          className="w-full py-2 px-3 rounded-lg bg-indigo-950/90 hover:bg-indigo-900 text-indigo-200 hover:text-white border border-indigo-700/70 text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-md"
-                        >
-                          <Maximize2 className="h-3.5 w-3.5 text-indigo-400" />
-                          <span>🔬 Открыть полный стенд детектора</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleRunSingleDetector(d.id)}
-                          disabled={isScanning || isAuditing}
-                          className="w-full py-1 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800/90 text-[11px] font-medium flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50 cursor-pointer"
-                        >
-                          {isScanning ? (
-                            <>
-                              <RefreshCw className="h-3 w-3 animate-spin text-indigo-400" />
-                              <span>Вычисление...</span>
-                            </>
-                          ) : (
-                            <>
-                              <Zap className="h-3 w-3 text-amber-400" />
-                              <span>Быстрая проверка циферблата</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
             </div>
 
-            {/* Result */}
-            {dnaResultText && (
-              <div className="bg-slate-900/90 border border-emerald-800/50 rounded-2xl p-6 shadow-2xl space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4 flex-wrap gap-3">
-                  <div className="flex items-center gap-2 text-emerald-400 font-bold text-base flex-wrap">
-                    <Check className="h-5 w-5" />
-                    <span>Результат: ТЕКСТ 2, переписанный в стилевой ДНК ТЕКСТА 1</span>
-                    {lastUsedModel && (
-                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-normal">
-                        Модель: <strong className="text-emerald-300">{lastUsedModel}</strong>
-                        {fallbackOccurred && <span className="text-amber-400 ml-1.5 font-medium">(авто-переход)</span>}
-                      </span>
-                    )}
-                  </div>
-                  <OutputActions text={dnaResultText} baseName="style-dna-result" />
-                </div>
+            {/* Text 1 & Text 2 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <TextInputCard
+                borderColor="border-emerald-800/50"
+                titleColor="text-emerald-400"
+                Icon={UserCheck}
+                title="ТЕКСТ 1: Образец стиля (ДНК автора)"
+                sampleLabel="Загрузить пример"
+                sampleBtnClass="bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border-emerald-800/60"
+                hint="Откуда брать стиль речи, длину фраз, пунктуацию и ритм (факты из Текста 1 в результат не переносятся)."
+                focusBorder="focus:border-emerald-500"
+                value={donorText}
+                onChange={setDonorText}
+                onSample={() => setDonorText(SAMPLE_DONOR_TEXT)}
+                placeholder="Вставьте текст-образец нужного стиля..."
+              />
+              <TextInputCard
+                borderColor="border-blue-800/50"
+                titleColor="text-blue-400"
+                Icon={FileText}
+                title="ТЕКСТ 2: Исходное содержание"
+                sampleLabel="Загрузить пример"
+                sampleBtnClass="bg-blue-950 hover:bg-blue-900 text-blue-300 border-blue-800/60"
+                hint="Какие тезисы, факты и смыслы нужно изложить в новом стиле."
+                focusBorder="focus:border-blue-500"
+                value={contentText}
+                onChange={setContentText}
+                onSample={() => setContentText(SAMPLE_CONTENT_TEXT)}
+                placeholder="Вставьте исходный текст для переработки..."
+              />
+            </div>
 
-                <div className="bg-slate-950 border border-slate-800/80 rounded-xl p-6 text-sm text-slate-100 leading-relaxed font-serif whitespace-pre-wrap max-h-[600px] overflow-y-auto">
-                  {dnaResultText}
-                </div>
-
-                {dnaMetrics && (
-                  <div className="p-4 rounded-xl bg-slate-950/90 border border-slate-800 space-y-3">
-                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-2 flex-wrap gap-2">
-                      <div className="flex items-center space-x-2 text-xs font-bold text-white">
-                        <BarChart3 className="h-4 w-4 text-indigo-400" />
-                        <span>Экспресс-аудит прерывистости и штампов</span>
-                      </div>
-                      <span className="text-[11px] text-slate-400">
-                        Предложений: <strong className="text-slate-200">{dnaMetrics.sentenceCount}</strong> | Средняя длина:{' '}
-                        <strong className="text-slate-200">{dnaMetrics.avgWords}</strong> сл.
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-slate-400">Шаблоны и канцелярит:</span>
-                          <span
-                            className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
-                              dnaMetrics.foundCliches.length === 0
-                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                                : 'bg-red-950 text-red-300 border border-red-800'
-                            }`}
-                          >
-                            {dnaMetrics.foundCliches.length === 0 ? '0 найдено' : `${dnaMetrics.foundCliches.length} найдено`}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-300">
-                          {dnaMetrics.foundCliches.length === 0
-                            ? `Из ${AI_CLICHES.length} проверяемых машинных оборотов ни один не найден. Это не гарантия «человечности».`
-                            : `Обнаружены обороты: ${dnaMetrics.foundCliches.join(', ')}`}
-                        </p>
-                      </div>
-
-                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-slate-400">Однородность предложений:</span>
-                          <span
-                            className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
-                              dnaMetrics.uniformityScore < 45
-                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                                : dnaMetrics.uniformityScore < 70
-                                ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                                : 'bg-red-950 text-red-300 border border-red-800'
-                            }`}
-                          >
-                            {dnaMetrics.uniformityScore}% {dnaMetrics.uniformityScore < 45 ? '(Хороший разброс)' : ''}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-300">
-                          Разброс: от <strong className="text-white">{dnaMetrics.minSentenceWords}</strong> до{' '}
-                          <strong className="text-white">{dnaMetrics.maxSentenceWords}</strong> слов.
-                        </p>
-                      </div>
-
-                      <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="text-slate-400">Бёрстность (ритм):</span>
-                          <span
-                            className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
-                              dnaMetrics.burstiness >= 0.65
-                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                                : dnaMetrics.burstiness >= 0.45
-                                ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                                : 'bg-red-950 text-red-300 border border-red-800'
-                            }`}
-                          >
-                            {dnaMetrics.burstiness} {dnaMetrics.burstiness >= 0.65 ? '(Живой ритм)' : ''}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-300">
-                          Коротких фраз (≤ 8 сл.): <strong className="text-white">{dnaMetrics.shortSentences.length}</strong> шт.
-                        </p>
-                      </div>
-                    </div>
-
-                    {dnaRefinementMeta && (
-                      <div className="pt-2.5 border-t border-slate-800/70 space-y-2 text-[11px] text-slate-300">
-                        <div className="flex items-center justify-between flex-wrap gap-2">
-                          <span>
-                            Замкнутый конвейер качества:{' '}
-                            <strong className="text-emerald-400">
-                              {dnaRefinementMeta.passes}{' '}
-                              {dnaRefinementMeta.passes === 1
-                                ? 'проход'
-                                : dnaRefinementMeta.passes < 5
-                                ? 'прохода'
-                                : 'проходов'}
-                            </strong>
-                            {typeof dnaRefinementMeta.cyclesRun === 'number' && dnaRefinementMeta.cyclesRun > 0 && (
-                              <span className="text-slate-400"> (циклов дожима: {dnaRefinementMeta.cyclesRun})</span>
-                            )}
-                          </span>
-                          <span className="font-mono text-slate-400">
-                            Burstiness:{' '}
-                            <strong className="text-white">
-                              {dnaRefinementMeta.burstinessBefore} → {dnaRefinementMeta.burstinessAfter}
-                            </strong>{' '}
-                            (цель: {dnaRefinementMeta.donorBurstinessTarget}) · Дефекты:{' '}
-                            <strong className="text-emerald-300">
-                              {dnaRefinementMeta.issuesDetected} → {dnaRefinementMeta.issuesRemaining}
-                            </strong>
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between flex-wrap gap-2 text-[10.5px]">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {typeof dnaRefinementMeta.dnaMatchAfter === 'number' && (
-                              <span className="px-2 py-0.5 rounded bg-indigo-950/80 border border-indigo-700/60 text-indigo-200 font-mono">
-                                ДНК донора: {dnaRefinementMeta.dnaMatchBefore ?? dnaRefinementMeta.dnaMatchAfter}% →{' '}
-                                <strong>{dnaRefinementMeta.dnaMatchAfter}%</strong>
-                              </span>
-                            )}
-                            {typeof dnaRefinementMeta.humanScoreAfter === 'number' && (
-                              <span className="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-700/60 text-emerald-200 font-mono">
-                                Анти-ИИ чистота: {dnaRefinementMeta.humanScoreBefore ?? dnaRefinementMeta.humanScoreAfter}% →{' '}
-                                <strong>{dnaRefinementMeta.humanScoreAfter}%</strong>
-                              </span>
-                            )}
-                            {typeof dnaRefinementMeta.factsPreservedPct === 'number' && (
-                              <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-200 font-mono">
-                                Факты Т2: <strong>{dnaRefinementMeta.factsPreservedPct}%</strong>
-                              </span>
-                            )}
-                            {dnaRefinementMeta.blueprintExtracted && (
-                              <span className="px-2 py-0.5 rounded bg-purple-950/70 border border-purple-700/50 text-purple-300">
-                                Чертёж Т1 ✓
-                              </span>
-                            )}
-                            {dnaRefinementMeta.deSkeletonized && (
-                              <span className="px-2 py-0.5 rounded bg-cyan-950/70 border border-cyan-700/50 text-cyan-300">
-                                Де-скелет Т2 ✓
-                              </span>
-                            )}
-                            {typeof dnaRefinementMeta.criticScore === 'number' && (
-                              <span className="px-2 py-0.5 rounded bg-amber-950/70 border border-amber-700/50 text-amber-200 font-mono">
-                                Критик: {dnaRefinementMeta.criticScore}/100
-                              </span>
-                            )}
-                          </div>
-                          {dnaRefinementMeta.stopReason && (
-                            <span className="text-slate-400 italic">{dnaRefinementMeta.stopReason}</span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+            {/* Run button */}
+            <div className="flex flex-col items-center justify-center space-y-2">
+              <button
+                type="button"
+                onClick={handleRunDnaTransfer}
+                disabled={isGeneratingDna}
+                className="w-full md:w-auto px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-indigo-600 to-purple-600 hover:from-emerald-500 hover:via-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white font-bold text-sm shadow-xl shadow-indigo-600/25 flex items-center justify-center space-x-3 transition-all cursor-pointer"
+              >
+                {isGeneratingDna ? (
+                  <>
+                    <RefreshCw className="h-5 w-5 animate-spin" />
+                    <span>Перенос ДНК стиля ({activeEnginesCount} модулей + {activeShieldsCount} щитов)...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-5 w-5" />
+                    <span>
+                      Выполнить перенос ДНК стиля ({activeEnginesCount} модулей + {activeShieldsCount} щитов)
+                    </span>
+                  </>
                 )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPromptDetails(!showPromptDetails)}
+                className="text-xs text-slate-400 hover:text-indigo-400 flex items-center space-x-1"
+              >
+                <Terminal className="h-3.5 w-3.5" />
+                <span>{showPromptDetails ? 'Скрыть структуру промпта' : 'Показать структуру промпта'}</span>
+              </button>
+            </div>
 
-                <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-800/60 flex-wrap gap-2">
-                  <span>
-                    Объем: <strong>{wordCount(dnaResultText)}</strong> слов (Текст 2 исходный: {wordCount(contentText)} слов)
+            {showPromptDetails && (
+              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+                    Структура объединённого промпта
                   </span>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {MODULES.filter((m) => flags[m.key]).map((m) => {
-                      const Icon = m.Icon;
-                      return (
-                        <span
-                          key={m.key}
-                          className={`text-[11px] px-2 py-0.5 rounded border flex items-center gap-1 ${COLOR_STYLES[m.color].badge}`}
-                        >
-                          <Icon className="h-3 w-3" /> {m.short}
-                        </span>
-                      );
-                    })}
+                  <span className="text-[11px] text-slate-500">
+                    Активно модулей: {activeEnginesCount} | Щитов: {activeShieldsCount}
+                  </span>
+                </div>
+                <pre className="bg-slate-950 border border-slate-800 rounded-xl p-4 text-[11px] text-slate-300 font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
+                  {combinedPromptPreview}
+                </pre>
+              </div>
+            )}
+
+            {/* Refinement report */}
+            {dnaRefinementMeta && (
+              <div className="bg-slate-900/90 border border-teal-700/50 rounded-2xl p-4 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="font-bold text-teal-300 flex items-center space-x-1.5">
+                    <ShieldCheck className="h-4 w-4 text-teal-400" />
+                    <span>
+                      Отчёт контроля качества и сближения с ДНК донора (проходов: {dnaRefinementMeta.passes}
+                      {typeof dnaRefinementMeta.cyclesRun === 'number' ? `, циклов: ${dnaRefinementMeta.cyclesRun}` : ''})
+                    </span>
+                  </span>
+                  <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-teal-950 text-teal-300 border border-teal-800 font-mono">
+                    Замечаний: {dnaRefinementMeta.issuesDetected} → {dnaRefinementMeta.issuesRemaining}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                  <div className="bg-slate-950 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] text-slate-400">Burstiness (до → после)</div>
+                    <div className="text-sm font-mono font-bold text-cyan-300 mt-0.5">
+                      {dnaRefinementMeta.burstinessBefore} → {dnaRefinementMeta.burstinessAfter}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      Ориентир донора: ~{dnaRefinementMeta.donorBurstinessTarget}
+                    </div>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] text-slate-400">Штампы (до → после)</div>
+                    <div className="text-sm font-mono font-bold text-emerald-300 mt-0.5">
+                      {dnaRefinementMeta.clichesBefore} → {dnaRefinementMeta.clichesAfter}
+                    </div>
+                    <div className="text-[10px] text-slate-500">Канцеляризмы и клише</div>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] text-slate-400">Факты и совпадение ДНК</div>
+                    <div className="text-sm font-mono font-bold text-amber-300 mt-0.5">
+                      {dnaRefinementMeta.factsPreservedPct ?? 100}% · ДНК {dnaRefinementMeta.dnaMatchAfter ?? '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      Потеряно фактов: {dnaRefinementMeta.factsLostAfter ?? 0}
+                    </div>
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800/80 rounded-lg p-2.5">
+                    <div className="text-[10px] text-slate-400">Итоговый индекс качества</div>
+                    <div className="text-sm font-mono font-bold text-indigo-300 mt-0.5">
+                      {dnaRefinementMeta.overallScoreAfter ?? '—'}/100
+                      {typeof dnaRefinementMeta.criticScore === 'number' ? ` · Критик ${dnaRefinementMeta.criticScore}` : ''}
+                    </div>
+                    <div className="text-[10px] text-slate-500 truncate" title={dnaRefinementMeta.stopReason || ''}>
+                      {dnaRefinementMeta.stopReason || 'Конвергенция завершена'}
+                    </div>
                   </div>
                 </div>
               </div>
             )}
+
+            <OutputPanel
+              title="Результат переноса стиля ДНК"
+              titleColor="text-emerald-400"
+              text={dnaResultText}
+              loading={isGeneratingDna}
+              loadingText="Применяем выбранные модули и щиты детекторов..."
+              placeholder="Здесь появится текст, написанный в стиле Текста 1 на основе содержания Текста 2."
+              baseName="style-dna-result"
+              spinnerColor="text-emerald-500"
+              Icon={Dna}
+              elapsedMs={dnaElapsedMs}
+              metrics={activeDnaMetrics}
+              diagnostics={dnaDiagnostics}
+            />
           </div>
         )}
 
-        {/* ===================== TAB: ACADEMIC 39 ===================== */}
-        {activeTab === 'academic-39' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-6 space-y-6">
-              <div className="bg-slate-900/80 border border-amber-800/40 rounded-2xl p-6 shadow-xl space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-2">
+        {/* ==================== DEDICATED BENCHMARK SUITES ==================== */}
+        {activeTab === 'sloptotal' && (
+          <SlopTotalWorkbench
+            initialText={currentSourceText}
+            onApplyScoreToMain={(humanScore, aiScore, rawMetric) => {
+              setDetectorScores((prev) => ({
+                ...prev,
+                sloptotal: {
+                  ...(prev.sloptotal || INITIAL_DETECTOR_SCORES.sloptotal),
+                  humanScore,
+                  aiScore,
+                  rawMetric,
+                  status: humanScore >= 70 ? 'Пройден (Clean)' : 'Подозрение на Slop',
+                  verdictLabel: humanScore >= 70 ? 'Clean (Человек)' : 'AI Slop / Подозрение',
+                  riskLevel: humanScore >= 70 ? 'low' : humanScore >= 50 ? 'medium' : 'high',
+                  lastTestedAt: Date.now(),
+                },
+              }));
+            }}
+          />
+        )}
+
+        {activeTab === 'mgt-eval' && (
+          <MgtEvalWorkbench
+            initialText={currentSourceText}
+            onApplyScoreToMain={(humanScore, aiScore, rawMetric) => {
+              setDetectorScores((prev) => ({
+                ...prev,
+                mgtEval: {
+                  ...(prev.mgtEval || INITIAL_DETECTOR_SCORES.mgtEval),
+                  humanScore,
+                  aiScore,
+                  rawMetric,
+                  status: humanScore >= 50 ? 'Пройден (Human)' : 'Подозрение на MGT',
+                  verdictLabel: humanScore >= 50 ? 'Human (MGT-Eval)' : 'AI-Generated (MGT-Eval)',
+                  riskLevel: humanScore >= 70 ? 'low' : humanScore >= 50 ? 'medium' : 'high',
+                  lastTestedAt: Date.now(),
+                },
+              }));
+            }}
+          />
+        )}
+
+        {activeTab === 'mgt-bench' && (
+          <MgtBenchWorkbench
+            initialText={currentSourceText}
+            onApplyScoreToMain={(humanScore, aiScore, rawMetric) => {
+              setDetectorScores((prev) => ({
+                ...prev,
+                mgtBench: {
+                  ...(prev.mgtBench || INITIAL_DETECTOR_SCORES.mgtBench),
+                  humanScore,
+                  aiScore,
+                  rawMetric,
+                  status: humanScore >= 50 ? 'Пройден (Human)' : 'Подозрение на MGT',
+                  verdictLabel: humanScore >= 50 ? 'Human (MGTBench)' : 'AI-Generated (MGTBench)',
+                  riskLevel: humanScore >= 70 ? 'low' : humanScore >= 50 ? 'medium' : 'high',
+                  lastTestedAt: Date.now(),
+                },
+              }));
+            }}
+          />
+        )}
+
+        {activeTab === 'detect-zoo' && (
+          <DetectZooWorkbench
+            initialText={currentSourceText}
+            onApplyScoreToMain={(humanScore, aiScore, rawMetric) => {
+              setDetectorScores((prev) => ({
+                ...prev,
+                detectZoo: {
+                  ...(prev.detectZoo || INITIAL_DETECTOR_SCORES.detectZoo),
+                  humanScore,
+                  aiScore,
+                  rawMetric,
+                  status: humanScore >= 50 ? 'Пройден (Human)' : 'Подозрение на AI',
+                  verdictLabel: humanScore >= 50 ? 'Human (DetectZoo)' : 'AI-Generated (DetectZoo)',
+                  riskLevel: humanScore >= 70 ? 'low' : humanScore >= 50 ? 'medium' : 'high',
+                  lastTestedAt: Date.now(),
+                },
+              }));
+            }}
+          />
+        )}
+
+        {/* ==================== TAB 2: ANALYSIS ==================== */}
+        {activeTab === 'analysis' && (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Human reference */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center space-x-2 text-emerald-400 font-semibold text-sm">
+                    <CheckSquare className="h-4 w-4" />
+                    <span>Эталон: естественный авторский стиль</span>
+                  </div>
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800">
+                    Ориентир
+                  </span>
+                </div>
+                <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-300 leading-relaxed max-h-48 overflow-y-auto font-serif">
+                  {TEXT_HUMAN}
+                </div>
+                {metricsHuman && (
+                  <div className="grid grid-cols-3 gap-2 pt-2">
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Средняя длина</div>
+                      <div className="text-lg font-bold text-white mt-0.5">{metricsHuman.avgWords} сл.</div>
+                      <div className="text-[10px] text-slate-500">
+                        от {metricsHuman.minSentenceWords} до {metricsHuman.maxSentenceWords}
+                      </div>
+                    </div>
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Коротких (≤8 сл.)</div>
+                      <div className="text-lg font-bold text-emerald-400 mt-0.5">{metricsHuman.shortSentences.length}</div>
+                      <div className="text-[10px] text-slate-500">из {metricsHuman.sentenceCount} фраз</div>
+                    </div>
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Burstiness</div>
+                      <div className="text-lg font-bold text-purple-400 mt-0.5">{metricsHuman.burstiness}</div>
+                      <div className="text-[10px] text-slate-500">разброс длины</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Target text */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <div className="flex items-center space-x-2 text-amber-400 font-semibold text-sm">
-                    <CheckSquare className="h-5 w-5" />
-                    <span>Академический редактор (39 правил регламента)</span>
+                    <AlertTriangle className="h-4 w-4" />
+                    <span>Проверяемый текст</span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setAcademicInputText(TEXT_AI)}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300"
+                    onClick={() => setInputTextAI(TEXT_AI)}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 underline"
                   >
-                    Загрузить пример текста
+                    Сбросить пример
                   </button>
                 </div>
-
-                <p className="text-xs text-slate-400">
-                  Редактирует текст по всем 39 пунктам регламента: контроль прерывистости (burstiness), отсутствие шаблонных мостиков, запрет гладких финалов абзацев, проверка конкретики и терминологическая точность.
-                </p>
-
                 <textarea
-                  rows={10}
-                  value={academicInputText}
-                  onChange={(e) => setAcademicInputText(e.target.value)}
-                  placeholder="Вставьте научный или диссертационный текст для редактуры по 39 правилам..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-200 focus:outline-none focus:border-amber-500 leading-relaxed resize-y"
+                  rows={6}
+                  value={inputTextAI}
+                  onChange={(e) => setInputTextAI(e.target.value)}
+                  placeholder="Вставьте текст для проверки ритма и штампов..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none font-serif"
                 />
-
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-slate-300">Дополнительные указания к редакции</label>
-                  <input
-                    type="text"
-                    value={academicCustomInstructions}
-                    onChange={(e) => setAcademicCustomInstructions(e.target.value)}
-                    placeholder="Например: уделить особое внимание первому абзацу..."
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-
-                <ErrorBox message={tabError} />
-
-                <button
-                  type="button"
-                  onClick={handleAcademicEdit}
-                  disabled={isGeneratingAcademic || !academicInputText.trim()}
-                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-600 to-indigo-600 text-white font-medium shadow-lg flex items-center justify-center space-x-2 disabled:opacity-50"
-                >
-                  {isGeneratingAcademic ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      <span>Редактируем по 39 правилам...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckSquare className="h-4 w-4" />
-                      <span>Запустить академическую редакцию (39 правил)</span>
-                    </>
-                  )}
-                </button>
+                {metricsAI && (
+                  <div className="grid grid-cols-3 gap-2 pt-2">
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Средняя длина</div>
+                      <div className="text-lg font-bold text-white mt-0.5">{metricsAI.avgWords} сл.</div>
+                      <div className="text-[10px] text-slate-500">
+                        от {metricsAI.minSentenceWords} до {metricsAI.maxSentenceWords}
+                      </div>
+                    </div>
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Коротких (≤8 сл.)</div>
+                      <div className="text-lg font-bold text-amber-400 mt-0.5">{metricsAI.shortSentences.length}</div>
+                      <div className="text-[10px] text-slate-500">из {metricsAI.sentenceCount} фраз</div>
+                    </div>
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Burstiness</div>
+                      <div className="text-lg font-bold text-rose-400 mt-0.5">{metricsAI.burstiness}</div>
+                      <div className="text-[10px] text-slate-500">однородность: {metricsAI.uniformityScore}%</div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="lg:col-span-6 space-y-6">
-              <OutputPanel
-                title="Отредактированный текст (39 правил)"
-                titleColor="text-amber-400"
-                text={academicOutputText}
-                loading={isGeneratingAcademic}
-                loadingText="Проверяем текст по 39 пунктам регламента..."
-                placeholder="Здесь появится отредактированный по 39 правилам текст"
-                baseName="academic-39-rules"
-                spinnerColor="text-amber-500"
-                Icon={CheckSquare}
-              />
+            {metricsAI && metricsAI.foundCliches.length > 0 && (
+              <div className="bg-amber-950/20 border border-amber-900/40 rounded-2xl p-5">
+                <h3 className="text-sm font-semibold text-amber-300 mb-2">
+                  Найдены частые штампы ({metricsAI.foundCliches.length}):
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {metricsAI.foundCliches.map((c, i) => (
+                    <span
+                      key={i}
+                      className="px-2.5 py-1 rounded-lg bg-amber-950/60 border border-amber-800/50 text-xs text-amber-200"
+                    >
+                      «{c}»
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 16 Detectors */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-3 border-b border-slate-800 pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                    <ShieldAlert className="h-5 w-5 text-indigo-400" />
+                    <span>Проверка по {DETECTORS_LIST.length} детекторам (циферблаты)</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Проверяет текст из поля выше по всем {DETECTORS_LIST.length} моделям и метрикам.
+                  </p>
+                </div>
+                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                  <button
+                    type="button"
+                    onClick={() => handleRunDetectorAudit(inputTextAI)}
+                    disabled={isAuditing}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center space-x-2 shadow-lg cursor-pointer"
+                  >
+                    <Activity className={`h-4 w-4 ${isAuditing ? 'animate-spin' : ''}`} />
+                    <span>{isAuditing ? 'Сканирование...' : `Проверить по всем ${DETECTORS_LIST.length} детекторам`}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRunSelectedDetectors(inputTextAI)}
+                    disabled={isAuditing || activeShieldsCount === 0}
+                    className="px-3.5 py-2 rounded-xl bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 text-white text-xs font-bold flex items-center space-x-1.5 shadow cursor-pointer"
+                  >
+                    <Search className="h-3.5 w-3.5" />
+                    <span>Выбранные ({activeShieldsCount})</span>
+                  </button>
+                </div>
+              </div>
+
+              {renderDetectorCards(DETECTORS_LIST)}
+
+              {activeWorkbenchDetector && (
+                <DetectorWorkbench
+                  detectorId={activeWorkbenchDetector}
+                  text={inputTextAI}
+                  onClose={() => setActiveWorkbenchDetector(null)}
+                  onApplyToMainScore={(detId, patch) => {
+                    setDetectorScores((prev) => ({
+                      ...prev,
+                      [detId]: {
+                        ...(prev[detId] || INITIAL_DETECTOR_SCORES[detId]),
+                        ...patch,
+                        lastTestedAt: Date.now(),
+                      },
+                    }));
+                  }}
+                />
+              )}
             </div>
           </div>
         )}
 
-        {/* ===================== TAB: SANDBOX ===================== */}
+        {/* ==================== TAB 3: SANDBOX ==================== */}
         {activeTab === 'sandbox' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-6 space-y-6">
-              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <span className="text-indigo-400 font-semibold text-sm">Исходный ИИ-текст</span>
-                  <button
-                    type="button"
-                    onClick={() => setInputTextAI(TEXT_AI)}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-indigo-300"
-                  >
-                    Загрузить пример Текст 2
-                  </button>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-5 space-y-6">
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <h2 className="text-base font-semibold text-white flex items-center space-x-2">
+                    <Sliders className="h-4 w-4 text-indigo-400" />
+                    <span>Настройки переработки</span>
+                  </h2>
+                  <span className="text-xs px-2.5 py-1 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800/60 font-medium">
+                    Интенсивность: {styleIntensity}/10
+                  </span>
                 </div>
 
-                <textarea
-                  rows={10}
-                  value={inputTextAI}
-                  onChange={(e) => setInputTextAI(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 leading-relaxed resize-y"
-                />
-
-                <div className="space-y-3 pt-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-300 font-semibold">Интенсивность де-искусственности</span>
-                    <span className="text-indigo-400 font-bold">{styleIntensity} / 10</span>
+                <div>
+                  <div className="flex justify-between text-xs text-slate-400 mb-2">
+                    <span>Мягкая правка (1)</span>
+                    <span>Средняя (5)</span>
+                    <span>Глубокая переработка (10)</span>
                   </div>
                   <input
                     type="range"
@@ -3125,272 +3790,451 @@ export default function App() {
                     max="10"
                     value={styleIntensity}
                     onChange={(e) => setStyleIntensity(Number(e.target.value))}
-                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    className="w-full accent-indigo-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-slate-300">Дополнительные пожелания</label>
-                  <input
-                    type="text"
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-2">
+                    Дополнительные пожелания (необязательно)
+                  </label>
+                  <textarea
+                    rows={3}
                     value={promptStrategy}
                     onChange={(e) => setPromptStrategy(e.target.value)}
-                    placeholder="Например: сделать абзацы слитнее..."
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+                    placeholder="Например: сделать более живой ритм, сохранить термины и даты..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 resize-none"
                   />
                 </div>
 
-                <ErrorBox message={tabError} />
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-xs font-medium text-slate-300">Исходный текст</label>
+                    <button
+                      type="button"
+                      onClick={() => setInputTextAI(TEXT_AI)}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300"
+                    >
+                      Подставить пример
+                    </button>
+                  </div>
+                  <textarea
+                    rows={8}
+                    value={inputTextAI}
+                    onChange={(e) => setInputTextAI(e.target.value)}
+                    placeholder="Вставьте текст для переработки..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none"
+                  />
+                </div>
 
                 <button
                   type="button"
                   onClick={handleTransformHumanizer}
-                  disabled={isGeneratingHumanizer || !inputTextAI.trim()}
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-medium shadow-lg flex items-center justify-center space-x-2 disabled:opacity-50"
+                  disabled={isGeneratingHumanizer}
+                  className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white font-semibold text-sm shadow-lg shadow-indigo-600/20 flex items-center justify-center space-x-2 transition-all cursor-pointer"
                 >
                   {isGeneratingHumanizer ? (
                     <>
                       <RefreshCw className="h-4 w-4 animate-spin" />
-                      <span>Переписываем текст...</span>
+                      <span>Перерабатываем текст...</span>
                     </>
                   ) : (
                     <>
                       <Sparkles className="h-4 w-4" />
-                      <span>Преобразовать текст</span>
+                      <span>Переработать текст</span>
                     </>
                   )}
                 </button>
               </div>
             </div>
 
-            <div className="lg:col-span-6 space-y-6">
+            <div className="lg:col-span-7 space-y-6">
               <OutputPanel
-                title="Результат"
-                titleColor="text-indigo-400"
+                title="Результат переработки"
+                titleColor="text-emerald-400"
                 text={transformedText}
                 loading={isGeneratingHumanizer}
-                loadingText="Применяем алгоритмы де-искусственности..."
-                placeholder="Здесь появится преобразованный текст"
-                baseName="humanized"
-                withDoc={false}
+                loadingText="Редактируем стиль и ритм предложения за предложением..."
+                placeholder="Нажмите «Переработать текст», чтобы получить результат."
+                baseName="humanized-text"
+                elapsedMs={humanizerElapsedMs}
+                metrics={activeHumanizerMetrics}
+                diagnostics={humanizerDiagnostics}
               />
+
+              {metricsTransformed && (
+                <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
+                    Метрики ритма результата
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Средняя длина</div>
+                      <div className="text-base font-bold text-white mt-0.5">{metricsTransformed.avgWords} сл.</div>
+                    </div>
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Коротких фраз</div>
+                      <div className="text-base font-bold text-emerald-400 mt-0.5">
+                        {metricsTransformed.shortSentences.length}
+                      </div>
+                    </div>
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Burstiness</div>
+                      <div className="text-base font-bold text-purple-400 mt-0.5">{metricsTransformed.burstiness}</div>
+                    </div>
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
+                      <div className="text-[11px] text-slate-400">Штампов осталось</div>
+                      <div className="text-base font-bold text-amber-400 mt-0.5">
+                        {metricsTransformed.foundCliches.length}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* ===================== TAB: DRAFT ===================== */}
+        {/* ==================== TAB 4: DRAFT WORKSHOP ==================== */}
         {activeTab === 'draft-workshop' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-6 space-y-6">
-              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2 text-indigo-400 font-semibold">
-                    <Sliders className="h-5 w-5" />
-                    <span>Сила черновика (уровень 1-10)</span>
-                  </div>
-                  <span className="text-2xl font-black text-indigo-400 bg-indigo-950 px-3 py-1 rounded-xl border border-indigo-800">
-                    {draftStrength}
-                  </span>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-5 bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <h2 className="text-base font-semibold text-white flex items-center space-x-2">
+                  <FileCode className="h-4 w-4 text-purple-400" />
+                  <span>Рабочий черновик</span>
+                </h2>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-purple-950 text-purple-300 border border-purple-800/60 font-medium">
+                  Глубина: {draftStrength}/10
+                </span>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs text-slate-400 mb-2">
+                  <span>Лёгкая правка (1)</span>
+                  <span>Глубокая переработка (10)</span>
                 </div>
-
                 <input
                   type="range"
                   min="1"
                   max="10"
                   value={draftStrength}
                   onChange={(e) => setDraftStrength(Number(e.target.value))}
-                  className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  className="w-full accent-purple-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
                 />
-
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-slate-300">Исходный научный текст для черновика</label>
-                  <textarea
-                    rows={8}
-                    value={draftInputText}
-                    onChange={(e) => setDraftInputText(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 resize-y"
-                  />
-                </div>
-
-                <ErrorBox message={tabError} />
-
-                <button
-                  type="button"
-                  onClick={handleGenerateDraft}
-                  disabled={isGeneratingDraft || !draftInputText.trim()}
-                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-medium shadow-lg flex items-center justify-center space-x-2 disabled:opacity-50"
-                >
-                  {isGeneratingDraft ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      <span>Создание черновика...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4" />
-                      <span>Сгенерировать черновик (ур. {draftStrength})</span>
-                    </>
-                  )}
-                </button>
               </div>
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs font-medium text-slate-300">Текст черновика</label>
+                  <button
+                    type="button"
+                    onClick={() => setDraftInputText(SAMPLE_DRAFT_TEXT)}
+                    className="text-[11px] text-purple-400 hover:text-purple-300"
+                  >
+                    Подставить пример
+                  </button>
+                </div>
+                <textarea
+                  rows={11}
+                  value={draftInputText}
+                  onChange={(e) => setDraftInputText(e.target.value)}
+                  placeholder="Вставьте черновик..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500 leading-relaxed resize-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateDraft}
+                disabled={isGeneratingDraft}
+                className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 text-white font-semibold text-sm shadow-lg flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                {isGeneratingDraft ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>Формируем черновик...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    <span>Сформировать черновик</span>
+                  </>
+                )}
+              </button>
             </div>
-
-            <div className="lg:col-span-6 space-y-6">
+            <div className="lg:col-span-7">
               <OutputPanel
-                title={`Черновик (уровень ${draftStrength})`}
-                titleColor="text-indigo-400"
+                title="Готовый черновик"
+                titleColor="text-purple-400"
                 text={draftOutputText}
                 loading={isGeneratingDraft}
-                loadingText="Строим черновик заданной силы..."
-                placeholder="Здесь появится ваш черновик"
-                baseName={`draft-level-${draftStrength}`}
+                loadingText="Перерабатываем черновик..."
+                placeholder="Здесь появится переработанный черновик."
+                baseName="draft-workshop"
+                spinnerColor="text-purple-500"
+                elapsedMs={draftElapsedMs}
+                metrics={activeDraftMetrics}
+                diagnostics={draftDiagnostics}
               />
             </div>
           </div>
         )}
 
-        {/* ===================== TAB: ANALYSIS ===================== */}
-        {activeTab === 'analysis' && (
-          <div className="space-y-8">
-            <div className="bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/70 border border-indigo-800/50 rounded-2xl p-6 shadow-xl space-y-4">
-              <div className="flex items-center space-x-3">
-                <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-                  <UserCheck className="h-6 w-6" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-white">Анализ различий: Текст 1 (человек) и Текст 2 (ИИ)</h2>
-                  <p className="text-xs text-slate-300">
-                    Сравните стилистические контрасты, синтаксическую структуру и принципы построения авторских текстов.
-                  </p>
-                </div>
+        {/* ==================== TAB 5: ACADEMIC 39 ==================== */}
+        {activeTab === 'academic-39' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-5 bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <h2 className="text-base font-semibold text-white flex items-center space-x-2">
+                  <BookOpen className="h-4 w-4 text-teal-400" />
+                  <span>Академический стиль (39 правил)</span>
+                </h2>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-teal-950 text-teal-300 border border-teal-800/60 font-medium">
+                  39 правил
+                </span>
               </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-2">
+                  Дополнительные требования к тексту
+                </label>
+                <textarea
+                  rows={3}
+                  value={academicCustomInstructions}
+                  onChange={(e) => setAcademicCustomInstructions(e.target.value)}
+                  placeholder="Например: сохранить библиографические ссылки и термины..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-teal-500 resize-none"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs font-medium text-slate-300">Исходный текст</label>
+                  <button
+                    type="button"
+                    onClick={() => setAcademicInputText(TEXT_AI)}
+                    className="text-[11px] text-teal-400 hover:text-teal-300"
+                  >
+                    Подставить пример
+                  </button>
+                </div>
+                <textarea
+                  rows={9}
+                  value={academicInputText}
+                  onChange={(e) => setAcademicInputText(e.target.value)}
+                  placeholder="Вставьте текст для академической переработки..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs text-slate-200 focus:outline-none focus:border-teal-500 leading-relaxed resize-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleGenerateAcademic39}
+                disabled={isGeneratingAcademic}
+                className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 disabled:opacity-50 text-white font-semibold text-sm shadow-lg flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                {isGeneratingAcademic ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>Применяем 39 правил...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    <span>Переработать по 39 правилам</span>
+                  </>
+                )}
+              </button>
             </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-slate-900/80 border border-emerald-800/40 rounded-2xl p-6 space-y-4 shadow-xl">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <div className="flex items-center space-x-2 text-emerald-400 font-bold">
-                    <UserCheck className="h-5 w-5" />
-                    <span>ТЕКСТ 1 — написан человеком</span>
-                  </div>
-                  <span className="text-xs px-2.5 py-1 rounded-lg bg-emerald-950 border border-emerald-800 text-emerald-300">
-                    Слов: {wordCount(TEXT_HUMAN)}
-                  </span>
-                </div>
-                <div className="bg-slate-950 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-300 leading-relaxed max-h-96 overflow-y-auto whitespace-pre-wrap">
-                  {TEXT_HUMAN}
-                </div>
-              </div>
-
-              <div className="bg-slate-900/80 border border-purple-800/40 rounded-2xl p-6 space-y-4 shadow-xl">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <div className="flex items-center space-x-2 text-purple-400 font-bold">
-                    <Cpu className="h-5 w-5" />
-                    <span>ТЕКСТ 2 — написан ИИ</span>
-                  </div>
-                  <span className="text-xs px-2.5 py-1 rounded-lg bg-purple-950 border border-purple-800 text-purple-300">
-                    Слов: {wordCount(TEXT_AI)}
-                  </span>
-                </div>
-                <div className="bg-slate-950 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-300 leading-relaxed max-h-96 overflow-y-auto whitespace-pre-wrap">
-                  {TEXT_AI}
-                </div>
-              </div>
+            <div className="lg:col-span-7">
+              <OutputPanel
+                title="Академический текст"
+                titleColor="text-teal-400"
+                text={academicOutputText}
+                loading={isGeneratingAcademic}
+                loadingText="Редактируем текст по академическим правилам..."
+                placeholder="Здесь появится переработанный текст."
+                baseName="academic-39"
+                spinnerColor="text-teal-500"
+                elapsedMs={academicElapsedMs}
+                metrics={activeAcademicMetrics}
+                diagnostics={academicDiagnostics}
+              />
             </div>
           </div>
         )}
 
-        {/* ===================== TAB: SLOPTOTAL ===================== */}
-        {activeTab === 'sloptotal' && (
-          <SlopTotalWorkbench
-            embedded
-            currentDnaResult={dnaResultText}
-            currentContentText={contentText}
-            currentDonorText={donorText}
-          />
-        )}
-
-        {/* ===================== TAB: MGT-EVAL ===================== */}
-        {activeTab === 'mgt-eval' && (
-          <MgtEvalWorkbench
-            embedded
-            currentDnaResult={dnaResultText}
-            currentContentText={contentText}
-            currentDonorText={donorText}
-          />
-        )}
-
-        {/* ===================== TAB: MGTBENCH ===================== */}
-        {activeTab === 'mgt-bench' && (
-          <MgtBenchWorkbench
-            embedded
-            currentDnaResult={dnaResultText}
-            currentContentText={contentText}
-            currentDonorText={donorText}
-          />
-        )}
-
-        {/* ===================== TAB: DETECTZOO ===================== */}
-        {activeTab === 'detect-zoo' && (
-          <DetectZooWorkbench
-            embedded
-            currentDnaResult={dnaResultText}
-            currentContentText={contentText}
-            currentDonorText={donorText}
-          />
-        )}
-
-        {/* ===================== TAB: HISTORY ===================== */}
+        {/* ==================== TAB 6: HISTORY ==================== */}
         {activeTab === 'history' && (
           <div className="space-y-6">
-            <h2 className="text-lg font-bold text-white">История генераций</h2>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <History className="h-5 w-5 text-indigo-400" />
+                  <span>История операций, промптов, времени и метрик</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Выберите любую запись слева, чтобы просмотреть полный результат, использованный промпт, время выполнения, +40 метрик и диагностику.
+                </p>
+              </div>
+              {history.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearHistory}
+                  className="px-3.5 py-1.5 rounded-lg bg-red-950/60 hover:bg-red-900/70 border border-red-800/60 text-red-200 text-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Очистить историю</span>
+                </button>
+              )}
+            </div>
+
             {history.length === 0 ? (
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-12 text-center text-slate-400">История пуста</div>
+              <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-12 text-center text-slate-400 space-y-2">
+                <History className="h-10 w-10 text-slate-600 mx-auto" />
+                <p>История пока пуста. Выполните генерацию или переработку текста на любой вкладке.</p>
+              </div>
             ) : (
-              <div className="space-y-4">
-                {history.map((item) => (
-                  <div key={item.id} className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-3">
-                    <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-800 pb-2">
-                      <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 font-bold">
-                        {item.type === 'style-dna'
-                          ? '🧬 ДНК-Трансфер V5.0'
-                          : item.type === 'humanizer'
-                          ? 'Де-искусственность'
-                          : item.type === 'academic-39'
-                          ? '39 правил'
-                          : 'Черновик'}
-                      </span>
-                      <span>{new Date(item.timestamp).toLocaleString()}</span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                        <span className="text-slate-500 block mb-1">Исходные данные:</span>
-                        <p className="text-slate-300 line-clamp-2">{item.inputText}</p>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* Left list of history items */}
+                <div className="lg:col-span-5 space-y-3 max-h-[820px] overflow-y-auto pr-1">
+                  {history.map((item) => {
+                    const isSelected = selectedHistoryItem?.id === item.id;
+                    const typeBadge =
+                      item.type === 'style-dna'
+                        ? 'Стиль ДНК'
+                        : item.type === 'draft'
+                        ? 'Черновик'
+                        : item.type === 'academic-39'
+                        ? 'Стиль 39 правил'
+                        : 'Гуманизатор';
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => setSelectedHistoryItemId(item.id)}
+                        className={`p-4 rounded-xl border transition cursor-pointer space-y-2 ${
+                          isSelected
+                            ? 'bg-slate-900 border-indigo-500 ring-1 ring-indigo-500/40 shadow-lg'
+                            : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/60 font-semibold text-[11px]">
+                              {typeBadge}
+                            </span>
+                            {item.modelUsed && (
+                              <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] font-mono">
+                                {item.modelUsed}
+                              </span>
+                            )}
+                            {typeof item.durationMs === 'number' && (
+                              <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/50 text-[10px] font-mono flex items-center gap-1">
+                                <Clock className="h-2.5 w-2.5" /> {formatDuration(item.durationMs)}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteHistoryItem(item.id);
+                            }}
+                            className="text-slate-500 hover:text-red-400 p-1 rounded"
+                            title="Удалить запись"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="text-[11px] text-slate-400">
+                          {new Date(item.timestamp).toLocaleString('ru-RU')} · Параметр: <strong>{item.strengthOrIntensity}</strong> · Объём: <strong>{wordCount(item.outputText)} сл.</strong>
+                        </div>
+
+                        <p className="text-xs text-slate-200 line-clamp-2 font-serif bg-slate-950/70 p-2 rounded-lg border border-slate-800/70">
+                          {item.outputText}
+                        </p>
                       </div>
-                      <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
-                        <span className="text-indigo-400 block mb-1">Результат:</span>
-                        <p className="text-slate-200 line-clamp-2">{item.outputText}</p>
+                    );
+                  })}
+                </div>
+
+                {/* Right detailed viewer */}
+                <div className="lg:col-span-7 space-y-4">
+                  {selectedHistoryItem && (
+                    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+                      <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-800 pb-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Eye className="h-4 w-4 text-indigo-400" />
+                          <h3 className="text-sm font-bold text-white">
+                            Детальный просмотр записи от {new Date(selectedHistoryItem.timestamp).toLocaleString('ru-RU')}
+                          </h3>
+                          {typeof selectedHistoryItem.durationMs === 'number' && (
+                            <span className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800 text-[11px] font-mono text-emerald-300">
+                              Время: {formatDuration(selectedHistoryItem.durationMs)}
+                            </span>
+                          )}
+                        </div>
+                        <OutputActions text={selectedHistoryItem.outputText} baseName={`history-${selectedHistoryItem.type}`} />
                       </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5">
+                          <div className="text-[10px] text-slate-400">Модель</div>
+                          <div className="font-mono font-bold text-cyan-300 truncate">{selectedHistoryItem.modelUsed || selectedModelName}</div>
+                        </div>
+                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5">
+                          <div className="text-[10px] text-slate-400">Длительность</div>
+                          <div className="font-mono font-bold text-emerald-300">{formatDuration(selectedHistoryItem.durationMs)}</div>
+                        </div>
+                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5">
+                          <div className="text-[10px] text-slate-400">Слов в результате</div>
+                          <div className="font-mono font-bold text-white">{wordCount(selectedHistoryItem.outputText)}</div>
+                        </div>
+                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-2.5">
+                          <div className="text-[10px] text-slate-400">Интенсивность / сила</div>
+                          <div className="font-mono font-bold text-amber-300">{selectedHistoryItem.strengthOrIntensity}</div>
+                        </div>
+                      </div>
+
+                      {selectedHistoryItem.promptUsed && (
+                        <details open className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs">
+                          <summary className="cursor-pointer font-bold text-indigo-300">
+                            Использованный промпт и параметры запроса
+                          </summary>
+                          <pre className="mt-2 text-[11px] font-mono text-slate-300 whitespace-pre-wrap overflow-x-auto">
+                            {selectedHistoryItem.promptUsed}
+                          </pre>
+                        </details>
+                      )}
+
+                      <div className="space-y-1.5">
+                        <div className="text-xs font-semibold text-slate-400">Исходный вход:</div>
+                        <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-3.5 text-xs text-slate-300 max-h-40 overflow-y-auto whitespace-pre-wrap font-serif">
+                          {selectedHistoryItem.inputText}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="text-xs font-semibold text-emerald-400">Итоговый текст:</div>
+                        <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm text-slate-100 max-h-80 overflow-y-auto whitespace-pre-wrap leading-relaxed font-serif">
+                          {selectedHistoryItem.outputText}
+                        </div>
+                      </div>
+
+                      <Plus40MetricsPanel
+                        metrics={computePlus40Metrics(selectedHistoryItem.outputText, donorText, selectedHistoryItem.inputText)}
+                        title="Полный набор метрик записи (+42 показателя)"
+                      />
+
+                      {selectedHistoryItem.diagnosticsSnapshot?.log && (
+                        <ExtendedDiagnosticsPanel log={selectedHistoryItem.diagnosticsSnapshot.log} />
+                      )}
                     </div>
-                  </div>
-                ))}
+                  )}
+                </div>
               </div>
             )}
           </div>
         )}
-      </main>
-
-      <footer className="border-t border-slate-800 bg-slate-950 py-4 px-6 text-center text-xs text-slate-500 flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center space-x-2">
-          <Activity className="h-4 w-4 text-emerald-400" />
-          <span>PROMPTGPT ∞ Engine: активна модель {selectedModelName}</span>
-        </div>
-        <div>
-          <span>
-            Запросов к модели сегодня (локальный счётчик): <strong className="text-slate-300">{dailyUsage.count}</strong>
-          </span>
-        </div>
-      </footer>
+        </main>
+      </div>
     </div>
   );
 }

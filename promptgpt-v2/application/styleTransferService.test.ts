@@ -620,5 +620,343 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     names.push("criticPolishThreshold with monotonic accepted-candidate preservation");
   }
 
+  {
+    const { sourceText, request } = fixture();
+    const end = sourceText.indexOf(".") + 1;
+    const built = buildSemanticInventory(sourceText, [{
+      id: "unfiltered-prop",
+      summary: "Священник пришёл к людям.",
+      sourceSpan: { start: 0, end, text: sourceText.slice(0, end) },
+      subject: "священник",
+      predicate: "пришёл",
+      object: "к людям",
+      polarity: "positive",
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    }]);
+    assert(built.valid && built.inventory, "unfiltered service fixture inventory must be valid");
+    const generatedWithErrors = "Священник пришел, к людям с ошибкой текста и без строгой проверки.";
+    const service = new StyleTransferService({
+      candidateGenerator: { async generate() { return generatedWithErrors; } },
+      critic: { async review() { throw new Error("critic must not run in unfilteredMode"); } },
+      repair: { async repair() { throw new Error("repair must not run in unfilteredMode"); } },
+      semanticVerifier: {
+        async assessCombined() { throw new Error("semanticVerifier.assessCombined must not run in unfilteredMode"); },
+        async assess() { throw new Error("semanticVerifier.assess must not run in unfilteredMode"); },
+        async assessRelations() { throw new Error("semanticVerifier.assessRelations must not run in unfilteredMode"); },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({
+      ...request,
+      inventory: built.inventory,
+      unfilteredMode: true,
+      minimumStyleScore: 100,
+    });
+    assert(result.status === "accepted", "unfilteredMode must accept generated candidate without semantic/style blocking");
+    assert(result.selectedText === generatedWithErrors, "unfilteredMode must return the generated candidate text unchanged");
+    assert(
+      result.warnings.some((w) => w.includes("Режим без фильтрации")),
+      "unfilteredMode must record diagnostic warning",
+    );
+    const steps = result.candidates[0]?.diagnosticSteps ?? [];
+    assert(
+      steps.some((s) => s.stage === "semantic-verification" && s.status === "skipped") &&
+      steps.some((s) => s.stage === "logical-structure" && s.status === "skipped") &&
+      steps.some((s) => s.stage === "style-scoring"),
+      "unfilteredMode must mark semantic stages as skipped while retaining style scoring",
+    );
+    names.push("unfilteredMode skips semantic verification and accepts output without blocking");
+  }
+
+  {
+    const { sourceText, request } = fixture();
+    const donorLines = Array.from({ length: 24 }, (_, idx) =>
+      `Во-первых, мысль ${idx + 1} звучит иначе — кратко и ясно! Однако вывод тут другой? Конечно.`
+    ).join(" ");
+    const richDonor = createDonorStyleBaseline(
+      analyzeStyleDNA(donorLines, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 }),
+      donorLines,
+    );
+    assert(richDonor.ok && richDonor.baseline, "rich donor baseline fixture must be created");
+    let generatedCalls = 0;
+    const candidatesByIndex = [
+      sourceText,
+      "Во-первых, мысль звучит иначе — кратко! Однако тут другой вывод? Возможно.",
+      donorLines,
+    ];
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate({ candidateIndex }) {
+          generatedCalls++;
+          return candidatesByIndex[candidateIndex] ?? sourceText;
+        },
+      },
+      critic: { async review() { throw new Error("critic must not run in unfilteredMode"); } },
+      repair: { async repair() { throw new Error("repair must not run in unfilteredMode"); } },
+      semanticVerifier: {
+        async assessCombined() { throw new Error("semanticVerifier must not run in unfilteredMode"); },
+        async assess() { throw new Error("semanticVerifier must not run in unfilteredMode"); },
+        async assessRelations() { throw new Error("semanticVerifier must not run in unfilteredMode"); },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({
+      ...request,
+      donorBaseline: richDonor.baseline,
+      generation: { candidateCount: 3, concurrency: 1, styleIntensity: 5, maxDonorExamples: 12, adaptive: true },
+      unfilteredMode: true,
+      criticPolishThreshold: 99,
+    });
+    assert(generatedCalls === 3, "unfilteredMode with low initial style score must generate all 3 candidates");
+    assert(result.status === "accepted" && result.selectedCandidateId === "candidate-3",
+      "unfilteredMode must select the highest-scoring stylistic candidate out of 3");
+    names.push("unfilteredMode evaluates all candidates below polish threshold and picks best style");
+  }
+
+  {
+    const { sourceText, request } = fixture();
+    const service = new StyleTransferService({
+      candidateGenerator: { async generate() { return sourceText; } },
+      critic: { async review() { throw new Error("critic must not run for accepted candidate"); } },
+      repair: { async repair() { throw new Error("repair must not run for accepted candidate"); } },
+      semanticVerifier: {
+        async assess() { return []; },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+      getSignalDiagnostics() {
+        return {
+          requestedModel: "gemini-4-hydrogen",
+          usedModel: "gemini-3.1-flash-lite",
+          fallbackOccurred: true,
+          warnings: ["candidate-generation: fallback from gemini-4-hydrogen to gemini-3.1-flash-lite"],
+        };
+      },
+    });
+    const result = await service.execute(request);
+    assert(result.status === "accepted", "execution with signal diagnostics should still accept valid output");
+    assert(result.requestedModel === "gemini-4-hydrogen", "requestedModel must be surfaced on StyleTransferResponse");
+    assert(result.usedModel === "gemini-3.1-flash-lite", "usedModel must be surfaced on StyleTransferResponse");
+    assert(result.fallbackOccurred === true, "fallbackOccurred must be surfaced on StyleTransferResponse");
+    assert(
+      result.warnings.some((w) => w.includes("fallback from gemini-4-hydrogen")),
+      "router fallback warning from getSignalDiagnostics must be merged into response warnings",
+    );
+    names.push("surface requestedModel, usedModel, fallbackOccurred, and warnings from getSignalDiagnostics");
+  }
+
+  {
+    const { sourceText, request } = fixture();
+    let recoveryCall = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate({ prompt }) {
+          recoveryCall++;
+          if (recoveryCall === 1) throw new Error("503 UNAVAILABLE");
+          assert(prompt.includes("ТЕКСТ-ДОНОР") || prompt.includes("ИСХОДНЫЙ ТЕКСТ"), "compact recovery prompt includes source");
+          return sourceText;
+        },
+      },
+      critic: { async review() { throw new Error("critic must not run"); } },
+      repair: { async repair() { throw new Error("repair must not run"); } },
+      semanticVerifier: {
+        async assess() { return []; },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({
+      ...request,
+      generation: { ...request.generation, candidateCount: 1, adaptive: true },
+      enableCompactRecovery: true,
+    });
+    assert(recoveryCall === 2 && result.status === "accepted" && result.selectedText === sourceText,
+      "enableCompactRecovery must rescue request when initial candidates fail transiently");
+    assert(result.warnings.some((w) => w.includes("компактная восстановительная генерация")),
+      "compact recovery must record diagnostic warning");
+    names.push("enableCompactRecovery rescues failed transient candidate generation");
+  }
+
+  {
+    const { sourceText, request } = fixture();
+    let genCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate() {
+          genCalls++;
+          return sourceText;
+        },
+      },
+      critic: { async review() { throw new Error("critic must not run"); } },
+      repair: { async repair() { throw new Error("repair must not run"); } },
+      semanticVerifier: {
+        async assessCombined() { throw new Error("503 UNAVAILABLE"); },
+        async assess() { throw new Error("503 UNAVAILABLE"); },
+        async assessRelations() { throw new Error("503 UNAVAILABLE"); },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({
+      ...request,
+      generation: { ...request.generation, candidateCount: 2, adaptive: true },
+      minimumStyleScore: 0,
+    });
+    assert(
+      result.status === "needs-review" &&
+      result.bestAvailableText === sourceText &&
+      result.candidates.length === 1 &&
+      genCalls === 1,
+      "transient semanticVerifier failure must preserve candidate as needs-review with Style DNA score without burning candidate-2",
+    );
+    names.push("transient verifier failure preserves candidate as needs-review with style scoring");
+  }
+
+  {
+    const { sourceText, request } = fixture();
+    const firstSentenceEnd = sourceText.indexOf(".") + 1;
+    const candidateText = sourceText.replaceAll("В этот день ", "");
+    const built = buildSemanticInventory(sourceText, [{
+      id: "p-restore-retry",
+      summary: "Священник пришёл к людям в этот день.",
+      sourceSpan: { start: 0, end: firstSentenceEnd, text: sourceText.slice(0, firstSentenceEnd) },
+      subject: "священник",
+      predicate: "пришёл",
+      object: "к людям",
+      polarity: "positive",
+      qualifications: [{ kind: "time", value: "В этот день" }],
+      relations: [],
+      mandatory: true,
+    }]);
+    assert(built.valid && built.inventory, "restoration retry fixture inventory must be valid");
+    let restorationCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate({ prompt }) {
+          if (prompt.startsWith("ЗАДАЧА: восстанови в преобразованном тексте")) {
+            restorationCalls++;
+            if (restorationCalls === 1) throw new Error("503 UNAVAILABLE");
+            return sourceText;
+          }
+          return candidateText;
+        },
+      },
+      critic: { async review() { throw new Error("critic must not run"); } },
+      repair: { async repair() { throw new Error("repair must not run"); } },
+      semanticVerifier: {
+        async assess({ candidateText: checkedText }) {
+          const preserved = checkedText === sourceText;
+          return [{
+            propositionId: "p-restore-retry",
+            status: preserved ? "preserved" as const : "changed" as const,
+            outputEvidence: [checkedText.slice(0, checkedText.indexOf(".") + 1)],
+            rationale: preserved ? "Сохранено." : "Утрачено «В этот день».",
+            confidence: 0.99,
+          }];
+        },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({
+      ...request,
+      inventory: built.inventory,
+      generation: { ...request.generation, candidateCount: 1, adaptive: true },
+    });
+    assert(
+      restorationCalls === 2 && result.status === "accepted" && result.selectedText === sourceText,
+      "semantic restoration must retry once after transient 503 UNAVAILABLE",
+    );
+    names.push("semantic restoration retries once on transient 503 error");
+  }
+
+  {
+    const { request } = fixture();
+    const longSource = "В рамках атеистической парадигмы смысл человеческого существования неизбежно редуцируется к процессу последовательного и сугубо материального улучшения внешних условий бытия, где всё многообразие мировых явлений выступает естественным процессом.";
+    const rewrittenCandidate = "Когда человек смотрит на мир чисто по-земному, вся его жизнь сводится лишь к улучшению быта — и больше ни к чему. Ведь любые события вокруг оказываются обычным ходом вещей без всяких тайн.";
+    const built = buildSemanticInventory(longSource, [{
+      id: "p-long-1",
+      summary: "Смысл сводится к улучшению условий бытия.",
+      sourceSpan: { start: 0, end: longSource.length, text: longSource },
+      subject: "смысл",
+      predicate: "редуцируется",
+      object: "к улучшению условий",
+      polarity: "positive",
+      qualifications: [],
+      relations: [],
+      mandatory: true,
+    }]);
+    assert(built.valid && built.inventory, "long source fixture inventory must be valid");
+    let verifierCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: {
+        async generate({ prompt }) {
+          if (prompt.startsWith("ЗАДАЧА: восстанови в преобразованном тексте")) {
+            return longSource;
+          }
+          return rewrittenCandidate;
+        },
+      },
+      critic: { async review() { throw new Error("critic must not run on rejected candidate"); } },
+      repair: { async repair() { throw new Error("repair must not run on rejected candidate"); } },
+      semanticVerifier: {
+        async assess() {
+          verifierCalls++;
+          return [{
+            propositionId: "p-long-1",
+            status: "omitted" as const,
+            outputEvidence: [],
+            rationale: "Упущена часть.",
+            confidence: 0.9,
+          }];
+        },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({
+      ...request,
+      sourceText: longSource,
+      inventory: built.inventory,
+      generation: { ...request.generation, candidateCount: 1, adaptive: true },
+    });
+    assert(
+      verifierCalls === 1 &&
+      result.candidates[0]?.finalText === rewrittenCandidate &&
+      result.warnings.some((w) => w.includes("откатилось к синтаксису исходника")),
+      "Stage 8 must reject verbatim source rollback before overwriting rewritten candidate",
+    );
+    names.push("semantic restoration rejects verbatim source rollback");
+  }
+
   return { passed: names.length, names };
 }

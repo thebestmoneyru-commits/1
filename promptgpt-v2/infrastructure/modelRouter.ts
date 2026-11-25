@@ -89,6 +89,8 @@ export interface ModelRouterOptions {
   queueTimeoutMs?: number;
   maxAttemptsPerModel?: number;
   cooldownMs?: Partial<Record<ModelErrorKind, number>>;
+  maxCooldownMs?: Partial<Record<ModelErrorKind, number>>;
+  retryDelays?: Partial<Record<ModelErrorKind, readonly number[]>>;
   now?: () => number;
 }
 
@@ -118,7 +120,7 @@ const DEFAULT_COOLDOWNS: Record<ModelErrorKind, number> = {
   "queue-timeout": 0,
   "queue-full": 0,
   "no-eligible-model": 0,
-  unavailable: 8_000,
+  unavailable: 3_000,
   network: 3_000,
   "invalid-auth": 0,
   "invalid-request": 0,
@@ -130,9 +132,9 @@ const DEFAULT_COOLDOWNS: Record<ModelErrorKind, number> = {
   cancelled: 0,
 };
 
-const MAX_ATTEMPTS = 3;
-const MAX_INLINE_RETRY_DELAY_MS = 15_000;
-const MAX_COOLDOWN_WAIT_MS = 10_000;
+const MAX_ATTEMPTS = 4;
+const MAX_INLINE_RETRY_DELAY_MS = 22_000;
+const MAX_COOLDOWN_WAIT_MS = 22_000;
 
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -167,17 +169,26 @@ export function classifyModelError(error: unknown): ModelErrorKind {
   if (/MAX_TOKENS|RESPONSE TRUNCATED|OUTPUT TOKEN LIMIT/.test(upper)) return "truncated";
   if (/UNSUPPORTED MODEL|MODEL.*NOT FOUND|NOT_FOUND/.test(upper) || status === 404) return "unsupported-model";
   if (/INVALID_ARGUMENT|INVALID REQUEST|BAD REQUEST|MALFORMED/.test(upper) || status === 400) return "invalid-request";
-  if (/QUOTA|DAILY LIMIT|PER DAY|PERDAY|BILLING|GENERATEREQUESTSPERDAY|GENERATETOKENSPERDAY/.test(upper)) return "quota-exhausted";
-  if (/RESOURCE_EXHAUSTED|RATE.?LIMIT|TOO MANY REQUESTS/.test(upper) || status === 429) return "rate-limit";
+  const isPerMinute =
+    /PER MINUTE|PERMINUTE|PER_MINUTE|GENERATEREQUESTSPERMINUTE|GENERATETOKENSPERMINUTE/.test(upper);
+  const isDailyOrBilling =
+    /DAILY LIMIT|PER DAY|PERDAY|PER_DAY|GENERATEREQUESTSPERDAY|GENERATETOKENSPERDAY|RETRY IN \d+H|BILLING ACCOUNT|ENABLE BILLING|BILLING NOT ENABLED/.test(upper);
+  const retryDelayMsValue = parseRetryDelayMs(error);
+  if (isPerMinute) return "rate-limit";
+  if (isDailyOrBilling) return "quota-exhausted";
+  if (/QUOTA/.test(upper) && (retryDelayMsValue === undefined || retryDelayMsValue > 120_000)) {
+    return "quota-exhausted";
+  }
+  if (/RESOURCE_EXHAUSTED|QUOTA|RATE.?LIMIT|TOO MANY REQUESTS/.test(upper) || status === 429) return "rate-limit";
   if (/TIMEOUT|TIMED OUT|DEADLINE_EXCEEDED|ABORT_ERR|ABORTERROR|OPERATION WAS ABORTED/.test(upper) || status === 408 || status === 504) return "timeout";
   if (/ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|NETWORK/.test(upper)) return "network";
-  if (/UNAVAILABLE|OVERLOADED|INTERNAL SERVER ERROR|BAD GATEWAY/.test(upper) || status === 500 || status === 502 || status === 503) return "unavailable";
+  if (/UNAVAILABLE|OVERLOADED|INTERNAL SERVER ERROR|BAD GATEWAY|HIGH DEMAND|TRY AGAIN LATER|CAPACITY/.test(upper) || status === 500 || status === 502 || status === 503) return "unavailable";
   return "unknown";
 }
 
 function parseRetryDelayMs(error: unknown): number | undefined {
   const text = errorText(error);
-  const match = /"retryDelay"\s*:\s*"?(\d+(?:\.\d+)?)s"?/i.exec(text);
+  const match = /\\?"?retryDelay\\?"?\s*:\s*\\?"?(\d+(?:\.\d+)?)s\\?"?/i.exec(text);
   if (!match) return undefined;
   const seconds = Number(match[1]);
   return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds * 1000) : undefined;
@@ -188,12 +199,14 @@ function retryDelayMs(
   attempt: number,
   error: unknown,
   hasAlternative: boolean,
+  customDelays?: Partial<Record<ModelErrorKind, readonly number[]>>,
 ): number | undefined {
-  const delays: Partial<Record<ModelErrorKind, number[]>> = {
-    unavailable: [500, 1_500],
-    network: [300, 900],
-    timeout: [500, 1_000],
-    "empty-response": [300],
+  const delays: Partial<Record<ModelErrorKind, readonly number[]>> = {
+    unavailable: [1_200, 3_500, 7_000],
+    network: [300, 900, 2_000],
+    timeout: [800, 2_000, 4_000],
+    "empty-response": [300, 800],
+    ...customDelays,
   };
   if (kind === "rate-limit") {
     if (hasAlternative || attempt > 1) return undefined;
@@ -251,6 +264,8 @@ export class ModelRouter {
   private readonly queueTimeoutMs: number;
   private readonly defaultAttempts: number;
   private readonly cooldowns: Record<ModelErrorKind, number>;
+  private readonly maxCooldowns: Partial<Record<ModelErrorKind, number>>;
+  private readonly retryDelays?: Partial<Record<ModelErrorKind, readonly number[]>>;
   private readonly now: () => number;
 
   constructor(options: ModelRouterOptions) {
@@ -259,6 +274,8 @@ export class ModelRouter {
     this.queueTimeoutMs = Math.max(1_000, Math.min(300_000, options.queueTimeoutMs ?? 120_000));
     this.defaultAttempts = Math.max(1, Math.min(MAX_ATTEMPTS, options.maxAttemptsPerModel ?? 3));
     this.cooldowns = { ...DEFAULT_COOLDOWNS, ...options.cooldownMs };
+    this.maxCooldowns = { ...options.maxCooldownMs };
+    this.retryDelays = options.retryDelays;
     this.now = options.now ?? Date.now;
     for (const model of options.models) {
       if (!model.id.trim() || this.definitions.has(model.id)) throw new Error("Model IDs must be non-empty and unique.");
@@ -330,7 +347,6 @@ export class ModelRouter {
     const eligibleModels = candidateIds
       .map((id) => this.definitions.get(id))
       .filter((model): model is ModelDefinition => !!model && model.enabled && model.tasks.includes(request.task));
-    const hasAlternative = eligibleModels.length > 1;
     let lastError: unknown;
     let lastKind: ModelErrorKind | undefined;
     let lastModelId: string | undefined;
@@ -345,11 +361,13 @@ export class ModelRouter {
       const state = this.states.get(modelId)!;
       const cooldownLeft = state.cooldownUntil - this.now();
       if (cooldownLeft > 0) {
-        const isLastEligible = !candidateIds.slice(candidateIds.indexOf(modelId) + 1).some((id) => {
+        const hasActiveLater = candidateIds.slice(candidateIds.indexOf(modelId) + 1).some((id) => {
           const candidate = this.definitions.get(id);
-          return !!candidate && candidate.enabled && candidate.tasks.includes(request.task);
+          const candidateState = this.states.get(id);
+          return !!candidate && candidate.enabled && candidate.tasks.includes(request.task) &&
+            (candidateState?.cooldownUntil ?? 0) <= this.now();
         });
-        if (isLastEligible && cooldownLeft <= MAX_COOLDOWN_WAIT_MS) {
+        if (!hasActiveLater && cooldownLeft <= MAX_COOLDOWN_WAIT_MS) {
           try {
             await sleep(cooldownLeft, request.signal);
           } catch (error) {
@@ -430,7 +448,15 @@ export class ModelRouter {
               errorKind: lastKind,
               durationMs: Math.max(0, this.now() - started),
             });
-            if (attempt < maxAttempts) retryDelay = retryDelayMs(lastKind, attempt, error, hasAlternative);
+            if (attempt < maxAttempts) {
+              const hasActiveAlternative = candidateIds.slice(candidateIds.indexOf(modelId) + 1).some((altId) => {
+                const altDef = this.definitions.get(altId);
+                const altState = this.states.get(altId);
+                return !!altDef && altDef.enabled && altDef.tasks.includes(request.task) &&
+                  (altState?.cooldownUntil ?? 0) <= this.now();
+              });
+              retryDelay = retryDelayMs(lastKind, attempt, error, hasActiveAlternative, this.retryDelays);
+            }
           }
         } finally {
           release?.();
@@ -452,8 +478,21 @@ export class ModelRouter {
 
         const coolableKinds = new Set<ModelErrorKind>(["rate-limit", "quota-exhausted", "unavailable", "timeout", "network"]);
         if (lastKind && coolableKinds.has(lastKind)) {
-          const retryAfter = lastKind === "rate-limit" ? parseRetryDelayMs(lastError) : undefined;
-          const cooldown = retryAfter ?? this.cooldowns[lastKind] ?? 0;
+          const retryAfter =
+            lastKind === "rate-limit" || lastKind === "quota-exhausted"
+              ? parseRetryDelayMs(lastError)
+              : undefined;
+          const boundedRetryAfter =
+            retryAfter !== undefined && lastKind === "quota-exhausted"
+              ? Math.min(retryAfter, this.maxCooldowns["quota-exhausted"] ?? 60 * 60_000)
+              : retryAfter;
+          const baseCooldown = this.cooldowns[lastKind] ?? 0;
+          const rawCooldown =
+            lastKind === "quota-exhausted"
+              ? Math.max(baseCooldown, boundedRetryAfter ?? 0)
+              : (boundedRetryAfter ?? baseCooldown);
+          const maxCap = this.maxCooldowns[lastKind];
+          const cooldown = maxCap !== undefined ? Math.min(rawCooldown, maxCap) : rawCooldown;
           state.cooldownUntil = Math.max(state.cooldownUntil, this.now() + cooldown);
         }
         break;
@@ -463,6 +502,79 @@ export class ModelRouter {
           lastKind === "invalid-auth" || lastKind === "invalid-request" || lastKind === "safety-block" ||
           lastKind === "unknown" || lastKind === "truncated") {
         break;
+      }
+    }
+
+    // Если предпочтительная модель ушла на короткий минутный кулдаун (<= MAX_COOLDOWN_WAIT_MS),
+    // а резервная модель провалилась (например, из-за дневного лимита), дождёмся конца короткого кулдауна и сделаем один чистый повтор.
+    if (
+      !request.signal?.aborted &&
+      lastKind !== "cancelled" &&
+      lastKind !== "invalid-auth" &&
+      lastKind !== "invalid-request" &&
+      lastKind !== "safety-block"
+    ) {
+      const recoverable = candidateIds
+        .map((id) => ({ id, model: this.definitions.get(id), state: this.states.get(id) }))
+        .filter((entry): entry is { id: string; model: ModelDefinition; state: ModelState } =>
+          !!entry.model && !!entry.state && entry.model.enabled && entry.model.tasks.includes(request.task)
+        )
+        .map((entry) => ({ ...entry, waitMs: Math.max(0, entry.state.cooldownUntil - this.now()) }))
+        .filter((entry) => entry.waitMs > 0 && entry.waitMs <= MAX_COOLDOWN_WAIT_MS)
+        .sort((a, b) => a.waitMs - b.waitMs)[0];
+
+      if (recoverable) {
+        try {
+          await sleep(recoverable.waitMs, request.signal);
+          let release: (() => void) | undefined;
+          let requestTimer: ReturnType<typeof createAbortSignal> | undefined;
+          const queueTimer = createAbortSignal(request.signal, queueTimeoutMs);
+          try {
+            release = await this.acquire(recoverable.model, queueTimer.signal, request.signal);
+            queueTimer.dispose();
+            requestTimer = createAbortSignal(request.signal, timeoutMs);
+            const started = this.now();
+            const text = (await this.adapter.invoke({
+              modelId: recoverable.id,
+              task: request.task,
+              prompt: request.prompt,
+              systemInstruction: request.systemInstruction,
+              responseSchema: recoverable.model.supportsJsonSchema ? request.responseSchema : undefined,
+              thinking: recoverable.model.supportsThinking ? request.thinking : undefined,
+              sampling: recoverable.model.supportsSampling ? request.sampling : undefined,
+              signal: requestTimer.signal,
+            })).trim();
+            if (text && !request.signal?.aborted && !requestTimer.signal.aborted) {
+              attempts.push({ modelId: recoverable.id, attempt: attempts.length + 1, durationMs: Math.max(0, this.now() - started) });
+              return {
+                text,
+                requestedModel,
+                usedModel: recoverable.id,
+                fallbackOccurred: recoverable.id !== requestedModel,
+                attempts,
+                warnings,
+              };
+            }
+          } catch (recoveryError) {
+            lastError = recoveryError;
+            lastModelId = recoverable.id;
+            lastKind = request.signal?.aborted
+              ? "cancelled"
+              : requestTimer?.signal.aborted
+                ? "timeout"
+                : recoveryError instanceof ModelRouterError
+                  ? recoveryError.kind
+                  : classifyModelError(recoveryError);
+            attempts.push({ modelId: recoverable.id, attempt: attempts.length + 1, errorKind: lastKind, durationMs: 0 });
+          } finally {
+            release?.();
+            requestTimer?.dispose();
+            queueTimer.dispose();
+          }
+        } catch (sleepError) {
+          lastError = sleepError;
+          lastKind = "cancelled";
+        }
       }
     }
 
@@ -476,6 +588,12 @@ export class ModelRouter {
     }
 
     const kind = lastKind ?? classifyModelError(lastError);
-    throw new ModelRouterError(errorText(lastError), kind, lastModelId, attempts);
+    const rawMessage = errorText(lastError);
+    const message =
+      kind === "timeout" &&
+      /^(this operation was aborted|the operation was aborted|signal timed out|aborterror:?\s*this operation was aborted)\.?$/i.test(rawMessage.trim())
+        ? `Model request timed out after ${timeoutMs}ms (${lastModelId ?? "unknown"}).`
+        : rawMessage;
+    throw new ModelRouterError(message, kind, lastModelId, attempts);
   }
 }

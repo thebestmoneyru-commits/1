@@ -170,6 +170,7 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   features.push(feature("paragraphs.mean-sentences-per-paragraph","paragraphs","Среднее число предложений в абзаце",stats.meanSentencesPerParagraph,paragraphs.length,"mean",corpusConfidence,paragraphs.length,paragraphEvidence, "Среднее число предложений в одном абзаце."));
 
   const punctuation: Array<[string,string,RegExp]> = [
+    ["comma","Запятая",/,/gu],
     ["dash","Тире",/—|–/gu],["semicolon","Точка с запятой",/;/gu],
     ["colon","Двоеточие",/:/gu],["exclamation","Восклицательный знак",/!/gu],
     ["question","Вопросительный знак",/\?/gu],["ellipsis","Многоточие",/…|\.{3}/gu],
@@ -247,8 +248,10 @@ export function analyzeStyleDNA(sourceText: string, options: Partial<StyleAnalyz
   if (!stats.paragraphs) warnings.push("Текст не содержит анализируемых абзацев.");
   if (features.some(f=>f.id.startsWith("syntax.participle") || f.id.startsWith("syntax.gerund"))) warnings.push("Морфологические признаки определяются эвристически; для точной классификации нужен морфологический анализатор.");
 
+  const minLimitedWords = Math.min(120, Math.max(1, Math.floor(config.minWordsForReliableProfile * 0.25)));
+  const minLimitedSentences = Math.min(6, Math.max(1, Math.floor(config.minSentencesForReliableProfile * 0.25)));
   const status = stats.words >= config.minWordsForReliableProfile && stats.sentences >= config.minSentencesForReliableProfile
-    ? "sufficient" : stats.words >= 120 && stats.sentences >= 6 ? "limited" : "insufficient";
+    ? "sufficient" : stats.words >= minLimitedWords && stats.sentences >= minLimitedSentences ? "limited" : "insufficient";
   return {
     profileVersion: STYLE_PROFILE_VERSION, status, confidence: corpusConfidence,
     corpus: stats, features, warnings, sourceFingerprint: fingerprintStyleSource(text),

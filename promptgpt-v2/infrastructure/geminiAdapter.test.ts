@@ -80,5 +80,73 @@ export async function runGeminiAdapterSelfTests(): Promise<{ passed: number; nam
   assert(lateRejected, "a provider response arriving after cancellation is not accepted");
   names.push("late response cancellation guard");
 
+  {
+    const capturedConfigs: Array<Record<string, unknown>> = [];
+    const hydrogenClient = {
+      models: {
+        async generateContent(args: { config: Record<string, unknown> }) {
+          capturedConfigs.push(args.config);
+          return { text: "hydrogen output" };
+        },
+      },
+    } as unknown as GoogleGenAI;
+    const hydrogenAdapter = new GeminiModelAdapter(hydrogenClient);
+
+    const highRes = await hydrogenAdapter.invoke({
+      ...request,
+      modelId: "gemini-4-hydrogen",
+      thinking: "high",
+    });
+    assert(highRes === "hydrogen output", "hydrogen adapter returns text on high thinking fallback");
+    assert(capturedConfigs[0]?.thinkingConfig === undefined, "gemini-4-hydrogen omits thinkingConfig when thinking is medium/high");
+
+    const lowRes = await hydrogenAdapter.invoke({
+      ...request,
+      modelId: "gemini-4-hydrogen",
+      thinking: "low",
+    });
+    assert(lowRes === "hydrogen output", "hydrogen adapter returns text on low thinking");
+    assert(
+      typeof capturedConfigs[1]?.thinkingConfig === "object" &&
+      (capturedConfigs[1]?.thinkingConfig as Record<string, unknown>).thinkingLevel === "LOW",
+      "gemini-4-hydrogen forwards ThinkingLevel.LOW when thinking is low",
+    );
+    names.push("gemini-4-hydrogen thinking level clamping");
+  }
+
+  {
+    let attempts = 0;
+    const retryConfigs: Array<Record<string, unknown>> = [];
+    const unsupportedClient = {
+      models: {
+        async generateContent(args: { config: Record<string, unknown> }) {
+          attempts++;
+          retryConfigs.push(args.config);
+          if (attempts === 1) {
+            throw new Error("INVALID_ARGUMENT: Unknown name \"frequencyPenalty\" at config");
+          }
+          return { text: "recovered after stripping unsupported config" };
+        },
+      },
+    } as unknown as GoogleGenAI;
+    const retryAdapter = new GeminiModelAdapter(unsupportedClient);
+    const recovered = await retryAdapter.invoke({
+      ...request,
+      modelId: "gemini-4-hydrogen",
+      thinking: "low",
+      sampling: { temperature: 0.8, topP: 0.9, topK: 40, frequencyPenalty: 0.3, presencePenalty: 0.2 },
+    });
+    assert(attempts === 2, "unsupported parameter triggers one retry without unsupported config fields");
+    assert(recovered === "recovered after stripping unsupported config", "retry succeeds after stripping unsupported params");
+    assert(
+      retryConfigs[1]?.frequencyPenalty === undefined &&
+      retryConfigs[1]?.presencePenalty === undefined &&
+      retryConfigs[1]?.topK === undefined &&
+      retryConfigs[1]?.temperature === 0.8,
+      "retry strips unsupported penalty/topK fields while keeping core sampling parameters",
+    );
+    names.push("graceful retry when provider rejects optional config parameters");
+  }
+
   return { passed: names.length, names };
 }

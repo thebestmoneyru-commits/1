@@ -23,6 +23,7 @@ import { runPropositionIntegritySelfTests } from "./semantic/propositionIntegrit
 import { runSemanticStructureAuditSelfTests } from "./semantic/semanticStructureAudit.test";
 import { runLogicalRelationPreservationSelfTests } from "./semantic/logicalRelationPreservation.test";
 import { runStyleTransferApiSelfTests } from "./api/styleTransferRouter.test";
+import { runDnaDiagnostics40SelfTests } from "./style/dnaDiagnostics40.test";
 
 export interface SelfTestGroupResult {
   group: string;
@@ -74,6 +75,7 @@ export async function runV2SelfTestSuite(): Promise<SelfTestSuiteResult> {
     { group: "semantic-structure-audit", run: runSemanticStructureAuditSelfTests },
     { group: "semantic-logical-relation-preservation", run: runLogicalRelationPreservationSelfTests },
     { group: "api-style-transfer-router", run: runStyleTransferApiSelfTests },
+    { group: "style-dna-diagnostics-40", run: runDnaDiagnostics40SelfTests },
   ];
   const results: SelfTestGroupResult[] = [];
   const failures: SelfTestFailure[] = [];

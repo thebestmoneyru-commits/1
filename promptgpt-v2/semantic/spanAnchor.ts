@@ -54,6 +54,49 @@ function findWhitespaceFlexibleOccurrences(haystack: string, needle: string): Sp
   return matches;
 }
 
+function normalizeTypographicChar(ch: string): string {
+  switch (ch) {
+    case "ё":
+      return "е";
+    case "Ё":
+      return "Е";
+    case "«":
+    case "»":
+    case "„":
+    case "“":
+    case "”":
+    case "‟":
+      return '"';
+    case "’":
+    case "‘":
+    case "‚":
+      return "'";
+    case "—":
+    case "–":
+    case "−":
+      return "-";
+    default:
+      return ch;
+  }
+}
+
+function normalizeTypographicEquivalence(value: string): string {
+  let out = "";
+  for (let i = 0; i < value.length; i++) {
+    out += normalizeTypographicChar(value[i]);
+  }
+  return out;
+}
+
+function findEquivalenceFlexibleOccurrences(haystack: string, needle: string): SpanRange[] {
+  const normHaystack = normalizeTypographicEquivalence(haystack);
+  const normNeedle = normalizeTypographicEquivalence(needle.trim());
+  if (!normNeedle) return [];
+  const exactNorm = findExactOccurrences(normHaystack, normNeedle);
+  if (exactNorm.length > 0) return exactNorm;
+  return findWhitespaceFlexibleOccurrences(normHaystack, normNeedle);
+}
+
 /**
  * Deterministic verbatim span anchor.
  * LLMs cannot reliably compute exact UTF-16 character offsets across prose, so
@@ -67,6 +110,7 @@ export function resolveVerbatimSpan(
   rawSpan: unknown,
   preferredRange?: SpanRange,
   hintStart = 0,
+  allowTypographicEquivalence = false,
 ): unknown {
   if (!isRecord(rawSpan)) return rawSpan;
   const { start, end, text } = rawSpan;
@@ -117,6 +161,9 @@ export function resolveVerbatimSpan(
   }
   if (matches.length === 0) {
     matches = findWhitespaceFlexibleOccurrences(fullText, text);
+  }
+  if (matches.length === 0 && allowTypographicEquivalence) {
+    matches = findEquivalenceFlexibleOccurrences(fullText, text);
   }
   if (matches.length === 0) {
     return rawSpan;
@@ -191,7 +238,7 @@ export function normalizeModelExtractedPropositions(
     const copy: Record<string, unknown> = { ...entry };
     copy.id = normalizeId(copy.id);
 
-    if (copy.object === null) delete copy.object;
+    if (copy.object === null || (typeof copy.object === "string" && !copy.object.trim())) delete copy.object;
     if (copy.modality === null) delete copy.modality;
 
     if (Array.isArray(copy.relations)) {
@@ -200,7 +247,9 @@ export function normalizeModelExtractedPropositions(
         const relCopy: Record<string, unknown> = { ...rel };
         relCopy.from = normalizeId(relCopy.from);
         relCopy.to = normalizeId(relCopy.to);
-        if (relCopy.expression === null) delete relCopy.expression;
+        if (relCopy.expression === null || (typeof relCopy.expression === "string" && !relCopy.expression.trim())) {
+          delete relCopy.expression;
+        }
         return relCopy;
       });
     }

@@ -101,6 +101,7 @@ import {
   analyzeStyleDNA,
   createGeminiStyleTransferService,
   createPreparedStyleTransferApiRouter,
+  type StyleTransferJobRecord,
 } from './promptgpt-v2/index.ts';
 
 dotenv.config();
@@ -139,7 +140,7 @@ const PORT =
 
 const HOST = cliHost || process.env.HOST || '0.0.0.0';
 
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '100mb' }));
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
@@ -157,6 +158,12 @@ const ai = new GoogleGenAI({
 // V2 is opt-in and isolated from the legacy endpoints. Configure a long,
 // random PROMPTGPT_V2_ACCESS_KEY in the server environment before enabling it.
 const V2_MODEL_ID = process.env.PROMPTGPT_V2_MODEL?.trim() || 'gemini-3.1-flash-lite';
+const V2_FALLBACK_MODEL_ID = 'gemini-3.1-flash-lite';
+const V2_ALLOWED_MODELS = new Set<string>([
+  V2_MODEL_ID,
+  'gemini-3.1-flash-lite',
+  'gemini-4-hydrogen',
+]);
 const V2_MODEL_TASKS = [
   'candidate-generation',
   'style-critique',
@@ -195,7 +202,7 @@ const rateLimitV2: express.RequestHandler = (req, res, next) => {
   const now = Date.now();
   const key = req.ip || req.socket.remoteAddress || 'unknown';
   const windowMs = 15 * 60 * 1000;
-  const limit = 8;
+  const limit = 60;
   let entry = v2RateLimitWindows.get(key);
 
   if (!entry || now - entry.startedAt >= windowMs) {
@@ -204,7 +211,7 @@ const rateLimitV2: express.RequestHandler = (req, res, next) => {
   }
   if (entry.count >= limit) {
     return res.status(429).json({
-      error: { code: 'RATE_LIMITED', message: 'Лимит PROMPTGPT v2: не более 8 запусков за 15 минут с одного адреса.' },
+      error: { code: 'RATE_LIMITED', message: 'Лимит PROMPTGPT v2: не более 60 запусков за 15 минут с одного адреса.' },
     });
   }
   entry.count += 1;
@@ -217,84 +224,152 @@ const rateLimitV2: express.RequestHandler = (req, res, next) => {
   return next();
 };
 
-const V2_FALLBACK_MODEL_ID = 'gemini-3.1-flash-lite';
-const v2HasDistinctFallback = V2_MODEL_ID !== V2_FALLBACK_MODEL_ID;
-const v2FallbackModels = v2HasDistinctFallback ? [V2_FALLBACK_MODEL_ID] : undefined;
-
-const v2Catalog = {
-  models: [
-    {
-      id: V2_MODEL_ID,
-      tasks: V2_MODEL_TASKS,
-      enabled: true,
-      maxConcurrency: 2,
-      maxQueueLength: 8,
-      supportsJsonSchema: true,
-      supportsThinking: true,
-      supportsSampling: true,
-    },
-    ...(v2HasDistinctFallback ? [{
-      id: V2_FALLBACK_MODEL_ID,
-      tasks: V2_MODEL_TASKS,
-      enabled: true,
-      maxConcurrency: 2,
-      maxQueueLength: 8,
-      supportsJsonSchema: true,
-      supportsThinking: true,
-      supportsSampling: true,
-    }] : []),
-  ],
-  routes: {
-    candidateGeneration: { preferredModel: V2_MODEL_ID, fallbackModels: v2FallbackModels },
-    styleCritique: { preferredModel: V2_MODEL_ID, fallbackModels: v2FallbackModels },
-    surgicalRepair: { preferredModel: V2_MODEL_ID, fallbackModels: v2FallbackModels },
-    semanticVerification: { preferredModel: V2_MODEL_ID, fallbackModels: v2FallbackModels },
-    semanticExtraction: { preferredModel: V2_MODEL_ID, fallbackModels: v2FallbackModels },
-  },
+const V2_ANALYZER_OPTIONS = {
+  minWordsForReliableProfile: 60,
+  minSentencesForReliableProfile: 3,
 };
 
-if (process.env.GEMINI_API_KEY?.trim()) {
+function buildV2CatalogForModel(preferredModelId: string) {
+  // Двусторонний резервный маршрут: при 503 UNAVAILABLE или квоте на одном движке
+  // роутер автоматически переключается на второй доступный бесплатный движок.
+  // Для gemini-4-hydrogen вспомогательные JSON-этапы предпочитают Flash Lite,
+  // чтобы беречь дневную квоту Hydrogen, но при 503 на Flash Lite могут опереться на Hydrogen.
+  const secondaryModelId =
+    preferredModelId === V2_FALLBACK_MODEL_ID ? 'gemini-4-hydrogen' : V2_FALLBACK_MODEL_ID;
+  const fallbackModels = secondaryModelId ? [secondaryModelId] : undefined;
+  const isQuotaLimitedPrimary = preferredModelId === 'gemini-4-hydrogen';
+  const auxPreferred = isQuotaLimitedPrimary ? V2_FALLBACK_MODEL_ID : preferredModelId;
+  const auxFallback = isQuotaLimitedPrimary ? [preferredModelId] : fallbackModels;
+  return {
+    models: [
+      {
+        id: preferredModelId,
+        tasks: V2_MODEL_TASKS,
+        enabled: true,
+        maxConcurrency: isQuotaLimitedPrimary ? 2 : 3,
+        maxQueueLength: 24,
+        supportsJsonSchema: true,
+        supportsThinking: true,
+        supportsSampling: true,
+      },
+      {
+        id: secondaryModelId,
+        tasks: V2_MODEL_TASKS,
+        enabled: true,
+        maxConcurrency: secondaryModelId === 'gemini-4-hydrogen' ? 2 : 3,
+        maxQueueLength: 24,
+        supportsJsonSchema: true,
+        supportsThinking: true,
+        supportsSampling: true,
+      },
+    ],
+    routes: {
+      candidateGeneration: { preferredModel: preferredModelId, fallbackModels },
+      styleCritique: { preferredModel: auxPreferred, fallbackModels: auxFallback },
+      surgicalRepair: { preferredModel: auxPreferred, fallbackModels: auxFallback },
+      semanticVerification: { preferredModel: auxPreferred, fallbackModels: auxFallback },
+      semanticExtraction: { preferredModel: auxPreferred, fallbackModels: auxFallback },
+    },
+  };
+}
+
+const v2RouterByModel = new Map<string, express.Router>();
+const v2JobStore = new Map<string, StyleTransferJobRecord>();
+
+function getOrCreateV2RouterForModel(preferredModelId: string): express.Router {
+  const cached = v2RouterByModel.get(preferredModelId);
+  if (cached) return cached;
+
+  const catalog = buildV2CatalogForModel(preferredModelId);
   const v2Runtime = createGeminiStyleTransferService({
-    apiKey: process.env.GEMINI_API_KEY.trim(),
-    catalog: v2Catalog,
+    apiKey: process.env.GEMINI_API_KEY!.trim(),
+    catalog,
+    thinkingByTask: {
+      'candidate-generation': 'low',
+      'style-critique': 'low',
+      'surgical-repair': 'low',
+      'semantic-verification': 'low',
+      'semantic-extraction': 'low',
+    },
     styleProfiler: {
-      analyze: (text) =>
-        analyzeStyleDNA(text, {
-          minWordsForReliableProfile: 200,
-          minSentencesForReliableProfile: 8,
-        }),
+      analyze: (text) => analyzeStyleDNA(text, V2_ANALYZER_OPTIONS),
     },
     defaultRequestOptions: {
       generation: {
-        candidateCount: 3,
-        concurrency: 2,
+        candidateCount: 2,
+        concurrency: 1,
         styleIntensity: 5,
-        maxDonorExamples: 24,
+        maxDonorExamples: 18,
         adaptive: true,
       },
-      minimumStyleScore: 76,
-      criticPolishThreshold: 85,
+      minimumStyleScore: 45,
+      minimumStyleConfidence: 0.15,
+      criticPolishThreshold: 88,
+      enableCompactRecovery: true,
     },
-    router: { defaultTimeoutMs: 120_000, queueTimeoutMs: 180_000, maxAttemptsPerModel: 3 },
+    router: {
+      defaultTimeoutMs: 70_000,
+      queueTimeoutMs: 180_000,
+      maxAttemptsPerModel: 4,
+      retryDelays: {
+        unavailable: [1_500, 3_500, 5_500],
+        timeout: [1_200],
+        network: [500, 1_500, 3_000],
+      },
+      cooldownMs: {
+        'rate-limit': 10_000,
+        'quota-exhausted': 2 * 60_000,
+        timeout: 3_000,
+        unavailable: 2_000,
+      },
+      maxCooldownMs: {
+        'rate-limit': 20_000,
+        'quota-exhausted': 5 * 60_000,
+      },
+    },
   });
 
-  app.use('/api/v2/style-transfer', createPreparedStyleTransferApiRouter({
+  const router = createPreparedStyleTransferApiRouter({
     service: v2Runtime.service,
     modelRouter: v2Runtime.router,
-    routes: v2Catalog.routes,
+    routes: catalog.routes,
     authenticate: authenticateV2,
     rateLimit: rateLimitV2,
-    maxSourceCharacters: 30_000,
-    maxDonorCharacters: 100_000,
+    jobStore: v2JobStore,
     preparation: {
-      requireSufficientDonor: true,
-      extractionTimeoutMs: 120_000,
-      completenessAuditTimeoutMs: 120_000,
-      interpretationAuditTimeoutMs: 120_000,
-      structureAuditTimeoutMs: 120_000,
+      analyzer: V2_ANALYZER_OPTIONS,
+      requireSufficientDonor: false,
+      stopOnAuditFindings: false,
+      completenessAudit: false,
+      interpretationAudit: false,
+      structureAudit: false,
+      skipExtractionInUnfiltered: true,
+      extractionTimeoutMs: 60_000,
+      thinking: 'low',
     },
     onError: (error) => console.error('[PROMPTGPT v2 API]', error),
-  }));
+  });
+  v2RouterByModel.set(preferredModelId, router);
+  return router;
+}
+
+if (process.env.GEMINI_API_KEY?.trim()) {
+  // Pre-warm default model router
+  getOrCreateV2RouterForModel(V2_MODEL_ID);
+
+  app.use('/api/v2/style-transfer', (req, res, next) => {
+    const rawRequested = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+    const resolvedModel = rawRequested ? normalizeModelId(rawRequested) : V2_MODEL_ID;
+    if (!V2_ALLOWED_MODELS.has(resolvedModel)) {
+      return res.status(400).json({
+        error: {
+          code: 'UNSUPPORTED_V2_MODEL',
+          message: `Модель «${rawRequested}» не поддерживается в PROMPTGPT v2. Используйте gemini-3.1-flash-lite или gemini-4-hydrogen.`,
+        },
+      });
+    }
+    return getOrCreateV2RouterForModel(resolvedModel)(req, res, next);
+  });
 } else {
   app.use('/api/v2/style-transfer', (_req, res) => {
     res.status(503).json({
@@ -308,11 +383,10 @@ if (process.env.GEMINI_API_KEY?.trim()) {
 /* ------------------------------------------------------------------ */
 
 function normalizeModelId(requestedModel: string): string {
-  if (
-    !requestedModel ||
-    requestedModel === 'gemini-3.8-flash' ||
-    requestedModel === 'gemini-flash-latest'
-  ) {
+  if (!requestedModel || requestedModel === 'gemini-flash-latest') {
+    return 'gemini-3.1-flash-lite';
+  }
+  if (requestedModel === 'gemini-3.8-flash') {
     return 'gemini-4-hydrogen';
   }
 
@@ -406,6 +480,7 @@ async function callModelOnce(params: {
 
   const baseConfig: Record<string, any> = {
     systemInstruction,
+    abortSignal: AbortSignal.timeout(60_000),
   };
 
   if (responseSchema) {
@@ -453,7 +528,7 @@ async function callModelOnce(params: {
         ));
 
     if (isUnsupportedConfig) {
-      const retryConfig = { ...baseConfig };
+      const retryConfig: Record<string, any> = { ...baseConfig, abortSignal: AbortSignal.timeout(60_000) };
       if (/thinking/i.test(msg)) {
         delete retryConfig.thinkingConfig;
       }
@@ -492,9 +567,9 @@ function parseQuotaCooldownMs(err: any): number {
   const secMatch = msg.match(/"retryDelay"\s*:\s*"(\d+)s"/i);
   if (secMatch) {
     const ms = parseInt(secMatch[1], 10) * 1000;
-    return isDaily ? Math.min(ms, 15 * 60 * 1000) : Math.min(Math.max(ms, 15_000), 90_000);
+    return isDaily ? Math.min(ms, 5 * 60 * 1000) : Math.min(Math.max(ms, 8_000), 30_000);
   }
-  return isDaily ? 15 * 60 * 1000 : 60_000;
+  return isDaily ? 5 * 60 * 1000 : 15_000;
 }
 
 function markModelCooldown(modelId: string, err: any): void {
@@ -515,12 +590,13 @@ function isModelOnCooldown(modelId: string): boolean {
 
 function buildCandidateModelList(preferredModel: string): string[] {
   const normalized = normalizeModelId(preferredModel);
-  const baseOrder = Array.from(
-    new Set([normalized, 'gemini-3.1-flash-lite', 'gemini-4-hydrogen'])
-  );
+  const baseOrder =
+    normalized === 'gemini-3.1-flash-lite'
+      ? ['gemini-3.1-flash-lite', 'gemini-4-hydrogen']
+      : Array.from(new Set([normalized, 'gemini-3.1-flash-lite']));
   const available = baseOrder.filter((m) => !isModelOnCooldown(m));
-  // Если все модели на временном кулдауне, всё равно пробуем резервный порядок (начиная с high-quota Flash Lite)
-  return available.length > 0 ? available : ['gemini-3.1-flash-lite', normalized];
+  // Если все модели на временном кулдауне, пробуем полный список кандидатов
+  return available.length > 0 ? available : baseOrder;
 }
 
 function hashText(text: string): string {
@@ -567,45 +643,61 @@ async function generateWithFallback(
   for (let i = 0; i < uniqueModels.length; i++) {
     const modelToTry = uniqueModels[i];
 
-    try {
-      const text = await callModelOnce({
-        model: modelToTry,
-        contents,
-        systemInstruction,
-        thinkingHint,
-        sampling,
-      });
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const text = await callModelOnce({
+          model: modelToTry,
+          contents,
+          systemInstruction,
+          thinkingHint,
+          sampling,
+        });
 
-      if (!text) {
-        throw new Error(
-          `Модель ${modelToTry} вернула пустой ответ (возможна блокировка по safety-фильтру).`
-        );
-      }
+        if (!text) {
+          throw new Error(
+            `Модель ${modelToTry} вернула пустой ответ (возможна блокировка по safety-фильтру).`
+          );
+        }
 
-      return {
-        text,
-        usedModel: modelToTry,
-        fallbackOccurred: modelToTry !== normalized,
-      };
-    } catch (err: any) {
-      lastError = err;
+        return {
+          text,
+          usedModel: modelToTry,
+          fallbackOccurred: modelToTry !== normalized,
+        };
+      } catch (err: any) {
+        lastError = err;
+        const msg = String(err?.message || err);
 
-      if (isRateLimitError(err)) {
-        markModelCooldown(modelToTry, err);
+        if (
+          /API key not valid|API_KEY_INVALID|GEMINI_API_KEY/i.test(msg)
+        ) {
+          throw err;
+        }
+
+        if (isRateLimitError(err)) {
+          markModelCooldown(modelToTry, err);
+          console.log(
+            `[Gemini Quota] ${modelToTry} исчерпала лимит — автопереключение на резерв.`
+          );
+          break;
+        }
+
+        const isTransient =
+          /500|502|503|504|UNAVAILABLE|OVERLOADED|TIMEOUT|TIMED OUT|ECONNRESET|ETIMEDOUT|NETWORK|пустой ответ/i.test(
+            msg
+          );
+        if (attempt < 3 && isTransient) {
+          const backoffMs = attempt === 1 ? 900 : 2_200;
+          console.log(
+            `[Gemini Retry] ${modelToTry} (попытка ${attempt}/3): повтор после временного сбоя (${msg.slice(0, 120)})`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+
         console.log(
-          `[Gemini Quota] ${modelToTry} исчерпала лимит — автопереключение на резерв.`
+          `[Gemini Fallback] ${modelToTry}: ${msg.slice(0, 180)}`
         );
-      } else {
-        console.log(
-          `[Gemini Fallback] ${modelToTry}: ${String(err?.message || err).slice(0, 180)}`
-        );
-      }
-
-      if (
-        /API key not valid|API_KEY_INVALID|GEMINI_API_KEY/i.test(
-          String(err?.message || '')
-        )
-      ) {
         break;
       }
     }
@@ -1088,7 +1180,9 @@ app.post('/api/style-dna-transfer', async (req, res) => {
       shields = {},
       enable20CycleCheck,
       model = 'gemini-3.1-flash-lite',
+      unfilteredMode = false,
     } = req.body;
+    const isUnfilteredMode = Boolean(unfilteredMode);
 
     if (
       typeof text1 !== 'string' ||
@@ -1142,21 +1236,23 @@ app.post('/api/style-dna-transfer', async (req, res) => {
               );
             })(),
 
-        cachedDs
-          ? Promise.resolve(cachedDs)
-          : text2.trim().length >= 180
-          ? (() => {
-              const dsPrompt = buildDeSkeletonPrompt(text2);
-              return generateJsonSafe<DeSkeletonResult>(
-                helperModel,
-                dsPrompt.contents,
-                dsPrompt.systemInstruction,
-                PROPOSITIONS_RESPONSE_SCHEMA,
-                'medium',
-                { temperature: 0.3, topP: 0.9 }
-              );
-            })()
-          : Promise.resolve(null),
+        isUnfilteredMode
+          ? Promise.resolve(null)
+          : cachedDs
+            ? Promise.resolve(cachedDs)
+            : text2.trim().length >= 180
+            ? (() => {
+                const dsPrompt = buildDeSkeletonPrompt(text2);
+                return generateJsonSafe<DeSkeletonResult>(
+                  helperModel,
+                  dsPrompt.contents,
+                  dsPrompt.systemInstruction,
+                  PROPOSITIONS_RESPONSE_SCHEMA,
+                  'medium',
+                  { temperature: 0.3, topP: 0.9 }
+                );
+              })()
+            : Promise.resolve(null),
       ]);
 
       if (bpRes) {
@@ -1417,7 +1513,7 @@ ${text2}
 
     let stopReason = '100% допуск с первого синтеза';
 
-    const MAX_CONVERGENCE_CYCLES = 6;
+    const MAX_CONVERGENCE_CYCLES = 3;
 
     let stalledCycles = 0;
 
@@ -1734,7 +1830,7 @@ ${text2}
             // Даже в этом случае новые потери фактов и скачки ИИ-детекторов запрещены.
             const safeStylisticApply =
               pendingCriticDirectives.length > 0 &&
-              factsDoNotRegress(bestDiag, candidateDiag) &&
+              (isUnfilteredMode || factsDoNotRegress(bestDiag, candidateDiag)) &&
               candidateDiag.foundCliches.length === 0 &&
               candidateDiag.overallScore >=
                 bestDiag.overallScore - 2 &&
@@ -1820,6 +1916,7 @@ ${text2}
 
         blueprintExtracted: !!styleBlueprint,
         deSkeletonized: !!deSkeleton,
+        unfilteredMode: isUnfilteredMode,
         chunkedTransfer,
         criticRuns,
 

@@ -219,5 +219,38 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
   );
   names.push("critic corpusSummary context and whitespace-tolerant excerpt grounding");
 
+  const typoCandidate = "Автор — как и «всё» остальное — описал событие в 1912 году.";
+  const typoResult = await runStyleCritic({
+    sourceText,
+    candidateText: typoCandidate,
+    inventory,
+    donorBaseline: baseline,
+    adapter: {
+      async review() {
+        return JSON.stringify({
+          styleFidelityScore: 85,
+          naturalnessScore: 88,
+          issues: [{
+            id: "issue-typo",
+            type: "punctuation-mismatch",
+            severity: "warning",
+            outputSpan: { start: 0, end: 10, text: 'Автор - как и "все" остальное' },
+            donorFeatureId: feature!.id,
+            donorEvidenceExcerpt: donorExcerpt,
+            rationale: "Тире и кавычки.",
+            suggestedChange: "Проверить конструкцию.",
+            affectedPropositionIds: [],
+          }],
+        });
+      },
+    },
+  });
+  assert(
+    typoResult.issues.length === 1 &&
+    typoResult.issues[0].outputSpan.text === "Автор — как и «всё» остальное",
+    "critic must resolve typographic quote, dash, and ё/е variations to exact candidate slice",
+  );
+  names.push("typographic equivalence span anchoring");
+
   return { passed: names.length, names };
 }

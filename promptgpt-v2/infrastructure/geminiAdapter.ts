@@ -3,13 +3,24 @@ import { ModelRouterError, type ModelAdapter, type ModelInvocation } from "./mod
 
 type SamplingKey = "temperature" | "topP" | "topK" | "frequencyPenalty" | "presencePenalty";
 
-function resolveThinkingLevel(level: ModelInvocation["thinking"]): ThinkingLevel | undefined {
+function resolveThinkingLevel(level: ModelInvocation["thinking"], modelId: string): ThinkingLevel | undefined {
+  if (modelId === "gemini-4-hydrogen") {
+    return level === "low" ? ThinkingLevel.LOW : undefined;
+  }
   switch (level) {
     case "low": return ThinkingLevel.LOW;
     case "medium": return ThinkingLevel.MEDIUM;
     case "high": return ThinkingLevel.HIGH;
     default: return undefined;
   }
+}
+
+function isUnsupportedConfigError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? "");
+  if (/429|RESOURCE_EXHAUSTED|QUOTA|RATE.?LIMIT|API_KEY_INVALID|UNAUTHENTICATED|401|403/i.test(msg)) {
+    return false;
+  }
+  return /thinking|frequencyPenalty|presencePenalty|frequency_penalty|presence_penalty|topK|unknown name|INVALID_ARGUMENT|not supported for this model/i.test(msg);
 }
 
 function applySampling(config: Record<string, unknown>, sampling: Readonly<Record<string, unknown>> | undefined): void {
@@ -57,15 +68,36 @@ export class GeminiModelAdapter implements ModelAdapter {
       config.responseMimeType = "application/json";
       config.responseSchema = request.responseSchema;
     }
-    const thinkingLevel = resolveThinkingLevel(request.thinking);
+    const thinkingLevel = resolveThinkingLevel(request.thinking, request.modelId);
     if (thinkingLevel !== undefined) config.thinkingConfig = { thinkingLevel };
     applySampling(config, request.sampling);
 
-    const response = await this.client.models.generateContent({
-      model: request.modelId,
-      contents: request.prompt,
-      config: config as never,
-    });
+    let response: unknown;
+    try {
+      response = await this.client.models.generateContent({
+        model: request.modelId,
+        contents: request.prompt,
+        config: config as never,
+      });
+    } catch (error) {
+      if (!request.signal.aborted && isUnsupportedConfigError(error)) {
+        const retryConfig = { ...config };
+        const msg = error instanceof Error ? error.message : String(error ?? "");
+        if (/thinking/i.test(msg) || retryConfig.thinkingConfig) {
+          delete retryConfig.thinkingConfig;
+        }
+        delete retryConfig.frequencyPenalty;
+        delete retryConfig.presencePenalty;
+        delete retryConfig.topK;
+        response = await this.client.models.generateContent({
+          model: request.modelId,
+          contents: request.prompt,
+          config: retryConfig as never,
+        });
+      } else {
+        throw error;
+      }
+    }
 
     // Do not turn a late response into a successful result after cancellation.
     // The router distinguishes caller cancellation from its own request timeout.

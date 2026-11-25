@@ -109,12 +109,21 @@ function featureValue(feature: StyleFeature): number {
   if (feature.unit === "share") return clamp(safeNumber(feature.rate));
   return safeNumber(feature.rate);
 }
-function toleranceFor(feature: StyleFeature, donorValue: number, options: StyleScorerOptions): number {
-  // A floor prevents a tiny donor rate from turning one extra occurrence into an infinite penalty.
-  const floor = feature.unit === "share" ? 0.04
+function toleranceFor(
+  feature: StyleFeature,
+  donorValue: number,
+  options: StyleScorerOptions,
+  minCorpusWords: number,
+  minCorpusSentences: number,
+): number {
+  const safeWords = Math.max(20, minCorpusWords);
+  const safeSentences = Math.max(3, minCorpusSentences);
+  // A floor prevents discrete sample quantization or tiny donor rates from turning
+  // one occurrence in a short/medium text into a near-zero similarity spike.
+  const floor = feature.unit === "share" ? Math.max(0.04, 0.5 / safeSentences)
     : feature.unit === "mean" ? 1.5
-    : feature.unit === "per-1000-words" ? 0.5
-    : feature.unit === "per-100-sentences" ? 1.5
+    : feature.unit === "per-1000-words" ? Math.max(3, 500 / safeWords)
+    : feature.unit === "per-100-sentences" ? Math.max(5, 100 / safeSentences)
     : options.absoluteTolerance;
   return Math.max(floor, Math.abs(donorValue) * options.relativeTolerance, options.absoluteTolerance);
 }
@@ -195,6 +204,9 @@ export function scoreStyleDNA(
   const candidateFeatures = featureMap(candidate);
   const comparisons: FeatureComparison[] = [];
 
+  const minCorpusWords = Math.min(donor.corpus.words, candidate.corpus.words);
+  const minCorpusSentences = Math.min(donor.corpus.sentences, candidate.corpus.sentences);
+
   for (const [id, donorFeature] of donorFeatures) {
     if (!isPortableStyleFeature(id)) continue;
     const isCorpusWideFeature =
@@ -207,7 +219,7 @@ export function scoreStyleDNA(
     const candidateValue = candidateFeature ? featureValue(candidateFeature) : 0;
     const bothZero = donorValue === 0 && candidateValue === 0;
     const reliability = featureReliability(donorFeature) * (candidateFeature ? featureReliability(candidateFeature) : clamp(candidate.confidence));
-    const tolerance = toleranceFor(donorFeature, donorValue, options);
+    const tolerance = toleranceFor(donorFeature, donorValue, options, minCorpusWords, minCorpusSentences);
     const similarity = similarityFor(donorValue, candidateValue, tolerance, options.penaltyExponent);
     const passiveFactor = bothZero ? 0.15 : 1;
     const weight = (options.familyWeights[donorFeature.family] ?? 0) * featureWeight(donorFeature) * passiveFactor;
@@ -243,7 +255,10 @@ export function scoreStyleDNA(
     const denominator = items.reduce((sum, item) => sum + item.weight * item.confidence, 0);
     const score = denominator ? items.reduce((sum, item) => sum + item.contribution, 0) / denominator * 100 : 0;
     const configuredWeight = options.familyWeights[family] ?? 0;
-    const confidence = items.length ? items.reduce((sum,item)=>sum+item.confidence,0)/items.length : 0;
+    const totalItemWeight = items.reduce((sum, item) => sum + item.weight, 0);
+    const confidence = totalItemWeight > 0
+      ? items.reduce((sum, item) => sum + item.confidence * item.weight, 0) / totalItemWeight
+      : 0;
     familyScores.push({ family, score, weight: configuredWeight, confidence, comparedFeatures: items.length });
   }
 

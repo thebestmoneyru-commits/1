@@ -1,5 +1,5 @@
 import { createStyleTransferRequestPreparer } from "./requestPreparation";
-import type { ModelRouter } from "../infrastructure/modelRouter";
+import { ModelRouterError, type ModelRouter } from "../infrastructure/modelRouter";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -1327,6 +1327,521 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     "parallel adjudication must preserve the validated proposition inventory",
   );
   names.push("run independent modality and shared-constituent adjudications concurrently");
+
+  const structureRepairSource = "Вчера. Дождь пошёл, поэтому путники укрылись.";
+  const structureRepairExtraction = [
+    {
+      id: "p1", summary: "Дождь пошёл",
+      sourceSpan: { start: structureRepairSource.indexOf("Дождь пошёл"), end: structureRepairSource.indexOf(","), text: "Дождь пошёл" },
+      subject: "Дождь", predicate: "пошёл", polarity: "positive", qualifications: [],
+      relations: [{ kind: "cause", from: "p1", to: "p2", expression: "поэтому" }], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Путники укрылись",
+      sourceSpan: { start: structureRepairSource.indexOf("путники"), end: structureRepairSource.length, text: "путники укрылись." },
+      subject: "путники", predicate: "укрылись", polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const structureRepairKey = JSON.stringify(["cause", "p1", "p2", "поэтому"]);
+  const outOfEnvelopeStructureIssue = {
+    kind: "temporal-order",
+    propositionIds: ["p1", "p2"],
+    evidenceSpan: { start: 0, end: 5, text: "Вчера" },
+    explanation: "Проверить последовательность событий.",
+  };
+  let repairedStructureReachedGate = false;
+  try {
+    await createStyleTransferRequestPreparer(
+      fakeRouter(
+        structureRepairExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1", "p2"]),
+        { checkedPropositionIds: ["p1"], checkedRelationKeys: [], issues: [outOfEnvelopeStructureIssue] },
+        {
+          checkedPropositionIds: ["p1", "p2"],
+          checkedRelationKeys: [structureRepairKey],
+          issues: [{
+            ...outOfEnvelopeStructureIssue,
+            evidenceSpan: {
+              start: structureRepairSource.indexOf("поэтому"),
+              end: structureRepairSource.indexOf("поэтому") + "поэтому".length,
+              text: "поэтому",
+            },
+          }],
+        },
+      ),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "bounded-structure-audit-repair", sourceText: structureRepairSource, donorText: donor });
+  } catch (error) {
+    repairedStructureReachedGate =
+      String(error).includes("confirmed structural issue") &&
+      !String(error).includes("failed validation");
+  }
+  assert(
+    repairedStructureReachedGate,
+    "one bounded structure-audit repair must fix bookkeeping and evidence anchors without suppressing the original structural finding",
+  );
+  names.push("repair structure-audit bookkeeping and evidence anchors once while preserving immutable findings");
+
+  // Mirrored identical edge listed on both p1 and p2 must repair synchronously without ambiguous-key crashes
+  const mirroredRelationSource = "Идеи обсуждались долго, однако итоговое решение так и не приняли.";
+  const mirroredEdge = { kind: "concession" as const, from: "p1", to: "p2", expression: "однако" };
+  const mirroredEdgeKey = JSON.stringify(["concession", "p1", "p2", "однако"]);
+  const mirroredExtraction = [
+    {
+      id: "p1", summary: "Идеи обсуждались долго",
+      sourceSpan: { start: 0, end: mirroredRelationSource.indexOf(","), text: "Идеи обсуждались долго" },
+      subject: "Идеи", predicate: "обсуждались", polarity: "positive",
+      qualifications: [], relations: [mirroredEdge], mandatory: true,
+    },
+    {
+      id: "p2", summary: "Итоговое решение не приняли",
+      sourceSpan: { start: mirroredRelationSource.indexOf("итоговое"), end: mirroredRelationSource.length, text: "итоговое решение так и не приняли." },
+      subject: "не указан (неопределённо-личная форма)", predicate: "не приняли", object: "итоговое решение", polarity: "negative",
+      qualifications: [], relations: [{ ...mirroredEdge }], mandatory: true,
+    },
+  ];
+  const mirroredPrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      mirroredExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      {
+        checkedPropositionIds: ["p1", "p2"],
+        checkedRelationKeys: [mirroredEdgeKey],
+        issues: [{
+          kind: "relation-type", propositionIds: ["p1", "p2"], relationKey: mirroredEdgeKey,
+          evidenceSpan: { start: mirroredRelationSource.indexOf("однако"), end: mirroredRelationSource.indexOf("однако") + "однако".length, text: "однако" },
+          explanation: "Союз «однако» выражает противопоставление (contrast).",
+        }],
+      },
+      { decisions: [{ issueIndex: 0, action: "change-kind", correctedKind: "contrast", explanation: "Это противопоставление." }] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "mirrored-relation-sync", sourceText: mirroredRelationSource, donorText: donor });
+  assert(
+    mirroredPrepared.inventory.propositions[0].relations[0].kind === "contrast" &&
+    mirroredPrepared.inventory.propositions[1].relations[0].kind === "contrast",
+    "both copies of an identical edge across endpoints must stay synchronized during relation-type repair",
+  );
+  names.push("synchronize mirrored identical logical relations across endpoints without ambiguous-key errors");
+
+  // Bounded interpretation field repair must fix Russian indefinite-personal role errors and pass re-audit
+  const indefinitePersonalSource = "Серийное производство отложили до осени.";
+  const wrongSubjectExtraction = [{
+    id: "p1", summary: "Серийное производство отложили до осени",
+    sourceSpan: { start: 0, end: indefinitePersonalSource.length, text: indefinitePersonalSource },
+    subject: "Серийное производство", predicate: "отложили до осени", polarity: "positive",
+    qualifications: [], relations: [], mandatory: true,
+  }];
+  const fieldRepairedPrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      wrongSubjectExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1"], [{
+        propositionId: "p1", field: "subject",
+        evidenceSpan: { start: 0, end: "Серийное производство".length, text: "Серийное производство" },
+        explanation: "В неопределённо-личном предложении «серийное производство» является прямым дополнением, а не субъектом.",
+      }]),
+      {
+        repairs: [{
+          propositionId: "p1",
+          subject: "неуказанный субъект (неопределённо-личная форма)",
+          predicate: "отложили",
+          object: "Серийное производство",
+          hasObject: true,
+        }],
+      },
+      interpretationAudit(["p1"]),
+      structureAudit(["p1"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "interpretation-field-repair-reaudit", sourceText: indefinitePersonalSource, donorText: donor });
+  assert(
+    fieldRepairedPrepared.inventory.propositions[0].subject === "неуказанный субъект (неопределённо-личная форма)" &&
+    fieldRepairedPrepared.inventory.propositions[0].object === "Серийное производство",
+    "bounded interpretation field repair must fix role mistakes from SOURCE TEXT and pass re-audit",
+  );
+  names.push("repair confirmed interpretation-audit field mistakes and re-verify via independent audit");
+
+  // Bounded structure omission repair must add verified edge and pass structure re-audit
+  const omittedEdgeResult = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      relationExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"]),
+      structureAudit(["p1", "p2"], [{
+        kind: "relation-omission", propositionIds: ["p1", "p2"],
+        evidenceSpan: { start: relationSource.indexOf("поэтому"), end: relationSource.indexOf("поэтому") + "поэтому".length, text: "поэтому" },
+        explanation: "Отсутствует причинная связь через «поэтому».",
+      }]),
+      { decisions: [{ issueIndex: 0, classification: "genuine-missing", explanation: "Явная связь отсутствует в relations." }] },
+      { additions: [{ issueIndex: 0, kind: "cause", from: "p1", to: "p2", expression: "поэтому" }] },
+      { checkedPropositionIds: ["p1", "p2"], checkedRelationKeys: [causeKey], issues: [] },
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "structure-omission-repair-reaudit", sourceText: relationSource, donorText: donor });
+  assert(
+    omittedEdgeResult.inventory.propositions[0].relations.some((r) => r.kind === "cause" && r.from === "p1" && r.to === "p2" && r.expression === "поэтому"),
+    "bounded structure omission repair must restore exact source-grounded relation and pass re-audit",
+  );
+  names.push("repair confirmed structure relation-omission findings and re-verify via structure re-audit");
+
+  // Bounded interpretation field repair must also restore passive instrumental objects and existential-negative predicate/object separation
+  const passiveExistentialSource =
+    "Мир выступает естественным процессом, детерминированным строгими физико-химическими законами. В такой системе не остается места ни совести, ни этическому идеалу.";
+  const detText = "детерминированным строгими физико-химическими законами";
+  const negText = "В такой системе не остается места ни совести, ни этическому идеалу";
+  const passiveExistentialExtraction = [
+    {
+      id: "p1", summary: "Мир детерминирован строгими физико-химическими законами",
+      sourceSpan: { start: passiveExistentialSource.indexOf(detText), end: passiveExistentialSource.indexOf(detText) + detText.length, text: detText },
+      subject: "процесс", predicate: "детерминированным", polarity: "positive", qualifications: [], relations: [], mandatory: true,
+    },
+    {
+      id: "p2", summary: "В системе не остается места совести",
+      sourceSpan: { start: passiveExistentialSource.indexOf(negText), end: passiveExistentialSource.length, text: passiveExistentialSource.slice(passiveExistentialSource.indexOf(negText)) },
+      subject: "места", predicate: "не остается", polarity: "negative", qualifications: [], relations: [], mandatory: true,
+    },
+    {
+      id: "p3", summary: "В системе не остается места этическому идеалу",
+      sourceSpan: { start: passiveExistentialSource.indexOf(negText), end: passiveExistentialSource.length, text: passiveExistentialSource.slice(passiveExistentialSource.indexOf(negText)) },
+      subject: "места", predicate: "не остается места", polarity: "negative", qualifications: [], relations: [], mandatory: true,
+    },
+  ];
+  const passiveExistentialPrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      passiveExistentialExtraction,
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2", "p3"], [
+        {
+          propositionId: "p1", field: "object",
+          evidenceSpan: { start: passiveExistentialSource.indexOf(detText), end: passiveExistentialSource.indexOf(detText) + detText.length, text: detText },
+          explanation: "Отсутствует объект (агент действия) 'строгими физико-химическими законами'.",
+        },
+        {
+          propositionId: "p2", field: "object",
+          evidenceSpan: { start: passiveExistentialSource.indexOf(negText), end: passiveExistentialSource.length, text: passiveExistentialSource.slice(passiveExistentialSource.indexOf(negText)) },
+          explanation: "Отсутствует объект 'совести', который является смысловым дополнением к предикату 'не остается места'.",
+        },
+        {
+          propositionId: "p3", field: "predicate",
+          evidenceSpan: { start: passiveExistentialSource.indexOf(negText), end: passiveExistentialSource.length, text: passiveExistentialSource.slice(passiveExistentialSource.indexOf(negText)) },
+          explanation: "Предикат 'не остается места' избыточно включает слово 'места' при субъекте 'места', и отсутствует объект 'этическому идеалу'.",
+        },
+      ]),
+      { decisions: [{ issueIndex: 2, classification: "genuine-mismatch", explanation: "Слово «места» уже является субъектом; предикат — «не остается», а объект — «этическому идеалу»." }] },
+      {
+        repairs: [
+          { propositionId: "p1", object: "строгими физико-химическими законами", hasObject: true },
+          { propositionId: "p2", object: "совести", hasObject: true },
+          { propositionId: "p3", predicate: "не остается", object: "этическому идеалу", hasObject: true },
+        ],
+      },
+      interpretationAudit(["p1", "p2", "p3"]),
+      structureAudit(["p1", "p2", "p3"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "passive-and-existential-repair", sourceText: passiveExistentialSource, donorText: donor });
+  const peById = new Map(passiveExistentialPrepared.inventory.propositions.map((item) => [item.id, item]));
+  assert(
+    peById.get("p1")?.object === "строгими физико-химическими законами" &&
+    peById.get("p2")?.object === "совести" &&
+    peById.get("p3")?.predicate === "не остается" &&
+    peById.get("p3")?.object === "этическому идеалу",
+    "passive instrumental agent and existential-negative predicate/object separation must be repairable and re-audited",
+  );
+  names.push("repair passive instrumental object and existential-negative predicate/object mistakes via independent re-audit");
+
+  const purposeAndInvertedPassiveSource =
+    "Развитие техники для удовлетворения постоянно расширяющегося спектра потребностей. " +
+    "Идеалом подобного прогресса провозглашается достижение некоего универсального равенства в доступе к источникам удовольствия.";
+  const purpSpan = "для удовлетворения постоянно расширяющегося спектра потребностей";
+  const invStart = purposeAndInvertedPassiveSource.indexOf("Идеалом");
+  const purposeAndInvertedPrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      [
+        {
+          id: "p1", summary: "Техника служит для удовлетворения потребностей",
+          sourceSpan: { start: purposeAndInvertedPassiveSource.indexOf(purpSpan), end: purposeAndInvertedPassiveSource.indexOf(purpSpan) + purpSpan.length, text: purpSpan },
+          subject: "Развитие техники", predicate: "удовлетворение", object: "постоянно расширяющегося спектра потребностей",
+          polarity: "positive", qualifications: [], relations: [], mandatory: true,
+        },
+        {
+          id: "p2", summary: "Достижение равенства провозглашается идеалом прогресса",
+          sourceSpan: { start: invStart, end: purposeAndInvertedPassiveSource.length, text: purposeAndInvertedPassiveSource.slice(invStart) },
+          subject: "достижение некоего универсального равенства", predicate: "провозглашается идеалом подобного прогресса", object: "источникам удовольствия",
+          polarity: "positive", qualifications: [], relations: [], mandatory: true,
+        },
+      ],
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2"], [
+        {
+          propositionId: "p1", field: "predicate",
+          evidenceSpan: { start: purposeAndInvertedPassiveSource.indexOf(purpSpan), end: purposeAndInvertedPassiveSource.indexOf(purpSpan) + purpSpan.length, text: purpSpan },
+          explanation: "Предикат содержит только существительное 'удовлетворение'; нужен глагол или связка, например 'служит для удовлетворения'.",
+        },
+        {
+          propositionId: "p2", field: "object",
+          evidenceSpan: { start: purposeAndInvertedPassiveSource.indexOf("в доступе к источникам удовольствия"), end: purposeAndInvertedPassiveSource.indexOf("в доступе к источникам удовольствия") + "в доступе к источникам удовольствия".length, text: "в доступе к источникам удовольствия" },
+          explanation: "Фрагмент 'источникам удовольствия' является частью подлежащего 'достижение некоего универсального равенства в доступе к источникам удовольствия', а не объектом.",
+        },
+      ]),
+      { decisions: [{ issueIndex: 0, classification: "genuine-mismatch", explanation: "Нужен глагольный или связочный предикат." }] },
+      {
+        repairs: [
+          { propositionId: "p1", predicate: "служит для удовлетворения", object: "постоянно расширяющегося спектра потребностей", hasObject: true },
+          { propositionId: "p2", subject: "достижение некоего универсального равенства в доступе к источникам удовольствия", object: "" },
+        ],
+      },
+      interpretationAudit(["p1", "p2"]),
+      structureAudit(["p1", "p2"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "purpose-predicate-and-inverted-passive-object-repair", sourceText: purposeAndInvertedPassiveSource, donorText: donor });
+  const piById = new Map(purposeAndInvertedPrepared.inventory.propositions.map((item) => [item.id, item]));
+  assert(
+    piById.get("p1")?.predicate === "служит для удовлетворения" &&
+    piById.get("p2")?.subject === "достижение некоего универсального равенства в доступе к источникам удовольствия" &&
+    piById.get("p2")?.object === undefined,
+    "bare-noun purpose predicate and split subject-noun-phrase object must be repaired cleanly and re-audited",
+  );
+  names.push("repair bare-noun purpose predicate and clear split subject-noun-phrase object via re-audit");
+
+  const russianSyntaxSplitSource =
+    "Такой подход расширяет досуг, делая его более разнообразным и приятным. " +
+    "Однако чрезмерная стандартизация зачастую порождает у субъекта глубокое внутреннее отторжение, " +
+    "а сама система обнаруживает свою предельную несостоятельность.";
+  const span7 = "делая его более разнообразным и приятным";
+  const span11 = "зачастую порождает у субъекта глубокое внутреннее отторжение";
+  const span24 = "обнаруживает свою предельную несостоятельность";
+  const syntaxSplitPrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      [
+        {
+          id: "p1", summary: "Подход делает досуг более разнообразным и приятным",
+          sourceSpan: { start: russianSyntaxSplitSource.indexOf(span7), end: russianSyntaxSplitSource.indexOf(span7) + span7.length, text: span7 },
+          subject: "подход", predicate: "делая", object: "его более разнообразным и приятным",
+          polarity: "positive", qualifications: [], relations: [], mandatory: true,
+        },
+        {
+          id: "p2", summary: "Стандартизация порождает у субъекта глубокое внутреннее отторжение",
+          sourceSpan: { start: russianSyntaxSplitSource.indexOf(span11), end: russianSyntaxSplitSource.indexOf(span11) + span11.length, text: span11 },
+          subject: "чрезмерная стандартизация", predicate: "порождает", object: "у субъекта глубокое внутреннее отторжение",
+          polarity: "positive", qualifications: [{ kind: "time", value: "зачастую" }], relations: [], mandatory: true,
+        },
+        {
+          id: "p3", summary: "Система обнаруживает предельную несостоятельность",
+          sourceSpan: { start: russianSyntaxSplitSource.indexOf(span24), end: russianSyntaxSplitSource.indexOf(span24) + span24.length, text: span24 },
+          subject: "сама система", predicate: "обнаруживает свою предельную несостоятельность",
+          polarity: "positive", qualifications: [], relations: [], mandatory: true,
+        },
+      ],
+      { missingPropositions: [], missingRelations: [] },
+      interpretationAudit(["p1", "p2", "p3"], [
+        {
+          propositionId: "p1", field: "object",
+          evidenceSpan: { start: russianSyntaxSplitSource.indexOf(span7), end: russianSyntaxSplitSource.indexOf(span7) + span7.length, text: span7 },
+          explanation: "The object field includes predicative complements ('более разнообразным и приятным'), which are not part of the grammatical object.",
+        },
+        {
+          propositionId: "p2", field: "object",
+          evidenceSpan: { start: russianSyntaxSplitSource.indexOf(span11), end: russianSyntaxSplitSource.indexOf(span11) + span11.length, text: span11 },
+          explanation: "The object field incorrectly includes the adverbial modifier 'у субъекта', which is distinct from the object of the verb.",
+        },
+        {
+          propositionId: "p3", field: "predicate",
+          evidenceSpan: { start: russianSyntaxSplitSource.indexOf(span24), end: russianSyntaxSplitSource.indexOf(span24) + span24.length, text: span24 },
+          explanation: "The predicate field erroneously contains the object phrase 'свою предельную несостоятельность'.",
+        },
+      ]),
+      { decisions: [{ issueIndex: 2, classification: "genuine-mismatch", explanation: "Direct object must not be merged into predicate." }] },
+      {
+        repairs: [
+          { propositionId: "p1", predicate: "делая более разнообразным и приятным", object: "его", hasObject: true },
+          { propositionId: "p2", object: "глубокое внутреннее отторжение", hasObject: true, qualifications: [{ kind: "time", value: "зачастую" }, { kind: "place", value: "у субъекта" }] },
+          { propositionId: "p3", predicate: "обнаруживает", object: "свою предельную несостоятельность", hasObject: true },
+        ],
+      },
+      interpretationAudit(["p1", "p2", "p3"]),
+      structureAudit(["p1", "p2", "p3"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "russian-object-predicate-split-repair", sourceText: russianSyntaxSplitSource, donorText: donor });
+  const splitById = new Map(syntaxSplitPrepared.inventory.propositions.map((item) => [item.id, item]));
+  assert(
+    splitById.get("p1")?.predicate === "делая более разнообразным и приятным" &&
+    splitById.get("p1")?.object === "его" &&
+    splitById.get("p2")?.object === "глубокое внутреннее отторжение" &&
+    splitById.get("p2")?.qualifications.some((q) => q.value === "у субъекта") &&
+    splitById.get("p3")?.predicate === "обнаруживает" &&
+    splitById.get("p3")?.object === "свою предельную несостоятельность",
+    "predicative complements, adverbial modifiers in object, and swallowed direct objects must be cleanly separated and re-audited",
+  );
+  names.push("repair predicative-complement object, adverbial modifier in object, and object-in-predicate via re-audit");
+
+  const nonBlockingAuditFinding = interpretationAudit(["p1"], [
+    {
+      propositionId: "p1", field: "object",
+      evidenceSpan: { start: russianSyntaxSplitSource.indexOf(span7), end: russianSyntaxSplitSource.indexOf(span7) + span7.length, text: span7 },
+      explanation: "Residual disagreement on object span.",
+    },
+  ]);
+  const nonBlockingPrepared = await createStyleTransferRequestPreparer(
+    fakeRouter(
+      [
+        {
+          id: "p1", summary: "Подход расширяет досуг",
+          sourceSpan: { start: 0, end: russianSyntaxSplitSource.length, text: russianSyntaxSplitSource },
+          subject: "подход", predicate: "делая более разнообразным и приятным", object: "его",
+          polarity: "positive", qualifications: [], relations: [], mandatory: true,
+        },
+      ],
+      { missingPropositions: [], missingRelations: [] },
+      nonBlockingAuditFinding,
+      { repairs: [] },
+      structureAudit(["p1"]),
+    ),
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 }, stopOnAuditFindings: false },
+  )({ requestId: "non-blocking-audit-warnings", sourceText: russianSyntaxSplitSource, donorText: donor });
+  assert(
+    nonBlockingPrepared.inventory.propositions.length === 1 &&
+    Array.isArray(nonBlockingPrepared.preparationWarnings) &&
+    nonBlockingPrepared.preparationWarnings.some((w) => w.includes("Residual disagreement on object span.")),
+    "stopOnAuditFindings: false must return inventory and surface unresolved audit findings as preparationWarnings instead of stopping",
+  );
+  names.push("non-blocking stopOnAuditFindings preserves unresolved audit warnings without halting preparation");
+
+  let unfilteredGenerateCalls = 0;
+  const unfilteredPrepared = await createStyleTransferRequestPreparer(
+    {
+      async generate() {
+        unfilteredGenerateCalls += 1;
+        if (unfilteredGenerateCalls > 1) {
+          throw new Error("unfilteredMode must not invoke completeness, interpretation, or structure audits");
+        }
+        return {
+          text: JSON.stringify([{ bad: "broken proposition without required fields" }]),
+          requestedModel: "test",
+          usedModel: "test",
+          fallbackOccurred: false,
+          attempts: [],
+          warnings: [],
+        };
+      },
+    } as unknown as ModelRouter,
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 }, stopOnAuditFindings: true },
+  )({ requestId: "unfiltered-mode-prep", sourceText: russianSyntaxSplitSource, donorText: donor, unfilteredMode: true });
+  assert(
+    unfilteredGenerateCalls === 1 &&
+    unfilteredPrepared.inventory.propositions.length >= 1 &&
+    Array.isArray(unfilteredPrepared.preparationWarnings) &&
+    unfilteredPrepared.preparationWarnings.some((w) => w.includes("Режим без фильтрации")),
+    "unfilteredMode must skip all audits and fall back cleanly even when extracted propositions fail validation",
+  );
+  names.push("unfilteredMode disables semantic audits and prevents validation halts");
+
+  const transientUnfilteredTimeoutPrepared = await createStyleTransferRequestPreparer(
+    {
+      async generate() {
+        throw new ModelRouterError("Model request timed out after 120000ms (gemini-3.1-flash-lite).", "timeout", "gemini-3.1-flash-lite");
+      },
+    } as unknown as ModelRouter,
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 }, stopOnAuditFindings: true },
+  )({ requestId: "unfiltered-timeout-fallback", sourceText: russianSyntaxSplitSource, donorText: donor, unfilteredMode: true });
+  assert(
+    transientUnfilteredTimeoutPrepared.inventory.propositions.length >= 1 &&
+    Array.isArray(transientUnfilteredTimeoutPrepared.preparationWarnings) &&
+    transientUnfilteredTimeoutPrepared.preparationWarnings.some((w) => w.includes("timed out")),
+    "unfilteredMode must fall back to verbatim segments on transient extraction timeout instead of aborting",
+  );
+  names.push("unfilteredMode recovers cleanly from transient extraction router timeouts");
+
+  let zeroExtractionCalls = 0;
+  const zeroCostUnfilteredPrepared = await createStyleTransferRequestPreparer(
+    {
+      async generate() {
+        zeroExtractionCalls += 1;
+        throw new Error("skipExtractionInUnfiltered must not call model router");
+      },
+    } as unknown as ModelRouter,
+    routes,
+    {
+      analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 },
+      skipExtractionInUnfiltered: true,
+    },
+  )({ requestId: "unfiltered-zero-call-prep", sourceText: russianSyntaxSplitSource, donorText: donor, unfilteredMode: true });
+  assert(
+    zeroExtractionCalls === 0 &&
+    zeroCostUnfilteredPrepared.inventory.propositions.length >= 1 &&
+    Array.isArray(zeroCostUnfilteredPrepared.preparationWarnings) &&
+    zeroCostUnfilteredPrepared.preparationWarnings.some((w) => w.includes("Режим без фильтрации")),
+    "skipExtractionInUnfiltered with unfilteredMode must produce verbatim inventory with zero LLM calls",
+  );
+  names.push("skipExtractionInUnfiltered bypasses extraction LLM call cleanly");
+
+  let nonBlockingAuditCall = 0;
+  const nonBlockingAuditRouterFailurePrepared = await createStyleTransferRequestPreparer(
+    {
+      async generate() {
+        nonBlockingAuditCall += 1;
+        if (nonBlockingAuditCall === 1) {
+          return {
+            text: JSON.stringify([
+              {
+                id: "p1", summary: "Подход расширяет досуг",
+                sourceSpan: { start: 0, end: russianSyntaxSplitSource.length, text: russianSyntaxSplitSource },
+                subject: "подход", predicate: "делая более разнообразным и приятным", object: "его",
+                polarity: "positive", qualifications: [], relations: [], mandatory: true,
+              },
+            ]),
+            requestedModel: "test",
+            usedModel: "test",
+            fallbackOccurred: false,
+            attempts: [],
+            warnings: [],
+          };
+        }
+        throw new ModelRouterError("503 UNAVAILABLE", "unavailable", "gemini-3.1-flash-lite");
+      },
+    } as unknown as ModelRouter,
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 }, stopOnAuditFindings: false },
+  )({ requestId: "non-blocking-audit-router-unavailable", sourceText: russianSyntaxSplitSource, donorText: donor });
+  assert(
+    nonBlockingAuditRouterFailurePrepared.inventory.propositions.length === 1 &&
+    Array.isArray(nonBlockingAuditRouterFailurePrepared.preparationWarnings) &&
+    nonBlockingAuditRouterFailurePrepared.preparationWarnings.some((w) => w.includes("503 UNAVAILABLE")),
+    "stopOnAuditFindings: false must record transient supplementary audit ModelRouterError warnings instead of halting preparation",
+  );
+  names.push("non-blocking stopOnAuditFindings survives transient supplementary audit router errors");
+
+  const nonBlockingInitialUnavailablePrepared = await createStyleTransferRequestPreparer(
+    {
+      async generate() {
+        throw new ModelRouterError("503 UNAVAILABLE: The model is overloaded.", "unavailable", "gemini-3.1-flash-lite");
+      },
+    } as unknown as ModelRouter,
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 }, stopOnAuditFindings: false },
+  )({ requestId: "non-blocking-initial-unavailable", sourceText: russianSyntaxSplitSource, donorText: donor });
+  assert(
+    nonBlockingInitialUnavailablePrepared.inventory.propositions.length >= 1 &&
+    Array.isArray(nonBlockingInitialUnavailablePrepared.preparationWarnings) &&
+    nonBlockingInitialUnavailablePrepared.preparationWarnings.some((w) => w.includes("503 UNAVAILABLE")),
+    "stopOnAuditFindings: false must fall back to sentence segmentation when initial semantic-extraction fails with 503 UNAVAILABLE",
+  );
+  names.push("non-blocking stopOnAuditFindings survives initial extraction 503 unavailable errors");
 
   return { passed: names.length, names };
 }

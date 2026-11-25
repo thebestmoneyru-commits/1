@@ -25,6 +25,14 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
   sdkAbort.name = "AbortError";
   assert(classifyModelError(sdkAbort) === "timeout", "SDK AbortError caused by the router timeout is classified as retryable timeout");
   assert(classifyModelError(new Error("The operation was aborted")) === "timeout", "fetch abort message is classified as timeout");
+  assert(classifyModelError(new Error("This model is currently experiencing high demand. Spikes in demand are usually temporary.")) === "unavailable", "high demand transient message is classified as unavailable");
+  assert(
+    classifyModelError({
+      status: 429,
+      message: 'You exceeded your current quota, please check your plan and billing details. GenerateRequestsPerMinutePerProjectPerModel-FreeTier, limit: 15, "retryDelay":"8s"',
+    }) === "rate-limit",
+    "Google 15-RPM per-minute 429 message containing 'quota' and short retryDelay must classify as transient rate-limit, not daily quota exhaustion",
+  );
   names.push("provider error classification and quota distinction");
 
   let active = 0, maxActive = 0;
@@ -67,6 +75,93 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
     "rate-limited model enters cooldown after fallback");
   names.push("fallback and rate-limit cooldown");
 
+  let nowMs = 1_000_000;
+  let dailyPrimaryCalls = 0;
+  const dailyQuotaRouter = new ModelRouter({
+    models,
+    maxAttemptsPerModel: 3,
+    now: () => nowMs,
+    adapter: { async invoke(request) {
+      if (request.modelId === "primary") {
+        dailyPrimaryCalls++;
+        throw { status: 429, message: 'RESOURCE_EXHAUSTED GenerateRequestsPerDayPerProjectPerModel-FreeTier "retryDelay":"55624s"' };
+      }
+      return "fallback-ok";
+    } },
+  });
+  const firstDaily = await dailyQuotaRouter.generate({
+    task: "candidate-generation", preferredModel: "primary", fallbackModels: ["fallback"], prompt: "test-1",
+  });
+  nowMs += 10 * 60_000; // 10 minutes later, still within 1h bounded daily cooldown
+  const secondDaily = await dailyQuotaRouter.generate({
+    task: "candidate-generation", preferredModel: "primary", fallbackModels: ["fallback"], prompt: "test-2",
+  });
+  assert(
+    firstDaily.usedModel === "fallback" && secondDaily.usedModel === "fallback" && dailyPrimaryCalls === 1,
+    "daily-quota exhausted primary respects bounded retryDelay cooldown and routes straight to fallback",
+  );
+  names.push("daily quota retryDelay cooldown and fallback");
+
+  let capNowMs = 2_000_000;
+  let capPrimaryCalls = 0;
+  const cappedCooldownRouter = new ModelRouter({
+    models,
+    maxAttemptsPerModel: 1,
+    maxCooldownMs: { "quota-exhausted": 60_000 },
+    now: () => capNowMs,
+    adapter: {
+      async invoke(request) {
+        if (request.modelId === "primary") {
+          capPrimaryCalls++;
+          if (capPrimaryCalls === 1) {
+            throw { status: 429, message: 'RESOURCE_EXHAUSTED GenerateRequestsPerDay "retryDelay":"55624s"' };
+          }
+          return "recovered-after-cap";
+        }
+        return "fallback-cap";
+      },
+    },
+  });
+  const firstCap = await cappedCooldownRouter.generate({
+    task: "candidate-generation", preferredModel: "primary", fallbackModels: ["fallback"], prompt: "cap-1",
+  });
+  capNowMs += 65_000;
+  const secondCap = await cappedCooldownRouter.generate({
+    task: "candidate-generation", preferredModel: "primary", fallbackModels: ["fallback"], prompt: "cap-2",
+  });
+  assert(
+    firstCap.usedModel === "fallback" && secondCap.usedModel === "primary" && secondCap.text === "recovered-after-cap",
+    "maxCooldownMs must cap provider cooldown duration so primary recovers after bounded wait",
+  );
+  names.push("maxCooldownMs bounds cooldown durations");
+
+  let rateRecoverCalls = 0;
+  const shortRateRecoveryRouter = new ModelRouter({
+    models,
+    maxAttemptsPerModel: 1,
+    cooldownMs: { "rate-limit": 20, "quota-exhausted": 60_000 },
+    adapter: {
+      async invoke(request) {
+        if (request.modelId === "primary") {
+          rateRecoverCalls++;
+          if (rateRecoverCalls === 1) {
+            throw { status: 429, message: 'RESOURCE_EXHAUSTED GenerateRequestsPerMinute, "retryDelay":"0.02s"' };
+          }
+          return "recovered-from-rpm";
+        }
+        throw { status: 429, message: 'RESOURCE_EXHAUSTED GenerateRequestsPerDay, "retryDelay":"55000s"' };
+      },
+    },
+  });
+  const rpmRecovered = await shortRateRecoveryRouter.generate({
+    task: "candidate-generation", preferredModel: "primary", fallbackModels: ["fallback"], prompt: "rpm-recover",
+  });
+  assert(
+    rpmRecovered.usedModel === "primary" && rpmRecovered.text === "recovered-from-rpm" && rateRecoverCalls === 2,
+    "short RPM rate limit must recover on primary when fallback is daily-exhausted instead of surfacing fallback error",
+  );
+  names.push("short rate-limit recovery when fallback is daily-exhausted");
+
   let transientCalls = 0;
   const retryRouter = new ModelRouter({
     models,
@@ -83,6 +178,26 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
   assert(recovered.text === "recovered" && transientCalls === 3 && recovered.attempts.length === 3,
     "503 UNAVAILABLE is retried up to three total attempts with bounded backoff");
   names.push("three-attempt transient 503 recovery");
+
+  let fourCalls = 0;
+  const fourAttemptRouter = new ModelRouter({
+    models,
+    maxAttemptsPerModel: 4,
+    retryDelays: { unavailable: [10, 10, 10] },
+    adapter: {
+      async invoke() {
+        fourCalls++;
+        if (fourCalls < 4) throw { status: 503, message: "high demand" };
+        return "recovered-4";
+      },
+    },
+  });
+  const recovered4 = await fourAttemptRouter.generate({
+    task: "candidate-generation", preferredModel: "primary", prompt: "retry-4",
+  });
+  assert(recovered4.text === "recovered-4" && fourCalls === 4 && recovered4.attempts.length === 4,
+    "configured maxAttemptsPerModel: 4 with custom retryDelays must support 4-attempt recovery");
+  names.push("four-attempt custom retryDelays recovery");
 
   let retryAttemptStarted = false;
   let firstAttempt = true;
@@ -186,6 +301,36 @@ export async function runModelRouterSelfTests(): Promise<{ passed: number; names
     observedCapabilities?.thinking === undefined && observedCapabilities?.sampling === undefined,
     "unsupported model capabilities are stripped before provider call");
   names.push("model capability filtering");
+
+  const abortMessageRouter = new ModelRouter({
+    models: [models[0]],
+    maxAttemptsPerModel: 1,
+    adapter: {
+      async invoke() {
+        const err = new Error("This operation was aborted");
+        err.name = "AbortError";
+        throw err;
+      },
+    },
+  });
+  let normalizedTimeoutError: unknown;
+  try {
+    await abortMessageRouter.generate({
+      task: "candidate-generation",
+      preferredModel: "primary",
+      prompt: "test-timeout-message",
+      timeoutMs: 120,
+    });
+  } catch (error) {
+    normalizedTimeoutError = error;
+  }
+  assert(
+    normalizedTimeoutError instanceof Error &&
+    (normalizedTimeoutError as { kind?: string }).kind === "timeout" &&
+    normalizedTimeoutError.message.includes("Model request timed out after 120ms (primary)"),
+    "exhausted SDK AbortError must emit a descriptive timeout message instead of opaque 'This operation was aborted'",
+  );
+  names.push("descriptive timeout message for exhausted SDK abort errors");
 
   return { passed: names.length, names };
 }

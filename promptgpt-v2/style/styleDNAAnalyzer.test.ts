@@ -57,6 +57,7 @@ export function runStyleDNAAnalyzerSelfTests(): { passed: number; names: string[
   for (const featureId of [
     "rhythm.mean-sentence-length",
     "paragraphs.mean-sentences-per-paragraph",
+    "punctuation.comma",
     "punctuation.dash",
     "punctuation.semicolon",
     "punctuation.parentheses",
@@ -71,7 +72,17 @@ export function runStyleDNAAnalyzerSelfTests(): { passed: number; names: string[
       );
     }
   }
-  names.push("grounded evidence spans for rhythm, paragraph, and punctuation features");
+  const zeroCommaProfile = analyzeStyleDNA("Ветер дул весь вечер и дорога оставалась пустой.");
+  const zeroCommaFeature = zeroCommaProfile.features.find((item) => item.id === "punctuation.comma");
+  assert(!!zeroCommaFeature && zeroCommaFeature.count === 0 && zeroCommaFeature.rate === 0,
+    "punctuation.comma must explicitly record zero rate when commas are absent");
+  const scaledLimitedProfile = analyzeStyleDNA(
+    "Первый абзац имеет достаточно слов для проверки пропорционального порога. Второй абзац продолжает мысль без лишней воды. Третий абзац завершает короткий образец спокойно.",
+    { minWordsForReliableProfile: 80, minSentencesForReliableProfile: 4 },
+  );
+  assert(scaledLimitedProfile.status === "limited",
+    "limited-corpus threshold should scale proportionally when server configures smaller reliable thresholds");
+  names.push("grounded evidence spans for rhythm, paragraph, comma, and punctuation features");
 
   return { passed: names.length, names };
 }

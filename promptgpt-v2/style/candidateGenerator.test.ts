@@ -1,4 +1,5 @@
 import { buildFactInventory } from "../semantic/factInventory";
+import { buildSemanticInventory } from "../semantic/buildInventory";
 import { analyzeStyleDNA } from "./styleDNAAnalyzer";
 import { createDonorStyleBaseline } from "./donorBaseline";
 import { buildCandidatePrompt, generateCandidates } from "./candidateGenerator";
@@ -36,7 +37,8 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     "prompt separates donor style from donor content");
   assert(prompt.includes("1912"), "required numeric anchor is supplied to the model");
   assert(prompt.includes("обруживает"), "exact donor spelling irregularities are supplied as style evidence");
-  assert(prompt.includes("сопоставимой частотностью"), "prompt requires frequency-calibrated imitation of donor irregularities");
+  assert(prompt.includes("сопоставимой частотностью") && prompt.includes("грамматические несогласования") && prompt.includes("punctuation.comma"),
+    "prompt requires frequency-calibrated imitation of donor irregularities, agreements, and comma density");
   assert(!prompt.includes("lexical.repeat.") && !prompt.includes("Повторяющееся окончание:"),
     "topic-specific repeated words and exact donor endings are not presented as style instructions");
   assert(prompt.includes("предложение за предложением") && prompt.includes("обратную сверку"),
@@ -133,6 +135,83 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     "prompt retains multi-family corpus-wide features alongside syntax",
   );
   names.push("multi-family Style DNA evidence and corpusProfile transfer");
+
+  const verboseSourceText = Array.from({ length: 4 }, () =>
+    "В рамках сложной теоретической парадигмы смысл существования последовательно редуцируется к длинному процессу материального улучшения внешних условий бытия, где каждое отдельное явление выступает естественным следствием физических законов."
+  ).join(" ");
+  const shortDonorText = Array.from({ length: 18 }, () =>
+    "Смысл жизни прост. Человек ищет опору в деле. Во-первых, важна честность. Во-вторых, нужна ясность ума."
+  ).join(" ");
+  const shortDonorProfile = analyzeStyleDNA(shortDonorText, {
+    minWordsForReliableProfile: 80,
+    minSentencesForReliableProfile: 10,
+  });
+  const shortCreated = createDonorStyleBaseline(shortDonorProfile, shortDonorText);
+  assert(shortCreated.ok && !!shortCreated.baseline, "short-sentence donor baseline fixture is available");
+  const planPrompt = buildCandidatePrompt({
+    sourceText: verboseSourceText,
+    inventory: buildFactInventory(verboseSourceText),
+    donorBaseline: shortCreated.baseline!,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 12,
+  });
+  assert(
+    planPrompt.includes("ПЛАН ОБЯЗАТЕЛЬНОЙ СИНТАКСИЧЕСКОЙ И СТИЛИСТИЧЕСКОЙ ПЕРЕСТРОЙКИ") &&
+    planPrompt.includes("ЗАПРЕТ ДОСЛОВНОГО КОПИРОВАНИЯ") &&
+    planPrompt.includes("ЗАПРЕТ ИНВЕРСИИ ПРИЧИНЫ И СЛЕДСТВИЯ") &&
+    planPrompt.includes("Квоты пунктуации") &&
+    planPrompt.includes("ДРОБИ длинные фразы"),
+    "prompt must include Source-vs-Donor rhythm splitting plan, causal-direction lock, punctuation quotas, and strict anti-verbatim ban",
+  );
+  names.push("source-vs-donor transformation plan and anti-verbatim instructions");
+
+  const relSource = "Дождь усилился, вследствие чего дорогу размыло.";
+  const s1End = relSource.indexOf(",");
+  const s2Start = relSource.indexOf("дорогу");
+  const relBuilt = buildSemanticInventory(relSource, [
+    {
+      id: "p1",
+      summary: "Дождь усилился.",
+      sourceSpan: { start: 0, end: s1End, text: relSource.slice(0, s1End) },
+      subject: "дождь",
+      predicate: "усилился",
+      polarity: "positive",
+      qualifications: [],
+      relations: [{ kind: "effect", from: "p2", to: "p1", expression: "вследствие чего" }],
+      mandatory: true,
+    },
+    {
+      id: "p2",
+      summary: "Дорогу размыло.",
+      sourceSpan: { start: s2Start, end: relSource.length, text: relSource.slice(s2Start) },
+      subject: "неуказанный субъект",
+      predicate: "размыло",
+      object: "дорогу",
+      polarity: "positive",
+      qualifications: [],
+      relations: [{ kind: "effect", from: "p2", to: "p1", expression: "вследствие чего" }],
+      mandatory: true,
+    },
+  ]);
+  assert(relBuilt.valid && !!relBuilt.inventory, "relation test inventory must be valid");
+  const relPrompt = buildCandidatePrompt({
+    sourceText: relSource,
+    inventory: relBuilt.inventory!,
+    donorBaseline: shortCreated.baseline!,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 12,
+  });
+  assert(
+    relPrompt.includes("ЛОГИЧЕСКИЕ СВЯЗИ") &&
+    relPrompt.includes('"expression":"вследствие чего"') &&
+    relPrompt.includes("пар скобок") &&
+    relPrompt.includes("пар кавычек") &&
+    relPrompt.includes("не коверкай"),
+    "prompt must expose logical relations, pair-aware punctuation quotas, and keyword anti-garbling guard",
+  );
+  names.push("logical relations, pair punctuation quotas, and anti-garbling rules");
 
   return { passed: names.length, names };
 }

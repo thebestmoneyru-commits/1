@@ -4,7 +4,7 @@ import type { RequestPreparationOptions } from "../application/requestPreparatio
 import { createStyleTransferRequestPreparer } from "../application/requestPreparation";
 import type { ModelRouter } from "../infrastructure/modelRouter";
 import type { StyleTransferService } from "../application/styleTransferService";
-import { createStyleTransferApiRouter } from "./styleTransferRouter";
+import { createStyleTransferApiRouter, type StyleTransferJobRecord } from "./styleTransferRouter";
 
 export interface PreparedStyleTransferApiOptions {
   service: StyleTransferService;
@@ -13,6 +13,7 @@ export interface PreparedStyleTransferApiOptions {
   authenticate: RequestHandler;
   rateLimit: RequestHandler;
   preparation?: RequestPreparationOptions;
+  jobStore?: Map<string, StyleTransferJobRecord>;
   maxSourceCharacters?: number;
   maxDonorCharacters?: number;
   onError?: (error: unknown) => void;
@@ -34,6 +35,7 @@ export function createPreparedStyleTransferApiRouter(options: PreparedStyleTrans
     prepareRequest,
     authenticate: options.authenticate,
     rateLimit: options.rateLimit,
+    jobStore: options.jobStore,
     maxSourceCharacters: options.maxSourceCharacters,
     maxDonorCharacters: options.maxDonorCharacters,
     onError: options.onError,

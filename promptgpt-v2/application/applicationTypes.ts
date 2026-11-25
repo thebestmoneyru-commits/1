@@ -38,6 +38,12 @@ export interface StyleTransferRequest {
   critic?: Partial<StyleCriticOptions>;
   repair?: Partial<SurgicalRepairOptions>;
   verification?: Partial<RepairVerificationOptions>;
+  /** Non-blocking warnings collected during request preparation (audits/repairs). */
+  preparationWarnings?: readonly string[];
+  /** Global 'Режим без фильтрации': disables all semantic interpretation checks and semantic audits so errors in text never stop execution. */
+  unfilteredMode?: boolean;
+  /** Runs one compact recovery synthesis pass if all initial candidates fail with transient upstream errors. */
+  enableCompactRecovery?: boolean;
   signal?: AbortSignal;
 }
 
@@ -49,6 +55,12 @@ export interface CandidateDiagnosticStep {
   detail: string;
 }
 
+export interface StagePromptRecord {
+  stage: "candidate-generation" | "compact-recovery" | "semantic-restoration";
+  candidateId?: string;
+  prompt: string;
+}
+
 export interface CandidateOutcome {
   candidateId: string;
   initial: CandidateEvaluationResult;
@@ -56,6 +68,7 @@ export interface CandidateOutcome {
   finalEvaluation: CandidateEvaluationResult;
   repaired: boolean;
   repairPassed?: boolean;
+  usedPrompt?: string;
   warnings: string[];
   /** Explicit per-candidate record of which pipeline stages ran, passed, failed or were skipped. */
   diagnosticSteps: CandidateDiagnosticStep[];
@@ -66,6 +79,15 @@ export interface StyleTransferResponse {
   status: "accepted" | "needs-review" | "rejected" | "cancelled";
   selectedText?: string;
   selectedCandidateId?: string;
+  /** Best non-blocked generated output when selectedText is unavailable due to non-fatal warnings or donor-faithful errors. */
+  bestAvailableText?: string;
+  bestAvailableCandidateId?: string;
+  requestedModel?: string;
+  usedModel?: string;
+  fallbackOccurred?: boolean;
+  totalDurationMs?: number;
+  usedPrompt?: string;
+  stagePrompts?: StagePromptRecord[];
   sourceFingerprint: string;
   donorBaselineId: string;
   generation: CandidateGenerationResult;
