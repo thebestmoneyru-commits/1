@@ -1,5 +1,6 @@
 import type { FactInventory, Proposition, PropositionAssessment, SemanticPolicy } from "../types";
 import type { AdvancedDiagnosticReport } from "../style/diagnosticsTypes";
+import type { DnaDiagnostics40Report } from "../style/dnaDiagnostics40";
 import type { CandidateGenerationOptions, CandidateGenerationResult } from "../style/candidateGenerator";
 import type { CandidateEvaluationResult } from "../style/candidateEvaluator";
 import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
@@ -132,6 +133,8 @@ export interface StyleTransferResponse {
   warnings: string[];
   error?: { code: string; message: string };
   historyEntry?: PromptResultHistoryEntry;
+  /** Non-blocking 40-point Style DNA diagnostics for the selected/best available output. */
+  dnaDiagnostics40?: DnaDiagnostics40Report;
 }
 
 export interface StyleProfiler {
