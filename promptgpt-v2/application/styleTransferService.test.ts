@@ -29,6 +29,7 @@ function fixture() {
     generation: { candidateCount: 1, concurrency: 1, styleIntensity: 3, maxDonorExamples: 2 },
     minimumStyleScore: 0,
     minimumStyleConfidence: 0,
+    requireStyleTransfer: false,
   };
   return { sourceText, request };
 }
@@ -67,10 +68,10 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       },
     });
     const result = await service.execute(request);
-    assert(result.status === "rejected", "a near-verbatim candidate must not be accepted as a successful style transfer");
+    assert(result.status === "accepted", "the controlled fixture can exercise semantic orchestration without the production style-transfer gate");
     assert(result.selectedText === sourceText, "the selected text must be the generated candidate");
     assert(generationCalls === 1, "one candidate should cause one generation call");
-    assert(criticCalls === 1, "a semantically valid but near-verbatim candidate receives one bounded style review");
+    assert(criticCalls === 0, "a controlled accepted candidate bypasses critic and repair");
     assert(result.trace.some((event) => event.stage === "completed"), "successful execution should be traced");
     assert(result.dnaDiagnostics40?.totalParameters === 40, "successful transfer must expose the complete 40-point Style DNA report");
     assert(result.dnaDiagnostics40?.parameters.length === 40, "40-point diagnostics must contain all sequential parameters");
@@ -90,7 +91,34 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       return !!step && typeof step.durationMs === "number" &&
         Number.isFinite(step.durationMs) && step.durationMs >= 0;
     }), "diagnostic stages must expose finite, non-negative execution durations");
+
     names.push("accept semantically valid candidate and skip unnecessary repair");
+  }
+
+  {
+    const { sourceText, request } = fixture();
+    let criticCalls = 0;
+    const service = new StyleTransferService({
+      candidateGenerator: { async generate() { return sourceText; } },
+      critic: { async review() {
+        criticCalls++;
+        return JSON.stringify({ styleFidelityScore: 100, naturalnessScore: 100, issues: [] });
+      } },
+      repair: { async repair() { throw new Error("no repair should be needed for an empty critic report"); } },
+      semanticVerifier: {
+        async assess() { return []; },
+        async assessRelations() { return []; },
+      },
+      styleProfiler: {
+        analyze(text) {
+          return analyzeStyleDNA(text, { minWordsForReliableProfile: 1, minSentencesForReliableProfile: 1 });
+        },
+      },
+    });
+    const result = await service.execute({ ...request, requireStyleTransfer: true });
+    assert(result.status === "rejected", "production style-transfer mode must reject a near-verbatim source copy");
+    assert(criticCalls === 1, "a semantically valid but near-verbatim candidate receives one bounded style review");
+    names.push("production mode rejects near-verbatim source copying");
   }
 
   {
