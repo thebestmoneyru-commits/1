@@ -128,7 +128,13 @@ export class StyleTransferService {
       : rawRequest;
 
     const unfilteredMode = request.unfilteredMode === true;
-    const styleTargetScore = Math.max(request.criticPolishThreshold ?? 80, request.minimumStyleScore ?? 75);
+    // Production style-transfer mode must never accept a candidate below the established 76/100 floor.
+    // The explicit unfiltered mode remains a separate, intentionally non-gating workflow.
+    const requestedMinimumStyleScore = Number.isFinite(request.minimumStyleScore)
+      ? request.minimumStyleScore!
+      : 76;
+    const minimumStyleScore = Math.max(76, Math.min(100, requestedMinimumStyleScore));
+    const styleTargetScore = Math.max(request.criticPolishThreshold ?? 80, minimumStyleScore);
     const trace: TransferTraceEvent[] = [];
     const stagePrompts: StagePromptRecord[] = [];
     const warnings: string[] = [
@@ -669,7 +675,7 @@ export class StyleTransferService {
               candidateProfile: profile,
             },
             {
-              minimumStyleScore: request.minimumStyleScore,
+              minimumStyleScore,
               minimumStyleConfidence: request.minimumStyleConfidence,
               semanticPolicy: request.semanticPolicy,
             },
@@ -881,7 +887,7 @@ export class StyleTransferService {
                       candidateProfile: restoredProfile,
                     },
                     {
-                      minimumStyleScore: request.minimumStyleScore,
+                      minimumStyleScore,
                       minimumStyleConfidence: request.minimumStyleConfidence,
                       semanticPolicy: request.semanticPolicy,
                     },
@@ -1145,7 +1151,7 @@ export class StyleTransferService {
                 repair: request.repair,
                 verification: {
                   ...request.verification,
-                  minimumStyleScore: request.minimumStyleScore ?? request.verification?.minimumStyleScore,
+                  minimumStyleScore,
                   minimumStyleConfidence: request.minimumStyleConfidence ?? request.verification?.minimumStyleConfidence,
                 },
               },
@@ -1362,26 +1368,54 @@ export class StyleTransferService {
               detail: error instanceof Error ? error.message : "Неизвестная ошибка критика/правки.",
               durationMs: criticRepairDurationMs,
             });
+
+            // A failed optional polish may preserve a previously accepted candidate,
+            // but only when its semantic and 76-point production gates already passed.
+            const safeAcceptedFallback =
+              wasAcceptedBeforeCritic &&
+              currentEvaluation.disposition === "accepted" &&
+              currentEvaluation.semanticReport.passed &&
+              currentEvaluation.styleReport.status === "scored" &&
+              currentEvaluation.styleReport.score !== null &&
+              currentEvaluation.styleReport.score >= minimumStyleScore;
+            const fallbackEvaluation: CandidateEvaluationResult =
+              currentEvaluation.disposition === "accepted" && !safeAcceptedFallback
+                ? {
+                    ...currentEvaluation,
+                    disposition: "needs-review",
+                    admissible: false,
+                    rejectionReasons: [
+                      ...currentEvaluation.rejectionReasons,
+                      "Кандидат не может быть принят: обязательный этап критики/проверки завершился ошибкой.",
+                    ],
+                  }
+                : currentEvaluation;
+
             outcomes.push({
               candidateId: candidate.candidateId,
               initial,
               finalText: currentText,
-              finalEvaluation: currentEvaluation,
+              finalEvaluation: fallbackEvaluation,
               repaired: semanticRestorationApplied,
-              repairPassed: wasAcceptedBeforeCritic ? (semanticRestorationApplied ? true : undefined) : false,
+              repairPassed: safeAcceptedFallback && semanticRestorationApplied ? true : false,
               usedPrompt: candidatePrompt,
               diagnosticSteps: [
                 ...diagnosticSteps,
                 {
                   stage: "final-decision",
-                  status: "failed",
-                  detail: "Этап критики/правки завершился исключением; сохранён последний проверенный текст.",
+                  status: safeAcceptedFallback ? "completed" : "failed",
+                  detail: safeAcceptedFallback
+                    ? "Необязательная стилистическая доводка завершилась ошибкой; сохранён ранее проверенный кандидат, прошедший все обязательные проверки и порог 76/100."
+                    : "Этап критики/правки завершился исключением; кандидат не принят, сохранён только как результат для диагностики.",
                 },
               ],
               diagnostics,
               warnings: [
                 ...restorationWarnings,
                 error instanceof Error ? error.message : "Critic/repair stage failed.",
+                ...(safeAcceptedFallback
+                  ? ["Сбой необязательной полировки не отменил ранее подтверждённый результат."]
+                  : ["Результат не принят из-за сбоя обязательного этапа проверки/правки."]),
               ],
             });
             if (adaptive && wasAcceptedBeforeCritic && preCriticScore >= styleTargetScore) {
@@ -1427,7 +1461,11 @@ export class StyleTransferService {
       }
 
       const accepted = outcomes
-        .filter((item) => item.finalEvaluation.disposition === "accepted" && (!item.repaired || item.repairPassed === true))
+        .filter((item) =>
+          item.finalEvaluation.disposition === "accepted" &&
+          (!item.repaired || item.repairPassed === true) &&
+          !item.diagnosticSteps.some((step) => step.stage === "final-decision" && step.status !== "completed"),
+        )
         .sort((a, b) => (b.finalEvaluation.styleReport.score ?? -1) - (a.finalEvaluation.styleReport.score ?? -1));
       const review = outcomes
         .filter((item) => item.finalEvaluation.disposition === "needs-review")
