@@ -620,6 +620,10 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(criticCalls === 1, "criticPolishThreshold should trigger critic review for accepted candidate below threshold");
     assert(result.status === "accepted" && typeof result.selectedText === "string" && result.selectedText.length > 0,
       "monotonic guard must retain the previously accepted candidate if critic/repair does not improve or encounters no repairs");
+    assert(
+      result.candidates[0]?.diagnosticSteps.some((step) => step.stage === "final-decision" && step.status === "completed"),
+      "a preserved, already verified fallback must have a completed final decision even if optional polish failed",
+    );
     names.push("criticPolishThreshold with monotonic accepted-candidate preservation");
   }
 
