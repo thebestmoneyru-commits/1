@@ -43,6 +43,8 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     "topic-specific repeated words and exact donor endings are not presented as style instructions");
   assert(prompt.includes("предложение за предложением") && prompt.includes("обратную сверку"),
     "generation prompt explicitly requires source-by-source completeness review");
+  assert(prompt.includes("не исправляй их автоматически") && prompt.includes("естественный аналог"),
+    "donor irregularities must be preserved contextually instead of normalized or copied mechanically");
   const longInstructions = "УКАЗАНИЕ".repeat(700);
   const uncappedPrompt = buildCandidatePrompt({
     sourceText, inventory, donorBaseline: baseline, candidateIndex: 0,
@@ -161,10 +163,14 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     planPrompt.includes("ЗАПРЕТ ДОСЛОВНОГО КОПИРОВАНИЯ") &&
     planPrompt.includes("ЗАПРЕТ ИНВЕРСИИ ПРИЧИНЫ И СЛЕДСТВИЯ") &&
     planPrompt.includes("Квоты пунктуации") &&
-    planPrompt.includes("ДРОБИ длинные фразы"),
+    planPrompt.includes("ДРОБИ длинные фразы") &&
+    planPrompt.includes("не навязывай фиксированное число абзацев") &&
+    planPrompt.includes("не исправляй весь текст до нейтральной нормы"),
     "prompt must include Source-vs-Donor rhythm splitting plan, causal-direction lock, punctuation quotas, and strict anti-verbatim ban",
   );
-  names.push("source-vs-donor transformation plan and anti-verbatim instructions");
+  assert(!planPrompt.includes("не дублируй слова подряд"), "donor-supported repetitions are not categorically banned");
+  assert(!planPrompt.includes("обязательно раздели текст на 3–4 логических абзаца"), "paragraph layout is not hard-coded against donor structure");
+  names.push("source-vs-donor transformation plan, context-aware donor irregularities and bounded anti-verbatim instructions");
 
   const relSource = "Дождь усилился, вследствие чего дорогу размыло.";
   const s1End = relSource.indexOf(",");
