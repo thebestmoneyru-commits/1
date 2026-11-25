@@ -9,8 +9,6 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import dns from 'dns';
-import net from 'net';
 import { safeGetPublicUrl, safePostJsonToRemote } from './promptgpt-v2/infrastructure/safeRemoteFetch';
 import { fileURLToPath } from 'url';
 import {
@@ -220,6 +218,33 @@ const rateLimitV2: express.RequestHandler = (req, res, next) => {
   if (v2RateLimitWindows.size > 5000) {
     for (const [ip, value] of v2RateLimitWindows) {
       if (now - value.startedAt >= windowMs) v2RateLimitWindows.delete(ip);
+    }
+  }
+  return next();
+};
+
+// Bound CPU-heavy legacy analysis endpoints as well as v2. This is an in-memory
+// per-process limiter; multi-instance deployments should replace it with a shared store.
+const legacyAnalysisRateLimitWindows = new Map<string, { startedAt: number; count: number }>();
+const legacyAnalysisRateLimit: express.RequestHandler = (req, res, next) => {
+  const now = Date.now();
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const windowMs = 15 * 60 * 1000;
+  const limit = 30;
+  let entry = legacyAnalysisRateLimitWindows.get(key);
+  if (!entry || now - entry.startedAt >= windowMs) {
+    entry = { startedAt: now, count: 0 };
+    legacyAnalysisRateLimitWindows.set(key, entry);
+  }
+  if (entry.count >= limit) {
+    return res.status(429).json({
+      error: { code: 'RATE_LIMITED', message: 'Лимит анализа: не более 30 запросов за 15 минут с одного адреса.' },
+    });
+  }
+  entry.count += 1;
+  if (legacyAnalysisRateLimitWindows.size > 5000) {
+    for (const [ip, value] of legacyAnalysisRateLimitWindows) {
+      if (now - value.startedAt >= windowMs) legacyAnalysisRateLimitWindows.delete(ip);
     }
   }
   return next();
@@ -2313,7 +2338,7 @@ app.get('/api/sloptotal/stats', (_req, res) => {
   });
 });
 
-app.post('/api/sloptotal/analyze', async (req, res) => {
+app.post('/api/sloptotal/analyze', legacyAnalysisRateLimit, async (req, res) => {
   try {
     const {
       text = '',
@@ -2631,7 +2656,7 @@ app.get('/api/mgt-eval/catalog', (_req, res) => {
   });
 });
 
-app.post('/api/mgt-eval/detect', async (req, res) => {
+app.post('/api/mgt-eval/detect', legacyAnalysisRateLimit, async (req, res) => {
   try {
     const {
       text = '',
@@ -3501,7 +3526,7 @@ function analyzeTextMetrics(text: string) {
   };
 }
 
-app.post('/api/audit-detectors', async (req, res) => {
+app.post('/api/audit-detectors', legacyAnalysisRateLimit, async (req, res) => {
   try {
     const { text = '', detectorId, detectorIds } = req.body;
 
@@ -3564,7 +3589,7 @@ app.post('/api/audit-detectors', async (req, res) => {
 /* 6. DEEP AUDIT (СТЕНД ОДНОГО ДЕТЕКТОРА)                             */
 /* ------------------------------------------------------------------ */
 
-app.post('/api/detector/deep-audit', async (req, res) => {
+app.post('/api/detector/deep-audit', legacyAnalysisRateLimit, async (req, res) => {
   try {
     const { detectorId, text = '' } = req.body;
 
