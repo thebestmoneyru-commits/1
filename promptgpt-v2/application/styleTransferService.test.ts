@@ -67,10 +67,10 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       },
     });
     const result = await service.execute(request);
-    assert(result.status === "accepted", "an identical, semantically valid candidate should be accepted");
+    assert(result.status === "rejected", "a near-verbatim candidate must not be accepted as a successful style transfer");
     assert(result.selectedText === sourceText, "the selected text must be the generated candidate");
     assert(generationCalls === 1, "one candidate should cause one generation call");
-    assert(criticCalls === 0, "an already accepted candidate should bypass critic and repair");
+    assert(criticCalls === 1, "a semantically valid but near-verbatim candidate receives one bounded style review");
     assert(result.trace.some((event) => event.stage === "completed"), "successful execution should be traced");
     assert(result.dnaDiagnostics40?.totalParameters === 40, "successful transfer must expose the complete 40-point Style DNA report");
     assert(result.dnaDiagnostics40?.parameters.length === 40, "40-point diagnostics must contain all sequential parameters");
