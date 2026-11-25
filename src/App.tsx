@@ -2339,7 +2339,7 @@ export default function App() {
           steps: [
             {
               stage: 'PromptGPT v2 Pipeline (/api/v2/style-transfer)',
-              status: data?.status === 'accepted' || data?.status === 'needs-review' ? 'completed' : 'not-completed',
+              status: data?.status === 'accepted' || data?.status === 'needs-review' ? 'completed' : 'warning',
               durationMs: elapsed,
               detail: `Статус: ${data?.status || 'неизвестен'}; интенсивность ${v2StyleIntensity}/5; модель ${data?.usedModel || chosenModel}`,
             },
