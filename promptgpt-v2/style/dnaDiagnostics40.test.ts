@@ -108,7 +108,7 @@ export function runDnaDiagnostics40SelfTests(): { passed: number; names: string[
   const runtime = report.parameters.find((p) => p.id === "total-runtime-and-speed");
   assert(runtime?.targetRule.includes("90 с") && runtime.status === "ok", "runtime diagnostics must expose the 90-second target without mislabeling fast runs");
   const commaMetric = report.parameters.find((p) => p.id === "irregularity-preservation");
-  assert(commaMetric?.name.includes("запятых") && commaMetric.diagnosis.includes("не измеряются"), "comma density must not claim to measure spelling and grammar irregularities");
+  assert(commaMetric?.name.includes("запятых") && commaMetric.targetRule.includes("прочие ошибки отдельно не классифицируются"), "comma density must not claim to measure spelling and grammar irregularities");
   names.push("per-parameter confidence and corpus-quality reporting");
 
   const shortReport = buildDnaDiagnostics40({
