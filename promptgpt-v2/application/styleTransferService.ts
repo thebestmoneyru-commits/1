@@ -671,7 +671,7 @@ export class StyleTransferService {
             {
               minimumStyleScore: Math.max(76, request.minimumStyleScore ?? 76),
               minimumStyleConfidence: request.minimumStyleConfidence,
-              requireStyleTransfer: true,
+              requireStyleTransfer: request.requireStyleTransfer !== false,
               semanticPolicy: request.semanticPolicy,
             },
           );
@@ -884,7 +884,7 @@ export class StyleTransferService {
                     {
                       minimumStyleScore: Math.max(76, request.minimumStyleScore ?? 76),
                       minimumStyleConfidence: request.minimumStyleConfidence,
-                      requireStyleTransfer: true,
+                      requireStyleTransfer: request.requireStyleTransfer !== false,
                       semanticPolicy: request.semanticPolicy,
                     },
                   );
@@ -1149,7 +1149,7 @@ export class StyleTransferService {
                   ...request.verification,
                   minimumStyleScore: Math.max(76, request.minimumStyleScore ?? request.verification?.minimumStyleScore ?? 76),
                   minimumStyleConfidence: request.minimumStyleConfidence ?? request.verification?.minimumStyleConfidence,
-                  requireStyleTransfer: true,
+                  requireStyleTransfer: request.requireStyleTransfer !== false,
                 },
               },
             );
