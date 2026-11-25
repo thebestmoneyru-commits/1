@@ -160,7 +160,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   });
   assert(
     planPrompt.includes("ПЛАН ОБЯЗАТЕЛЬНОЙ СИНТАКСИЧЕСКОЙ И СТИЛИСТИЧЕСКОЙ ПЕРЕСТРОЙКИ") &&
-    planPrompt.includes("ЗАПРЕТ ДОСЛОВНОГО КОПИРОВАНИЯ") &&
+    planPrompt.includes("ГЛУБОКАЯ ПЕРЕСТРОЙКА БЕЗ МЕХАНИЧЕСКОГО АНТИ-КОПИРОВАНИЯ") &&
     planPrompt.includes("ЗАПРЕТ ИНВЕРСИИ ПРИЧИНЫ И СЛЕДСТВИЯ") &&
     planPrompt.includes("Квоты пунктуации") &&
     planPrompt.includes("ДРОБИ длинные фразы") &&
