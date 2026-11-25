@@ -4,6 +4,8 @@ import type {
 import { evaluateSemanticPreservation } from "../semantic/semanticPreservation";
 import { fingerprintStyleSource } from "./styleDNAAnalyzer";
 import { scoreStyleDNA, type StyleScoreReport } from "./styleDNAScorer";
+import { computeWordTrigramOverlap } from "./textOverlap";
+import { countWords } from "./tokenizer";
 import { verifyDonorStyleBaseline } from "./donorBaseline";
 import type { DonorStyleBaseline, StyleDNAProfile } from "./styleTypes";
 
@@ -43,8 +45,10 @@ const DEFAULT_OPTIONS: CandidateEvaluatorOptions = {
 
 function normalizeOptions(options: Partial<CandidateEvaluatorOptions>): CandidateEvaluatorOptions {
   return {
+    // Keep a real minimum quality floor even when a caller requests a
+    // permissive threshold; semantic correctness alone is not style fidelity.
     minimumStyleScore: Number.isFinite(options.minimumStyleScore)
-      ? Math.max(0, Math.min(100, options.minimumStyleScore!))
+      ? Math.max(76, Math.min(100, options.minimumStyleScore!))
       : DEFAULT_OPTIONS.minimumStyleScore,
     minimumStyleConfidence: Number.isFinite(options.minimumStyleConfidence)
       ? Math.max(0, Math.min(1, options.minimumStyleConfidence!))
@@ -74,6 +78,15 @@ export function evaluateCandidate(
   const styleReport = scoreStyleDNA(input.donorBaseline.profile, input.candidateProfile);
   const rejectionReasons: string[] = [];
   const warnings: string[] = [];
+  const sourceWordCount = countWords(input.sourceText);
+  const sourceFormOverlap = computeWordTrigramOverlap(input.sourceText, input.outputText);
+  const excessiveSourceCopy = sourceWordCount >= 80 && sourceFormOverlap >= 0.82;
+
+  if (excessiveSourceCopy) {
+    rejectionReasons.push(
+      `Кандидат почти дословно воспроизводит исходник (совпадение содержательных триграмм ${Math.round(sourceFormOverlap * 100)}%); требуется глубокая синтаксическая перестройка.`,
+    );
+  }
 
   if (!semanticReport.passed) {
     rejectionReasons.push("Кандидат не прошёл обязательную проверку сохранности исходного смысла.");
@@ -97,7 +110,7 @@ export function evaluateCandidate(
     warnings.push(...styleReport.warnings);
   }
 
-  const hardFailure = !semanticReport.passed || !baselineIntegrity.valid ||
+  const hardFailure = !semanticReport.passed || excessiveSourceCopy || !baselineIntegrity.valid ||
     input.candidateProfile.sourceFingerprint !== fingerprintStyleSource(input.outputText) ||
     (styleReport.status === "scored" && styleReport.score !== null &&
       styleReport.confidence >= options.minimumStyleConfidence &&
