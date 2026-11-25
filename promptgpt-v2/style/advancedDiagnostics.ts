@@ -1,16 +1,33 @@
+import type { StyleDNAProfile } from "./styleTypes";
+import type { StyleScoreReport } from "./styleDNAScorer";
 import type {
   AdvancedDiagnosticReport,
   DiagnosticStatus,
   DiagnosticStepItem,
   DiagnosticSummary,
-} from './diagnosticsTypes';
+  StageScoreDelta,
+} from "./diagnosticsTypes";
 
 export interface BuildAdvancedDiagnosticsInput {
   id?: string;
   createdAt?: string;
-  steps?: DiagnosticStepItem[];
+  steps?: ReadonlyArray<DiagnosticStepItem>;
   sourceText?: string;
+  finalText?: string;
   resultText?: string;
+  candidateProfile?: StyleDNAProfile;
+  styleReport?: StyleScoreReport;
+  latency?: {
+    candidateGenerationMs?: number;
+    styleProfilingMs?: number;
+    styleScoringMs?: number;
+    semanticVerificationMs?: number;
+    logicalStructureMs?: number;
+    semanticRestorationMs?: number;
+    criticRepairMs?: number;
+    [key: string]: number | undefined;
+  };
+  stageDeltas?: ReadonlyArray<StageScoreDelta>;
   durationMs?: number;
   stageDurationsMs?: Record<string, number>;
   metrics?: Record<string, number | string | boolean | null>;
@@ -18,73 +35,73 @@ export interface BuildAdvancedDiagnosticsInput {
 }
 
 function normalizeStepStatus(raw: unknown): DiagnosticStatus {
-  const s = String(raw ?? '').toLowerCase();
-  if (s === 'error' || s === 'fail' || s === 'failed') return 'error';
-  if (s === 'warn' || s === 'warning') return 'warn';
-  if (s === 'skip' || s === 'skipped') return 'skip';
-  if (s === 'pending') return 'pending';
-  return 'ok';
+  const value = String(raw ?? "").toLowerCase();
+  if (["error", "fail", "failed"].includes(value)) return "error";
+  if (["warn", "warning", "not-completed"].includes(value)) return "warn";
+  if (["skip", "skipped"].includes(value)) return "skip";
+  if (value === "pending") return "pending";
+  return "ok";
 }
 
-export function summarizeDiagnosticSteps(steps: DiagnosticStepItem[]): DiagnosticSummary {
+export function summarizeDiagnosticSteps(steps: ReadonlyArray<DiagnosticStepItem>): DiagnosticSummary {
   let passedSteps = 0;
   let warnSteps = 0;
   let errorSteps = 0;
   let skippedSteps = 0;
-
   for (const step of steps) {
-    const st = normalizeStepStatus(step.status);
-    if (st === 'error') errorSteps += 1;
-    else if (st === 'warn') warnSteps += 1;
-    else if (st === 'skip') skippedSteps += 1;
-    else if (st === 'ok') passedSteps += 1;
+    const status = normalizeStepStatus(step.status);
+    if (status === "error") errorSteps++;
+    else if (status === "warn") warnSteps++;
+    else if (status === "skip") skippedSteps++;
+    else if (status === "ok") passedSteps++;
   }
-
-  let overallStatus: DiagnosticStatus = 'ok';
-  if (errorSteps > 0) overallStatus = 'error';
-  else if (warnSteps > 0) overallStatus = 'warn';
-
-  return {
-    totalSteps: steps.length,
-    passedSteps,
-    warnSteps,
-    errorSteps,
-    skippedSteps,
-    overallStatus,
-  };
+  const overallStatus: DiagnosticStatus =
+    errorSteps > 0 ? "error" : warnSteps > 0 ? "warn" : "ok";
+  return { totalSteps: steps.length, passedSteps, warnSteps, errorSteps, skippedSteps, overallStatus };
 }
 
 export function buildAdvancedDiagnostics(
-  input: BuildAdvancedDiagnosticsInput = {}
+  input: BuildAdvancedDiagnosticsInput = {},
 ): AdvancedDiagnosticReport {
-  const normalizedSteps: DiagnosticStepItem[] = (input.steps ?? []).map((item, idx) => ({
-    id: item.id ?? `step-${idx + 1}`,
-    name: item.name ?? item.step ?? `Шаг ${idx + 1}`,
-    step: item.step ?? item.name ?? `step_${idx + 1}`,
-    status: normalizeStepStatus(item.status),
-    detail: item.detail ?? item.message ?? '',
-    durationMs: item.durationMs,
-    metrics: item.metrics,
+  const steps: DiagnosticStepItem[] = (input.steps ?? []).map((step, index) => ({
+    id: step.id ?? `step-${index + 1}`,
+    name: step.name ?? step.step ?? `Шаг ${index + 1}`,
+    step: step.step ?? step.name ?? `step_${index + 1}`,
+    status: normalizeStepStatus(step.status),
+    detail: step.detail ?? step.message ?? "",
+    durationMs: step.durationMs,
+    metrics: step.metrics,
   }));
-
-  const summary = summarizeDiagnosticSteps(normalizedSteps);
-
-  const computedMetrics: Record<string, number | string | boolean | null> = {
+  const summary = summarizeDiagnosticSteps(steps);
+  const metrics: Record<string, number | string | boolean | null> = {
     ...(input.metrics ?? {}),
-    sourceChars: input.sourceText ? input.sourceText.length : null,
-    resultChars: input.resultText ? input.resultText.length : null,
-    totalDurationMs: typeof input.durationMs === 'number' ? input.durationMs : null,
+    sourceChars: input.sourceText?.length ?? null,
+    resultChars: (input.finalText ?? input.resultText)?.length ?? null,
+    totalDurationMs: input.durationMs ?? null,
+    styleScore: input.styleReport?.score ?? null,
+    styleConfidence: input.styleReport?.confidence ?? null,
+    styleStatus: input.styleReport?.status ?? "not-evaluated",
+    profileConfidence: input.candidateProfile?.confidence ?? null,
+    profileStatus: input.candidateProfile?.status ?? "not-evaluated",
   };
-
+  for (const [key, value] of Object.entries(input.latency ?? {})) {
+    metrics[`latency_${key}`] = typeof value === "number" && Number.isFinite(value) ? value : null;
+  }
+  if (input.stageDeltas) {
+    metrics.stageDeltaCount = input.stageDeltas.length;
+    metrics.stageRepairsApplied = input.stageDeltas.filter((item) => item.repaired).length;
+    metrics.stageRepairsPassed = input.stageDeltas.filter((item) => item.repairPassed).length;
+  }
   return {
     id: input.id ?? `diag_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     createdAt: input.createdAt ?? new Date().toISOString(),
-    steps: normalizedSteps,
+    steps,
     summary,
-    metrics: computedMetrics,
+    metrics,
     metadata: {
       ...(input.metadata ?? {}),
-      stageDurationsMs: input.stageDurationsMs ?? undefined,
+      stageDurationsMs: input.stageDurationsMs,
+      stageDeltas: input.stageDeltas,
     },
   };
 }
