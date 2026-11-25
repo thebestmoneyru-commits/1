@@ -49,6 +49,8 @@ interface DetectZooWorkbenchProps {
   currentDnaResult?: string;
   currentContentText?: string;
   currentDonorText?: string;
+  initialText?: string;
+  onApplyScoreToMain?: (humanScore: number, aiScore: number, rawMetric: string) => void;
 }
 
 type ZooTab = 'detect' | 'benchmark' | 'inspectors' | 'registry';
@@ -66,6 +68,8 @@ const CURVE_COLORS = ['#34d399', '#38bdf8', '#f472b6', '#fbbf24', '#a78bfa', '#f
 
 export function DetectZooWorkbench({
   embedded = false,
+  initialText = '',
+  onApplyScoreToMain,
   currentDnaResult = '',
   currentContentText = '',
   currentDonorText = '',
@@ -75,6 +79,7 @@ export function DetectZooWorkbench({
   // Input state
   const [inputText, setInputText] = useState<string>(() => {
     return (
+      initialText ||
       currentDnaResult ||
       currentContentText ||
       DETECTZOO_BUILTIN_CORPUS[0].text
@@ -158,6 +163,17 @@ export function DetectZooWorkbench({
       setInputText(currentDnaResult);
     }
   }, [currentDnaResult]);
+
+  useEffect(() => {
+    if (initialText.trim()) setInputText(initialText);
+  }, [initialText]);
+
+  useEffect(() => {
+    if (!suiteReport || !onApplyScoreToMain) return;
+    const humanScore = Number((suiteReport.overallHumanProbability * 100).toFixed(1));
+    const aiScore = Number((suiteReport.overallAiProbability * 100).toFixed(1));
+    onApplyScoreToMain(humanScore, aiScore, `${aiScore}% P(AI) · ${suiteReport.flaggedCount}/${suiteReport.totalRun}`);
+  }, [suiteReport]);
 
   const filteredTextCatalog = useMemo(() => {
     return familyFilter === 'all'
