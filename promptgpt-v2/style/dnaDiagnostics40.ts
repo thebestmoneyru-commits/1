@@ -390,8 +390,10 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
   });
 
   const wordRatio = sCorpus.words > 0 ? rCorpus.words / sCorpus.words : 1;
-  const p4Score = wordRatio >= 0.9 && wordRatio <= 1.18 ? 100 : clampScore(100 - Math.abs(wordRatio - 1.0) * 180);
   const p4Status: DiagnosticParamStatus = wordRatio >= 0.88 && wordRatio <= 1.2 ? "ok" : wordRatio >= 0.75 && wordRatio <= 1.35 ? "warn" : "fail";
+  const p4Score = p4Status === "ok" ? 100 : p4Status === "warn"
+    ? clampScore(72 - Math.abs(wordRatio - 1.0) * 80)
+    : clampScore(45 - Math.abs(wordRatio - 1.0) * 80);
   pushParam({
     id: "word-ratio",
     category: "form-isolation",
@@ -403,11 +405,11 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
     status: p4Status,
     score: p4Score,
     diagnosis:
-      wordRatio < 0.85
-        ? "Модель сжала текст в выжимку/конспект."
-        : wordRatio > 1.25
-          ? "Модель раздула текст лишними словами."
-          : "Объём слов в целевом коридоре без сжатия смысла.",
+      p4Status === "ok"
+        ? "Объём близок к исходнику."
+        : p4Status === "warn"
+          ? wordRatio < 1 ? "Текст немного короче целевого коридора; проверьте полноту деталей." : "Текст немного длиннее целевого коридора."
+          : wordRatio < 1 ? "Сильное сжатие: проверьте пропущенные смысловые детали." : "Сильное расширение: проверьте лишние вставки.",
     codeHint: "promptgpt-v2/style/candidateGenerator.ts (targetWordDirective)",
   });
 
@@ -615,10 +617,12 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
     codeHint: "promptgpt-v2/style/candidateGenerator.ts (targetLongCount / targetVeryLongCount)",
   });
 
-  const p15Score =
-    rCorpus.words >= 150 && rCorpus.paragraphs <= 1
-      ? 32
-      : computeRateSimilarityScore(dCorpus.meanSentencesPerParagraph, rCorpus.meanSentencesPerParagraph, 2.2);
+  const expectedParagraphs = Math.max(
+    1,
+    Math.round(rCorpus.sentences / Math.max(1, dCorpus.meanSentencesPerParagraph)),
+  );
+  const paragraphDeviation = Math.abs(rCorpus.paragraphs - expectedParagraphs) / Math.max(1, expectedParagraphs);
+  const p15Score = clampScore(100 - Math.min(100, paragraphDeviation * 100));
   pushParam({
     id: "paragraph-density",
     category: "rhythm-layout",
@@ -630,9 +634,11 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
     status: statusFromScore(p15Score),
     score: p15Score,
     diagnosis:
-      rCorpus.words >= 150 && rCorpus.paragraphs <= 1
-        ? "Текст вышел сплошным массивом в 1 абзац."
-        : "Абзацная структура воспроизведена аккуратно.",
+      p15Score >= 72
+        ? "Плотность абзацев пропорциональна донорской манере и объёму результата."
+        : p15Score >= 45
+          ? "Абзацная структура частично расходится с пропорцией донора."
+          : "Число и плотность абзацев заметно расходятся с донорской композицией.",
     codeHint: "promptgpt-v2/style/candidateGenerator.ts (paragraphDirective, paragraphSplitDirective)",
   });
 
@@ -754,16 +760,16 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
   pushParam({
     id: "irregularity-preservation",
     category: "punctuation-flaws",
-    name: "Удержание авторской негладкости (анти-норма)",
+    name: "Сохранение донорской плотности запятых",
     donorValue: isSparseDonorCommas ? `редк. запятые (${dCommas.toFixed(1)}/100)` : `норм. (${dCommas.toFixed(1)}/100)`,
     sourceValue: `${per100(sourceProfile, "punctuation.comma").toFixed(1)}/100`,
     resultValue: `${rCommas.toFixed(1)}/100`,
-    targetRule: "не причёсывать ошибки/пунктуацию донора",
+    targetRule: "сопоставимая частота запятых; прочие ошибки отдельно не классифицируются",
     status: statusFromScore(p24Score),
     score: p24Score,
     diagnosis: commaNormalizedUp
-      ? "Текст «причёсан» по школьной норме запятых вопреки разрежённому донору."
-      : "Авторская плотность пунктуации и шероховатостей удержана.",
+      ? "Текст «причёсан» по школьной норме запятых вопреки разрежённому донору. Орфографические и грамматические отклонения этим показателем не измеряются."
+      : "Плотность запятых близка к донору; орфографические и грамматические отклонения этим показателем не измеряются.",
     codeHint: "promptgpt-v2/repair/surgicalRepair.ts и promptgpt-v2/repair/semanticRestoration.ts",
   });
 
@@ -898,7 +904,7 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
         : undefined;
   const secPer1k = totalMs && resultText.length > 0 ? (totalMs / 1000) / Math.max(0.2, resultText.length / 1000) : undefined;
   const p33Score =
-    totalMs === undefined ? 0 : totalMs <= 45_000 ? 95 : totalMs <= 120_000 ? 75 : totalMs <= 210_000 ? 52 : 30;
+    totalMs === undefined ? 0 : totalMs <= 45_000 ? 95 : totalMs <= 90_000 ? 82 : totalMs <= 120_000 ? 65 : totalMs <= 210_000 ? 45 : 25;
   pushParam({
     id: "total-runtime-and-speed",
     category: "pipeline-health",
@@ -906,15 +912,17 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
     donorValue: "—",
     sourceValue: `${sourceText.length} симв.`,
     resultValue: totalMs !== undefined ? `${formatMs(totalMs)}${secPer1k ? ` (${secPer1k.toFixed(1)} с/1к)` : ""}` : "н/д",
-    targetRule: "<= 45–90 с",
+    targetRule: "<= 90 с; 90–120 с — предупреждение",
     status: totalMs === undefined ? "na" : statusFromScore(p33Score),
     score: p33Score,
     diagnosis:
       totalMs === undefined
         ? "Таймер не зафиксирован."
         : totalMs > 120_000
-          ? "Высокая задержка (>2 мин) — проверьте этап-тормоз или ретраи модели."
-          : "Скорость выполнения в рабочем диапазоне.",
+          ? "Высокая задержка (>2 мин) — проверьте этап-тормоз или повторные вызовы модели."
+          : totalMs > 90_000
+            ? "Время выше желаемого диапазона; проверьте число вызовов и этапы с повторной генерацией."
+            : "Время выполнения в целевом диапазоне.",
     codeHint: "promptgpt-v2/application/styleTransferService.ts и server.ts (cooldown/timeout)",
   });
 

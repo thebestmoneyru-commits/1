@@ -360,8 +360,10 @@ export function createRouterAdapters(
         const sourceText = extractSourceTextFromCandidatePrompt(prompt);
         if (!sourceText || sourceText.length < 120) return firstDraft;
         const firstOverlap = computeWordTrigramOverlap(sourceText, firstDraft);
-        const overlapThreshold = sourceText.length >= 180 ? 0.22 : 0.28;
-        if (firstOverlap < overlapThreshold) return firstDraft;
+        // Avoid multiplying model calls for every candidate: only candidate 1
+        // may receive one extra pass, and only for substantial copied passages.
+        const overlapThreshold = 0.55;
+        if (candidateIndex !== 0 || firstOverlap < overlapThreshold) return firstDraft;
 
         options.onModelNote?.(
           `Кандидат ${candidateIndex + 1}: обнаружено дословное совпадение с исходником (${Math.round(firstOverlap * 100)}%); запускается глубокая синтаксическая пересборка под стиль донора.`,
@@ -369,9 +371,8 @@ export function createRouterAdapters(
         const escalatedPrompt = [
           prompt,
           "",
-          "КРИТИЧЕСКАЯ КОРРЕКЦИЯ (ПРЕДЫДУЩИЙ ЧЕРНОВИК ОТКЛОНЁН ЗА КОПИРОВАНИЕ СИНТАКСИСА ИСХОДНИКА):",
-          `Предыдущий вариант оставил ${Math.round(firstOverlap * 100)}% фраз из исходного текста. Поверхностная замена слов ЗАПРЕЩЕНА!`,
-          "Перепиши весь текст ЗАНОВО: смени зачины каждого предложения, разбей или перестрой сложные периоды строго под длину фраз донора, вплети свойственные донору переходы и связки («во-первых... во-вторых...», «данная мысль...», «рассуждая о...», или иные обороты из ПОЛНОГО ТЕКСТА ДОНОРА), перенеси его пунктуацию и особенности/ошибки, не искажая ключевые термины и полностью сохранив весь смысл и факты.",
+          "ОГРАНИЧЕННАЯ КОРРЕКЦИЯ: предыдущий вариант сохранил слишком много длинных дословных фрагментов исходника. Перестрой синтаксический каркас и ход фраз в манере донора, сохраняя точные термины, факты, устойчивые выражения и все логические отношения.",
+          "Не запрещай общеупотребительные связки и не исправляй донорские повторы, орфографические/грамматические отклонения и пунктуационные привычки. Переноси их пропорционально и только в естественных контекстных аналогах; не подменяй содержание донора содержанием исходника и наоборот.",
         ].join("\n");
         try {
           const rewritten = await wrapInvoke("candidate-generation", escalatedPrompt, signal, undefined, {

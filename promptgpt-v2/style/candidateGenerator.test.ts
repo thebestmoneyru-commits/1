@@ -37,12 +37,14 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     "prompt separates donor style from donor content");
   assert(prompt.includes("1912"), "required numeric anchor is supplied to the model");
   assert(prompt.includes("обруживает"), "exact donor spelling irregularities are supplied as style evidence");
-  assert(prompt.includes("сопоставимой частотностью") && prompt.includes("грамматические несогласования") && prompt.includes("punctuation.comma"),
+  assert(prompt.includes("сопоставимой частотности") && prompt.includes("грамматические несогласования") && prompt.includes("punctuation.comma"),
     "prompt requires frequency-calibrated imitation of donor irregularities, agreements, and comma density");
   assert(!prompt.includes("lexical.repeat.") && !prompt.includes("Повторяющееся окончание:"),
     "topic-specific repeated words and exact donor endings are not presented as style instructions");
-  assert(prompt.includes("предложение за предложением") && prompt.includes("обратную сверку"),
-    "generation prompt explicitly requires source-by-source completeness review");
+  assert(prompt.includes("сверь все смысловые элементы") && prompt.includes("все смысловые элементы"),
+    "generation prompt explicitly requires a complete semantic review");
+  assert(prompt.includes("не исправляй их автоматически") && prompt.includes("естественный аналог"),
+    "donor irregularities must be preserved contextually instead of normalized or copied mechanically");
   const longInstructions = "УКАЗАНИЕ".repeat(700);
   const uncappedPrompt = buildCandidatePrompt({
     sourceText, inventory, donorBaseline: baseline, candidateIndex: 0,
@@ -136,7 +138,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   );
   names.push("multi-family Style DNA evidence and corpusProfile transfer");
 
-  const verboseSourceText = Array.from({ length: 4 }, () =>
+  const verboseSourceText = Array.from({ length: 6 }, () =>
     "В рамках сложной теоретической парадигмы смысл существования последовательно редуцируется к длинному процессу материального улучшения внешних условий бытия, где каждое отдельное явление выступает естественным следствием физических законов."
   ).join(" ");
   const shortDonorText = Array.from({ length: 18 }, () =>
@@ -158,13 +160,17 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   });
   assert(
     planPrompt.includes("ПЛАН ОБЯЗАТЕЛЬНОЙ СИНТАКСИЧЕСКОЙ И СТИЛИСТИЧЕСКОЙ ПЕРЕСТРОЙКИ") &&
-    planPrompt.includes("ЗАПРЕТ ДОСЛОВНОГО КОПИРОВАНИЯ") &&
+    planPrompt.includes("ГЛУБОКАЯ ПЕРЕСТРОЙКА БЕЗ МЕХАНИЧЕСКОГО АНТИ-КОПИРОВАНИЯ") &&
     planPrompt.includes("ЗАПРЕТ ИНВЕРСИИ ПРИЧИНЫ И СЛЕДСТВИЯ") &&
     planPrompt.includes("Квоты пунктуации") &&
-    planPrompt.includes("ДРОБИ длинные фразы"),
+    planPrompt.includes("ДРОБИ длинные фразы") &&
+    planPrompt.includes("не навязывай фиксированное число абзацев") &&
+    planPrompt.includes("не исправляй весь текст до нейтральной нормы"),
     "prompt must include Source-vs-Donor rhythm splitting plan, causal-direction lock, punctuation quotas, and strict anti-verbatim ban",
   );
-  names.push("source-vs-donor transformation plan and anti-verbatim instructions");
+  assert(!planPrompt.includes("не дублируй слова подряд"), "donor-supported repetitions are not categorically banned");
+  assert(!planPrompt.includes("обязательно раздели текст на 3–4 логических абзаца"), "paragraph layout is not hard-coded against donor structure");
+  names.push("source-vs-donor transformation plan, context-aware donor irregularities and bounded anti-verbatim instructions");
 
   const relSource = "Дождь усилился, вследствие чего дорогу размыло.";
   const s1End = relSource.indexOf(",");
