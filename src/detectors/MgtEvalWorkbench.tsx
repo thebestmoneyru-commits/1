@@ -76,6 +76,8 @@ interface MgtEvalWorkbenchProps {
   currentContentText?: string;
   currentDonorText?: string;
   embedded?: boolean;
+  initialText?: string;
+  onApplyScoreToMain?: (humanScore: number, aiScore: number, rawMetric: string) => void;
 }
 
 const SAMPLE_MGT_AI_TEXT = `В рамках современной парадигмы следует отметить, что комплексный подход играет ключевую роль в понимании сложных трансформаций. Более того, данное обстоятельство является неотъемлемым элементом устойчивого развития, а подводя итог, важно подчеркнуть необходимость гармоничного синтеза традиционных и инновационных практик. Furthermore, it is important to note that this multifaceted framework serves as a testament to sustainable resilience.`;
@@ -137,11 +139,13 @@ export function MgtEvalWorkbench({
   currentContentText = '',
   currentDonorText = '',
   embedded = false,
+  initialText = '',
+  onApplyScoreToMain,
 }: MgtEvalWorkbenchProps) {
   const [subTab, setSubTab] = useState<MgtSubTab>('detect');
 
   // Detection state
-  const [inputText, setInputText] = useState<string>(() => currentDnaResult || currentContentText || SAMPLE_MGT_AI_TEXT);
+  const [inputText, setInputText] = useState<string>(() => initialText || currentDnaResult || currentContentText || SAMPLE_MGT_AI_TEXT);
   const [selectedKeys, setSelectedKeys] = useState<string[]>(() => MGT_DETECTORS_CATALOG.map((d) => d.key));
   const [threshold, setThreshold] = useState<number>(0.5);
   const [usePlatt, setUsePlatt] = useState<boolean>(false);
@@ -187,6 +191,17 @@ export function MgtEvalWorkbench({
   // Catalog filter state
   const [catalogFilter, setCatalogFilter] = useState<'All' | 'Metric-based' | 'Fine-tuned'>('All');
   const [catalogSearch, setCatalogSearch] = useState<string>('');
+
+  useEffect(() => {
+    if (initialText.trim()) setInputText(initialText);
+  }, [initialText]);
+
+  useEffect(() => {
+    if (!detectReport || !onApplyScoreToMain) return;
+    const humanScore = Number((detectReport.overallHumanProbability * 100).toFixed(1));
+    const aiScore = Number((detectReport.overallAiProbability * 100).toFixed(1));
+    onApplyScoreToMain(humanScore, aiScore, `${aiScore}% P(AI) · ${detectReport.flaggedCount}/${detectReport.totalRun}`);
+  }, [detectReport]);
 
   const refreshCatalogAndStats = async () => {
     try {

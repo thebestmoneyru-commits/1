@@ -9,8 +9,7 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import dns from 'dns';
-import net from 'net';
+import { safeGetPublicUrl, safePostJsonToRemote } from './promptgpt-v2/infrastructure/safeRemoteFetch';
 import { fileURLToPath } from 'url';
 import {
   SLOPTOTAL_BANDS,
@@ -219,6 +218,33 @@ const rateLimitV2: express.RequestHandler = (req, res, next) => {
   if (v2RateLimitWindows.size > 5000) {
     for (const [ip, value] of v2RateLimitWindows) {
       if (now - value.startedAt >= windowMs) v2RateLimitWindows.delete(ip);
+    }
+  }
+  return next();
+};
+
+// Bound CPU-heavy legacy analysis endpoints as well as v2. This is an in-memory
+// per-process limiter; multi-instance deployments should replace it with a shared store.
+const legacyAnalysisRateLimitWindows = new Map<string, { startedAt: number; count: number }>();
+const legacyAnalysisRateLimit: express.RequestHandler = (req, res, next) => {
+  const now = Date.now();
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const windowMs = 15 * 60 * 1000;
+  const limit = 30;
+  let entry = legacyAnalysisRateLimitWindows.get(key);
+  if (!entry || now - entry.startedAt >= windowMs) {
+    entry = { startedAt: now, count: 0 };
+    legacyAnalysisRateLimitWindows.set(key, entry);
+  }
+  if (entry.count >= limit) {
+    return res.status(429).json({
+      error: { code: 'RATE_LIMITED', message: 'Лимит анализа: не более 30 запросов за 15 минут с одного адреса.' },
+    });
+  }
+  entry.count += 1;
+  if (legacyAnalysisRateLimitWindows.size > 5000) {
+    for (const [ip, value] of legacyAnalysisRateLimitWindows) {
+      if (now - value.startedAt >= windowMs) legacyAnalysisRateLimitWindows.delete(ip);
     }
   }
   return next();
@@ -2226,126 +2252,64 @@ const slopAggregateStats = {
   feedbackCounts: { human: 0, ai: 0, mixed: 0, unsure: 0 } as Record<string, number>,
 };
 
-function isPrivateOrBlockedIp(ip: string): boolean {
-  const cleanIp = ip.toLowerCase();
-  if (cleanIp === '::1' || cleanIp === '::' || cleanIp.startsWith('fe80:') || cleanIp.startsWith('fc') || cleanIp.startsWith('fd')) {
-    return true;
-  }
-  const v4 = cleanIp.startsWith('::ffff:') ? cleanIp.slice(7) : cleanIp;
-  if (net.isIPv4(v4)) {
-    const parts = v4.split('.').map(Number);
-    const [a, b] = parts;
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-  }
-  return false;
-}
-
 async function safeFetchPublicUrl(rawUrl: string): Promise<{
   finalUrl: string;
   html: string;
   headers: Record<string, string>;
   status: number;
 }> {
-  let currentUrl: URL;
-  try {
-    currentUrl = new URL(rawUrl.trim());
-  } catch {
-    throw new Error('Некорректный URL. Укажите адрес с http:// или https://');
+  const fetched = await safeGetPublicUrl(rawUrl, {
+    timeoutMs: 15_000,
+    maxResponseBytes: 5 * 1024 * 1024,
+    maxRedirects: 3,
+  });
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(fetched.headers)) {
+    if (typeof value === "string") headers[key.toLowerCase()] = value;
+    else if (Array.isArray(value)) headers[key.toLowerCase()] = value.join(", ");
   }
+  return {
+    finalUrl: fetched.finalUrl,
+    html: fetched.body,
+    headers,
+    status: fetched.statusCode,
+  };
+}
 
-  if (currentUrl.protocol !== 'http:' && currentUrl.protocol !== 'https:') {
-    throw new Error('Разрешены только протоколы http:// и https://');
+function getRemoteOriginAllowlist(environmentVariable: string): string[] {
+  return (process.env[environmentVariable] ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+async function postConfiguredRemoteJson(
+  remoteOrigin: string,
+  allowlistVariable: string,
+  requiredPath: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, any>> {
+  const allowedOrigins = getRemoteOriginAllowlist(allowlistVariable);
+  if (allowedOrigins.length === 0) {
+    throw new Error(`Remote forwarding is disabled: configure ${allowlistVariable} with trusted HTTPS origins.`);
   }
-
-  const MAX_REDIRECTS = 3;
-  const MAX_BYTES = 5 * 1024 * 1024;
-
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const hostname = currentUrl.hostname.toLowerCase();
-    if (
-      hostname === 'localhost' ||
-      hostname === 'metadata.google.internal' ||
-      hostname.endsWith('.local') ||
-      hostname.endsWith('.internal')
-    ) {
-      throw new Error('Доступ к локальным или внутренним адресам запрещён');
-    }
-
-    if (net.isIP(hostname)) {
-      if (isPrivateOrBlockedIp(hostname)) {
-        throw new Error('Заблокирован приватный или loopback IP-адрес');
-      }
-    } else {
-      const resolved = await dns.promises.lookup(hostname, { all: true });
-      if (!resolved || resolved.length === 0) {
-        throw new Error(`Не удалось разрешить домен: ${hostname}`);
-      }
-      for (const entry of resolved) {
-        if (isPrivateOrBlockedIp(entry.address)) {
-          throw new Error(`Домен ${hostname} указывает на приватный IP (${entry.address})`);
-        }
-      }
-    }
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
-    let response: Response;
-    try {
-      response = await fetch(currentUrl.toString(), {
-        method: 'GET',
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'SlopTotalBot/1.0 (+https://github.com/pablocaeg/sloptotal)',
-          Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
-        },
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (response.status >= 300 && response.status < 400) {
-      const loc = response.headers.get('location');
-      if (!loc) throw new Error(`Сервер вернул редирект ${response.status} без заголовка Location`);
-      currentUrl = new URL(loc, currentUrl);
-      if (currentUrl.protocol !== 'http:' && currentUrl.protocol !== 'https:') {
-        throw new Error('Редирект ведёт на запрещённый протокол');
-      }
-      continue;
-    }
-
-    if (!response.ok) {
-      throw new Error(`Страница вернула HTTP ${response.status}`);
-    }
-
-    const cl = Number(response.headers.get('content-length') || 0);
-    if (cl > MAX_BYTES) {
-      throw new Error('Размер страницы превышает лимит 5 МБ');
-    }
-
-    const buf = Buffer.from(await response.arrayBuffer());
-    if (buf.byteLength > MAX_BYTES) {
-      throw new Error('Размер ответа превышает лимит 5 МБ');
-    }
-
-    const headersObj: Record<string, string> = {};
-    response.headers.forEach((v, k) => {
-      headersObj[k.toLowerCase()] = v;
-    });
-
-    return {
-      finalUrl: currentUrl.toString(),
-      html: buf.toString('utf8'),
-      headers: headersObj,
-      status: response.status,
-    };
+  const result = await safePostJsonToRemote({
+    remoteOrigin,
+    allowedOrigins,
+    requiredPath,
+    jsonBody: JSON.stringify(body),
+    timeoutMs: 30_000,
+    maxRequestBytes: 1_000_000,
+    maxResponseBytes: 2_000_000,
+  });
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    throw new Error(`Trusted remote service returned HTTP ${result.statusCode}.`);
   }
-
-  throw new Error('Слишком много редиректов при загрузке URL');
+  const parsed: unknown = JSON.parse(result.body);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Trusted remote service returned an invalid JSON object.");
+  }
+  return parsed as Record<string, any>;
 }
 
 function storeSlopReport(report: SlopAnalysisReport) {
@@ -2374,7 +2338,7 @@ app.get('/api/sloptotal/stats', (_req, res) => {
   });
 });
 
-app.post('/api/sloptotal/analyze', async (req, res) => {
+app.post('/api/sloptotal/analyze', legacyAnalysisRateLimit, async (req, res) => {
   try {
     const {
       text = '',
@@ -2411,83 +2375,67 @@ app.post('/api/sloptotal/analyze', async (req, res) => {
 
     if (typeof remoteUrl === 'string' && remoteUrl.trim()) {
       const cleanRemote = remoteUrl.trim().replace(/\/+$/, '');
-      if (cleanRemote.startsWith('http://') || cleanRemote.startsWith('https://')) {
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 30_000);
-          try {
-            const remoteResp = await fetch(`${cleanRemote}/api/analyze`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: controller.signal,
-              body: JSON.stringify({
-                text: sourceType === 'text' ? textToAnalyze : undefined,
-                url: sourceType === 'url' ? sourceLabel : undefined,
-                fast: Boolean(fast),
-                engines: Array.isArray(selectedEngineKeys) && selectedEngineKeys.length > 0 ? selectedEngineKeys : undefined,
-              }),
-            });
-            if (remoteResp.ok) {
-              const remoteData: any = await remoteResp.json();
-              if (remoteData && typeof remoteData.overall_score === 'number') {
-                const report: SlopAnalysisReport = {
-                  id: remoteData.id || `remote-${Date.now().toString(36)}`,
-                  sourceType,
-                  source: sourceLabel || textToAnalyze.slice(0, 100),
-                  textExcerpt: remoteData.text_excerpt || textToAnalyze,
-                  wordCount: remoteData.word_count || textToAnalyze.split(/\s+/).length,
-                  inputChars: textToAnalyze.length,
-                  language: remoteData.language || 'en',
-                  languageSupport: remoteData.language_support || 'supported',
-                  overallScore: Number(remoteData.overall_score),
-                  humanScore: Number((100 - Number(remoteData.overall_score)).toFixed(1)),
-                  overallVerdict: remoteData.overall_verdict || 'Remote SlopTotal',
-                  verdictKey:
-                    remoteData.overall_score <= 30
-                      ? 'clean'
-                      : remoteData.overall_score <= 45
-                        ? 'low'
-                        : remoteData.overall_score <= 55
-                          ? 'suspicious'
-                          : remoteData.overall_score <= 80
-                            ? 'likely'
-                            : 'slop',
-                  confidence: remoteData.confidence || 'high',
-                  scoreRange: remoteData.score_range || [remoteData.overall_score, remoteData.overall_score],
-                  enginesFlagged: remoteData.engines_flagged || 0,
-                  enginesTotal: remoteData.engines_total || (remoteData.engine_results?.length || 0),
-                  selectedKeys: (remoteData.engine_results || []).map((r: any) => r.engine_name),
-                  matchedMarkers: [],
-                  engineResults: (remoteData.engine_results || []).map((r: any) => {
-                    const meta = SLOPTOTAL_ENGINES.find((m) => m.name === r.engine_name || m.key === r.engine_name);
-                    return {
-                      key: meta?.key || r.engine_name,
-                      engineName: r.engine_name,
-                      code: meta?.code || r.engine_name,
-                      engineType: r.engine_type || meta?.engineType || 'classifier',
-                      score: Number(r.score),
-                      verdict: r.verdict || 'clean',
-                      details: r.details || '',
-                      description: meta?.description || '',
-                      url: meta?.url,
-                      elapsedMs: 0,
-                    };
-                  }),
-                  notes: [...(remoteData.notes || []), `Выполнено через внешний сервер SlopTotal (${cleanRemote})`],
-                  createdAt: remoteData.created_at || new Date().toISOString(),
-                  elapsedMs: 0,
-                  mode: 'remote',
-                };
-                storeSlopReport(report);
-                return res.json(report);
-              }
-            }
-          } finally {
-            clearTimeout(timer);
-          }
-        } catch (remoteErr: any) {
-          console.warn('Remote SlopTotal fallback to embedded core:', remoteErr?.message);
+      try {
+        const remoteData = await postConfiguredRemoteJson(
+          cleanRemote,
+          'SLOPTOTAL_REMOTE_ALLOWED_ORIGINS',
+          '/api/analyze',
+          {
+            text: sourceType === 'text' ? textToAnalyze : undefined,
+            url: sourceType === 'url' ? sourceLabel : undefined,
+            fast: Boolean(fast),
+            engines: Array.isArray(selectedEngineKeys) && selectedEngineKeys.length > 0 ? selectedEngineKeys : undefined,
+          },
+        );
+        if (typeof remoteData.overall_score === 'number') {
+          const report: SlopAnalysisReport = {
+            id: remoteData.id || `remote-${Date.now().toString(36)}`,
+            sourceType,
+            source: sourceLabel || textToAnalyze.slice(0, 100),
+            textExcerpt: remoteData.text_excerpt || textToAnalyze,
+            wordCount: remoteData.word_count || textToAnalyze.split(/\\s+/).length,
+            inputChars: textToAnalyze.length,
+            language: remoteData.language || 'en',
+            languageSupport: remoteData.language_support || 'supported',
+            overallScore: Number(remoteData.overall_score),
+            humanScore: Number((100 - Number(remoteData.overall_score)).toFixed(1)),
+            overallVerdict: remoteData.overall_verdict || 'Remote SlopTotal',
+            verdictKey:
+              remoteData.overall_score <= 30 ? 'clean' :
+              remoteData.overall_score <= 45 ? 'low' :
+              remoteData.overall_score <= 55 ? 'suspicious' :
+              remoteData.overall_score <= 80 ? 'likely' : 'slop',
+            confidence: remoteData.confidence || 'high',
+            scoreRange: remoteData.score_range || [remoteData.overall_score, remoteData.overall_score],
+            enginesFlagged: remoteData.engines_flagged || 0,
+            enginesTotal: remoteData.engines_total || (Array.isArray(remoteData.engine_results) ? remoteData.engine_results.length : 0),
+            selectedKeys: (Array.isArray(remoteData.engine_results) ? remoteData.engine_results : []).map((r: any) => r.engine_name),
+            matchedMarkers: [],
+            engineResults: (Array.isArray(remoteData.engine_results) ? remoteData.engine_results : []).map((r: any) => {
+              const meta = SLOPTOTAL_ENGINES.find((m) => m.name === r.engine_name || m.key === r.engine_name);
+              return {
+                key: meta?.key || r.engine_name,
+                engineName: r.engine_name,
+                code: meta?.code || r.engine_name,
+                engineType: r.engine_type || meta?.engineType || 'classifier',
+                score: Number(r.score),
+                verdict: r.verdict || 'clean',
+                details: r.details || '',
+                description: meta?.description || '',
+                url: meta?.url,
+                elapsedMs: 0,
+              };
+            }),
+            notes: [...(Array.isArray(remoteData.notes) ? remoteData.notes : []), `Выполнено через доверенный внешний сервер SlopTotal (${cleanRemote})`],
+            createdAt: remoteData.created_at || new Date().toISOString(),
+            elapsedMs: 0,
+            mode: 'remote',
+          };
+          storeSlopReport(report);
+          return res.json(report);
         }
+      } catch (remoteErr: any) {
+        console.warn('Remote SlopTotal fallback to embedded core:', remoteErr?.message);
       }
     }
 
@@ -2708,7 +2656,7 @@ app.get('/api/mgt-eval/catalog', (_req, res) => {
   });
 });
 
-app.post('/api/mgt-eval/detect', async (req, res) => {
+app.post('/api/mgt-eval/detect', legacyAnalysisRateLimit, async (req, res) => {
   try {
     const {
       text = '',
@@ -2736,50 +2684,39 @@ app.post('/api/mgt-eval/detect', async (req, res) => {
 
     if (typeof remoteUrl === 'string' && remoteUrl.trim()) {
       const cleanRemote = remoteUrl.trim().replace(/\/+$/, '');
-      if (cleanRemote.startsWith('http://') || cleanRemote.startsWith('https://')) {
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 30_000);
-          try {
-            const remoteResp = await fetch(`${cleanRemote}/api/demo/predict`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: controller.signal,
-              body: JSON.stringify({
-                text: cleanText,
-                detector: validKeys?.[0] || 'binoculars',
-                detectors: validKeys,
-                threshold: thr,
-              }),
-            });
-            if (remoteResp.ok) {
-              const remoteData: any = await remoteResp.json();
-              const localFallback = runMgtEvalDetection(cleanText, {
-                detectorKeys: validKeys,
-                threshold: thr,
-                calibratorParams: activeCal,
-              });
-              const remoteProb =
-                typeof remoteData?.ai_probability === 'number'
-                  ? remoteData.ai_probability
-                  : typeof remoteData?.score === 'number'
-                    ? Math.max(0, Math.min(1, remoteData.score))
-                    : localFallback.overallAiProbability;
-              const mergedReport: MgtDetectReport = {
-                ...localFallback,
-                overallAiProbability: Number(remoteProb.toFixed(4)),
-                overallHumanProbability: Number((1 - remoteProb).toFixed(4)),
-                mode: 'remote',
-              };
-              mgtEvalStats.totalDetections += 1;
-              return res.json(mergedReport);
-            }
-          } finally {
-            clearTimeout(timer);
-          }
-        } catch (remoteErr: any) {
-          console.warn('Remote MGT-Eval fallback to local core:', remoteErr?.message);
-        }
+      try {
+        const remoteData = await postConfiguredRemoteJson(
+          cleanRemote,
+          'MGT_EVAL_REMOTE_ALLOWED_ORIGINS',
+          '/api/demo/predict',
+          {
+            text: cleanText,
+            detector: validKeys?.[0] || 'binoculars',
+            detectors: validKeys,
+            threshold: thr,
+          },
+        );
+        const localFallback = runMgtEvalDetection(cleanText, {
+          detectorKeys: validKeys,
+          threshold: thr,
+          calibratorParams: activeCal,
+        });
+        const remoteProb =
+          typeof remoteData.ai_probability === 'number'
+            ? remoteData.ai_probability
+            : typeof remoteData.score === 'number'
+              ? Math.max(0, Math.min(1, remoteData.score))
+              : localFallback.overallAiProbability;
+        const mergedReport: MgtDetectReport = {
+          ...localFallback,
+          overallAiProbability: Number(remoteProb.toFixed(4)),
+          overallHumanProbability: Number((1 - remoteProb).toFixed(4)),
+          mode: 'remote',
+        };
+        mgtEvalStats.totalDetections += 1;
+        return res.json(mergedReport);
+      } catch (remoteErr: any) {
+        console.warn('Remote MGT-Eval fallback to local core:', remoteErr?.message);
       }
     }
 
@@ -3589,7 +3526,7 @@ function analyzeTextMetrics(text: string) {
   };
 }
 
-app.post('/api/audit-detectors', async (req, res) => {
+app.post('/api/audit-detectors', legacyAnalysisRateLimit, async (req, res) => {
   try {
     const { text = '', detectorId, detectorIds } = req.body;
 
@@ -3652,7 +3589,7 @@ app.post('/api/audit-detectors', async (req, res) => {
 /* 6. DEEP AUDIT (СТЕНД ОДНОГО ДЕТЕКТОРА)                             */
 /* ------------------------------------------------------------------ */
 
-app.post('/api/detector/deep-audit', async (req, res) => {
+app.post('/api/detector/deep-audit', legacyAnalysisRateLimit, async (req, res) => {
   try {
     const { detectorId, text = '' } = req.body;
 

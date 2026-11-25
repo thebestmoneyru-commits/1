@@ -2884,15 +2884,18 @@ export default function App() {
       <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col lg:flex-row gap-6 items-start">
         {isTemplateSidebarOpen && (
           <PromptTemplateSidebar
+            isOpen={isTemplateSidebarOpen}
+            onToggleOpen={toggleTemplateSidebar}
             templates={allTemplates}
             activeTemplateId={activeTemplateId}
-            currentConfig={buildCurrentTemplateConfig()}
-            onApply={handleApplyPromptTemplate}
-            onSaveNew={handleSavePromptTemplate}
-            onUpdateExisting={handleUpdateCustomTemplate}
-            onDeleteCustom={handleDeleteCustomTemplate}
-            onDuplicate={handleDuplicatePromptTemplate}
-            onClose={toggleTemplateSidebar}
+            currentFlagsCount={Object.values(flags).filter(Boolean).length}
+            currentV2Intensity={v2StyleIntensity}
+            currentHumanizerIntensity={styleIntensity}
+            onSaveTemplate={handleSavePromptTemplate}
+            onApplyTemplate={handleApplyPromptTemplate}
+            onUpdateCustomTemplate={handleUpdateCustomTemplate}
+            onDeleteCustomTemplate={handleDeleteCustomTemplate}
+            onDuplicateTemplate={handleDuplicatePromptTemplate}
           />
         )}
 
@@ -3308,8 +3311,9 @@ export default function App() {
               {activeWorkbenchDetector && (
                 <DetectorWorkbench
                   detectorId={activeWorkbenchDetector}
-                  text={currentSourceText}
-                  onClose={() => setActiveWorkbenchDetector(null)}
+                  onSelectDetector={setActiveWorkbenchDetector}
+                  onBack={() => setActiveWorkbenchDetector(null)}
+                  currentContentText={currentSourceText}
                   onApplyToMainScore={(detId, patch) => {
                     setDetectorScores((prev) => ({
                       ...prev,
@@ -3745,8 +3749,9 @@ export default function App() {
               {activeWorkbenchDetector && (
                 <DetectorWorkbench
                   detectorId={activeWorkbenchDetector}
-                  text={inputTextAI}
-                  onClose={() => setActiveWorkbenchDetector(null)}
+                  onSelectDetector={setActiveWorkbenchDetector}
+                  onBack={() => setActiveWorkbenchDetector(null)}
+                  currentContentText={inputTextAI}
                   onApplyToMainScore={(detId, patch) => {
                     setDetectorScores((prev) => ({
                       ...prev,

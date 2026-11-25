@@ -1,9 +1,9 @@
-import { isPublicIpAddress } from "./safeRemoteFetch";
+import { isPublicIpAddress, safeGetPublicUrl } from "./safeRemoteFetch";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Safe remote fetch self-test failed: ${message}`);
 }
-export function runSafeRemoteFetchSelfTests(): { passed: number; names: string[] } {
+export async function runSafeRemoteFetchSelfTests(): Promise<{ passed: number; names: string[] }> {
   const names: string[] = [];
   const publicAddresses = [
     "8.8.8.8",
@@ -28,5 +28,16 @@ export function runSafeRemoteFetchSelfTests(): { passed: number; names: string[]
   assert(!isPublicIpAddress("not-an-ip") && !isPublicIpAddress("999.1.1.1"),
     "malformed IP literals are rejected");
   names.push("malformed IP rejection");
+
+  const loopbackBlocked = await safeGetPublicUrl("http://127.0.0.1/")
+    .then(() => false, () => true);
+  const localhostBlocked = await safeGetPublicUrl("http://localhost/")
+    .then(() => false, () => true);
+  const portBlocked = await safeGetPublicUrl("https://example.com:8443/")
+    .then(() => false, () => true);
+  assert(loopbackBlocked && localhostBlocked && portBlocked,
+    "public URL fetch rejects loopback, local hostnames and non-standard ports before connecting");
+  names.push("public URL fetch rejects local targets and unsafe ports");
+
   return { passed: names.length, names };
 }

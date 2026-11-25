@@ -42,6 +42,17 @@ interface DetectorWorkbenchProps {
   currentDnaResult?: string;
   currentContentText?: string;
   currentDonorText?: string;
+  onApplyToMainScore?: (
+    detectorId: string,
+    patch: Partial<{
+      humanScore: number;
+      aiScore: number;
+      rawMetric: string;
+      status: string;
+      verdictLabel: string;
+      riskLevel: "low" | "medium" | "high";
+    }>,
+  ) => void;
 }
 
 export interface WorkbenchExtendedMetric {
@@ -292,6 +303,7 @@ export function DetectorWorkbench({
   currentDnaResult = '',
   currentContentText = '',
   currentDonorText = '',
+  onApplyToMainScore,
 }: DetectorWorkbenchProps) {
   const detector = DETAILED_DETECTORS[detectorId] || DETAILED_DETECTORS.gltr;
 
@@ -417,6 +429,14 @@ export function DetectorWorkbench({
         };
 
         setAuditResult({ ...result, speedMs: totalMs });
+        onApplyToMainScore?.(detector.id, {
+          humanScore: result.humanProbability,
+          aiScore: result.aiProbability,
+          rawMetric: `${result.primaryMetricLabel}: ${result.primaryMetricValue}`,
+          status: result.thresholdVerdict === "passed" ? "Пройден" : "Требует внимания",
+          verdictLabel: result.verdictText,
+          riskLevel: result.humanProbability >= 80 ? "low" : result.humanProbability >= 50 ? "medium" : "high",
+        });
         setAuditElapsedMs(totalMs);
         setDiagnosticsLog(diag);
 

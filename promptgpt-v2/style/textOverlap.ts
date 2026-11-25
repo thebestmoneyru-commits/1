@@ -7,7 +7,7 @@ export function computeWordTrigramOverlap(sourceText: string, candidateText: str
       .match(/[\p{L}\p{N}-]+/gu) ?? [];
   const sourceWords = wordsOf(sourceText);
   const candidateWords = wordsOf(candidateText);
-  if (sourceWords.length < 12 || candidateWords.length < 12) return 0;
+  if (sourceWords.length < 3 || candidateWords.length < 3) return 0;
   const trigrams = (words: string[]) => {
     const set = new Set<string>();
     for (let i = 0; i <= words.length - 3; i++) {

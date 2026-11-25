@@ -388,6 +388,12 @@ export async function runStyleCritic(input: RunStyleCriticInput): Promise<StyleC
     });
   }
 
+  if (droppedIssueIds.length > 0) {
+    throw new Error(
+      `Style critic returned unverified issue evidence or spans: ${droppedIssueIds.join(", ")}.`,
+    );
+  }
+
   const actionable = issues.some((issue) => issue.severity === "blocking" || issue.severity === "warning");
   const passed =
     !actionable &&
