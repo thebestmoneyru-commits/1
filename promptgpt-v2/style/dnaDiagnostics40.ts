@@ -27,6 +27,10 @@ export interface DiagnosticParameter40 {
   score: number;
   diagnosis: string;
   codeHint: string;
+  /** Confidence in this measurement, from 0 (unavailable) to 1 (high). */
+  confidence: number;
+  /** Human-readable confidence band; prevents weak samples looking authoritative. */
+  reliability: "high" | "medium" | "low" | "unavailable";
 }
 
 export interface DnaCodeRecommendation {
@@ -45,6 +49,12 @@ export interface DnaDiagnostics40Report {
   overallHealthScore: number;
   topCodeRecommendations: DnaCodeRecommendation[];
   parameters: DiagnosticParameter40[];
+  profileQuality: {
+    donor: { status: StyleDNAProfile["status"]; confidence: number; words: number; sentences: number };
+    source: { status: StyleDNAProfile["status"]; confidence: number; words: number; sentences: number };
+    result: { status: StyleDNAProfile["status"]; confidence: number; words: number; sentences: number };
+    warnings: string[];
+  };
 }
 
 export interface DnaDiagnostics40Input {
@@ -267,9 +277,46 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
   const rCorpus = resultProfile.corpus;
 
   const parameters: DiagnosticParameter40[] = [];
-  const pushParam = (p: Omit<DiagnosticParameter40, "index" | "categoryLabel">) => {
+  const PROFILE_DEPENDENT_IDS = new Set([
+    "mean-sentence-words", "median-sentence-words", "sentence-length-variance", "burstiness-index",
+    "short-sentence-share", "long-very-long-share", "paragraph-density", "mean-word-length",
+    "comma-per-100", "dash-per-100", "semicolon-per-100", "colon-per-100",
+    "parentheses-and-comma-defect", "quotes-per-100", "expressive-punct-per-100", "irregularity-preservation",
+    "subordinate-share", "participle-share", "gerund-share", "parenthetical-share",
+    "donor-openers-adoption", "donor-connectors-adoption", "lexical-ttr",
+  ]);
+  const profileConfidence = Math.min(donorProfile.confidence, resultProfile.confidence);
+  const profileUnavailable = donorProfile.status === "insufficient" || resultProfile.status === "insufficient";
+  const profileWarnings = [
+    ...donorProfile.warnings.map((warning) => `Донор: ${warning}`),
+    ...sourceProfile.warnings.map((warning) => `Исходник: ${warning}`),
+    ...resultProfile.warnings.map((warning) => `Результат: ${warning}`),
+  ];
+  const textSampleConfidence = Math.max(0, Math.min(1,
+    Math.min(dCorpus.words, sCorpus.words, rCorpus.words) / 120,
+    Math.min(dCorpus.sentences, sCorpus.sentences, rCorpus.sentences) / 8,
+  ));
+  const pushParam = (p: Omit<DiagnosticParameter40, "index" | "categoryLabel" | "confidence" | "reliability"> & { confidence?: number }) => {
+    const isProfileDependent = PROFILE_DEPENDENT_IDS.has(p.id);
+    const confidence = Math.max(0, Math.min(1, p.confidence ?? (
+      isProfileDependent ? profileConfidence : p.category === "pipeline-health"
+        ? (p.status === "na" ? 0 : 0.95)
+        : textSampleConfidence
+    )));
+    const unavailable = isProfileDependent && profileUnavailable;
+    const status = unavailable ? "na" : p.status;
+    const score = unavailable ? 0 : p.score;
+    const diagnosis = unavailable
+      ? `Оценка не выставлена: недостаточно текста для надёжного сравнения Style DNA (донор: ${dCorpus.words} слов/${dCorpus.sentences} предложений; результат: ${rCorpus.words} слов/${rCorpus.sentences} предложений).`
+      : p.diagnosis;
+    const effectiveConfidence = unavailable ? 0 : confidence;
     parameters.push({
       ...p,
+      status,
+      score,
+      diagnosis,
+      confidence: effectiveConfidence,
+      reliability: effectiveConfidence >= 0.75 ? "high" : effectiveConfidence >= 0.45 ? "medium" : effectiveConfidence > 0 ? "low" : "unavailable",
       index: parameters.length + 1,
       categoryLabel: CATEGORY_LABELS[p.category],
     });
@@ -916,25 +963,38 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
   const propsTotal = sem?.mandatoryPropositionsTotal;
   const anchorsOk = sem?.requiredAnchorsFound;
   const anchorsTotal = sem?.requiredAnchorsTotal;
-  const hasSemStats = typeof propsOk === "number" && typeof propsTotal === "number";
-  const propRatio = hasSemStats && propsTotal! > 0 ? propsOk! / propsTotal! : hasSemStats ? 1 : legacy?.factsPreservedPct !== undefined ? legacy.factsPreservedPct / 100 : null;
+  const hasPropStats = typeof propsOk === "number" && typeof propsTotal === "number" && propsTotal > 0;
+  const hasAnchorStats = typeof anchorsOk === "number" && typeof anchorsTotal === "number" && anchorsTotal > 0;
+  const safePropsOk = hasPropStats ? Math.max(0, Math.min(propsTotal!, propsOk!)) : 0;
+  const safeAnchorsOk = hasAnchorStats ? Math.max(0, Math.min(anchorsTotal!, anchorsOk!)) : 0;
+  const semanticEvidenceTotal = (hasPropStats ? propsTotal! : 0) + (hasAnchorStats ? anchorsTotal! : 0);
+  const semanticEvidencePreserved = safePropsOk + safeAnchorsOk;
+  const hasSemStats = semanticEvidenceTotal > 0;
+  const propRatio = hasSemStats
+    ? semanticEvidencePreserved / semanticEvidenceTotal
+    : legacy?.factsPreservedPct !== undefined ? Math.max(0, Math.min(100, legacy.factsPreservedPct)) / 100 : null;
   const p36Score = propRatio === null ? 0 : clampScore(propRatio * 100);
+  const semanticHardFailure = sem?.passed === false;
   pushParam({
     id: "semantic-propositions-anchors",
     category: "pipeline-health",
     name: "Полнота пропозиций и якорей",
     donorValue: "—",
-    sourceValue: hasSemStats ? `${propsTotal} проп. / ${anchorsTotal ?? 0} якор.` : "—",
-    resultValue: hasSemStats ? `${propsOk}/${propsTotal} проп. · ${anchorsOk}/${anchorsTotal ?? 0} якор.` : legacy ? `${legacy.factsPreservedPct ?? 100}% (потерь: ${legacy.factsLostAfter ?? 0})` : "нет отчёта",
+    sourceValue: hasSemStats ? `${hasPropStats ? propsTotal : 0} проп. / ${hasAnchorStats ? anchorsTotal : 0} якор.` : "—",
+    resultValue: hasSemStats
+      ? `${safePropsOk}/${hasPropStats ? propsTotal : 0} проп. · ${safeAnchorsOk}/${hasAnchorStats ? anchorsTotal : 0} якор. (сохранено ${semanticEvidencePreserved}/${semanticEvidenceTotal})`
+      : legacy ? `${legacy.factsPreservedPct ?? 100}% (потерь: ${legacy.factsLostAfter ?? 0})` : "нет отчёта",
     targetRule: "100% обязательных пропозиций и якорей",
-    status: propRatio === null ? "na" : sem?.passed === false || p36Score < 100 ? (p36Score >= 85 ? "warn" : "fail") : "ok",
-    score: p36Score,
+    status: propRatio === null ? "na" : semanticHardFailure ? "fail" : p36Score === 100 ? "ok" : p36Score >= 85 ? "warn" : "fail",
+    score: semanticHardFailure ? Math.min(p36Score, 49) : p36Score,
     diagnosis:
       propRatio === null
         ? "Семантическая проверка не выполнялась."
-        : p36Score >= 100
-          ? "Все утверждения и цифровые/именные якоря сохранены."
-          : "Часть утверждений или якорей не подтверждена верификатором.",
+        : semanticHardFailure
+          ? "Семантический верификатор отклонил результат: даже при высокой доле совпадений проверка целиком не пройдена."
+          : p36Score >= 100
+            ? "Все проверенные обязательные утверждения и якоря сохранены."
+            : "Часть обязательных утверждений или якорей не подтверждена верификатором.",
     codeHint: "promptgpt-v2/semantic/semanticPreservation.ts и promptgpt-v2/application/routerAdapters.ts (assessCombined)",
   });
 
@@ -1035,9 +1095,10 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
   const failCount = parameters.filter((p) => p.status === "fail").length;
   const naCount = parameters.filter((p) => p.status === "na").length;
 
-  const scored = parameters.filter((p) => p.status !== "na");
-  const overallHealthScore = scored.length
-    ? clampScore(scored.reduce((sum, p) => sum + p.score, 0) / scored.length)
+  const scored = parameters.filter((p) => p.status !== "na" && p.confidence > 0);
+  const confidenceWeight = scored.reduce((sum, p) => sum + p.confidence, 0);
+  const overallHealthScore = confidenceWeight > 0
+    ? clampScore(scored.reduce((sum, p) => sum + p.score * p.confidence, 0) / confidenceWeight)
     : 0;
 
   const recMap = new Map<string, { count: number; indices: number[]; names: string[] }>();
@@ -1069,5 +1130,11 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
     overallHealthScore,
     topCodeRecommendations,
     parameters,
+    profileQuality: {
+      donor: { status: donorProfile.status, confidence: donorProfile.confidence, words: dCorpus.words, sentences: dCorpus.sentences },
+      source: { status: sourceProfile.status, confidence: sourceProfile.confidence, words: sCorpus.words, sentences: sCorpus.sentences },
+      result: { status: resultProfile.status, confidence: resultProfile.confidence, words: rCorpus.words, sentences: rCorpus.sentences },
+      warnings: profileWarnings,
+    },
   };
 }
