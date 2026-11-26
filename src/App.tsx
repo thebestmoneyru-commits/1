@@ -1526,6 +1526,24 @@ export default function App() {
       return next;
     });
   };
+  const [stableMode, setStableMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('promptgpt_stable_mode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const toggleStableMode = () => {
+    setStableMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('promptgpt_stable_mode', String(next));
+      } catch {
+        /* ignore storage error */
+      }
+      return next;
+    });
+  };
   const [v2StyleIntensity, setV2StyleIntensity] = useState<1 | 2 | 3 | 4 | 5>(() => {
     try {
       const saved = Number(localStorage.getItem('promptgpt_v2_style_intensity'));
@@ -2291,6 +2309,7 @@ export default function App() {
           styleIntensity: v2StyleIntensity,
           customInstructions: v2CustomInstructions,
           unfilteredMode,
+          stableMode,
         },
         3,
         headers
@@ -3020,6 +3039,20 @@ export default function App() {
                     title="Включает режим без смягчений и цензуры для генерации и анализа"
                   >
                     {unfilteredMode ? 'Без фильтрации: ВКЛ' : 'Без фильтрации: ВЫКЛ'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={toggleStableMode}
+                    data-testid="stable-mode-toggle"
+                    aria-pressed={stableMode}
+                    className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold transition cursor-pointer ${
+                      stableMode
+                        ? 'bg-amber-950/90 text-amber-200 border-amber-500/80'
+                        : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-slate-200'
+                    }`}
+                    title="Одним нажатием возвращает прежний вариант смыслового извлечения, сохранённый в резервной версии до последнего изменения."
+                  >
+                    {stableMode ? 'Резервный режим: ВКЛ' : 'Резервный режим: ВЫКЛ'}
                   </button>
                 </div>
                 <div className="text-xs font-mono text-cyan-300" data-testid="v2-status-label">
