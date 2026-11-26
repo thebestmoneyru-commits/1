@@ -109,16 +109,16 @@ export function verifyRepairedCandidate(
   const donorQuirks = input.donorBaseline.profile.features.filter(
     (f) => (f.id === "syntax.punctuation-quirks" || f.id === "lexical.adjacent-repeat" || f.id === "lexical.nearby-repeat") && f.observations > 0,
   );
+  const passed = after.disposition === "accepted" &&
+    after.semanticReport.passed &&
+    (styleDelta === null || styleDelta >= -options.allowedStyleRegression);
+
   if (donorQuirks.length > 0 && passed) {
     warnings.push("Учтены авторские шероховатости/повторы донора без принудительной нормализации в сторону школьной нормы.");
   }
   if (styleDelta === null) {
     warnings.push("Сравнение стилевой оценки до и после исправления неполно: один из профилей не дал надёжного числового результата.");
   }
-
-  const passed = after.disposition === "accepted" &&
-    after.semanticReport.passed &&
-    (styleDelta === null || styleDelta >= -options.allowedStyleRegression);
 
   return {
     passed,

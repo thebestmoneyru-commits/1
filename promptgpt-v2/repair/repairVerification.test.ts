@@ -37,6 +37,35 @@ export function runRepairVerificationSelfTests(): { passed: number; names: strin
   assert(report.styleDelta === 0, "unchanged text has no artificial style delta");
   names.push("post-repair semantic and style recheck");
 
+  const donorProfileWithQuirk = {
+    ...donorProfile,
+    features: donorProfile.features.map((feature) =>
+      feature.id === "lexical.adjacent-repeat"
+        ? { ...feature, observations: Math.max(1, feature.observations) }
+        : feature,
+    ),
+  };
+  const quirkBaselineResult = createDonorStyleBaseline(donorProfileWithQuirk);
+  assert(quirkBaselineResult.ok && quirkBaselineResult.baseline, "donor baseline with an observed quirk must be valid");
+  const quirkReport = verifyRepairedCandidate({
+    candidateId: "repair-donor-quirk",
+    sourceText,
+    beforeText: text,
+    repairedText: text,
+    inventory: buildFactInventory(sourceText),
+    beforeAssessments: [],
+    repairedAssessments: [],
+    donorBaseline: quirkBaselineResult.baseline,
+    beforeProfile: profile,
+    repairedProfile: profile,
+  });
+  assert(
+    quirkReport.passed &&
+      quirkReport.warnings.some((warning) => warning.includes("Учтены авторские шероховатости")),
+    "donor-quirk warning must be evaluated after the passed result is initialized",
+  );
+  names.push("donor-quirk verification avoids temporal-dead-zone failure");
+
   const wrongProfile = analyzeStyleDNA(text + " Другое предложение.", {
     minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
   });
