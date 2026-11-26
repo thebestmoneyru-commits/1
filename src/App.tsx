@@ -2920,6 +2920,13 @@ export default function App() {
               <p className="text-xs text-slate-400">
                 Стиль ДНК • {DETECTORS_LIST.length} детекторов • Черновики и анализ
               </p>
+              <div
+                data-testid="branch-version-label"
+                className="mt-1 inline-flex max-w-full items-center rounded-md border border-emerald-500/50 bg-emerald-950/70 px-2 py-1 text-[11px] font-semibold text-emerald-300"
+                title="Открыта рабочая экспериментальная ветка"
+              >
+                feature/promptgpt-one-click-stable-mode-2026-11-26
+              </div>
             </div>
           </div>
 
