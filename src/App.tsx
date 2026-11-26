@@ -2020,6 +2020,73 @@ export default function App() {
     throw new Error('Не удалось связаться с сервером. Пожалуйста, обновите страницу.');
   };
 
+  const safePostJob = async (
+    baseUrl: string,
+    body: any,
+    extraHeaders: Record<string, string> = {}
+  ): Promise<any> => {
+    const normalizedBase = baseUrl.replace(/\\/$/, '');
+    const accepted = await safePost(`${normalizedBase}/jobs`, body, 3, extraHeaders);
+    if (!accepted?.jobId || typeof accepted.jobId !== 'string') {
+      throw new Error('Сервер не вернул номер фонового задания PROMPTGPT v2.');
+    }
+
+    const deadline = performance.now() + 11 * 60 * 1000;
+    let consecutivePollErrors = 0;
+
+    while (performance.now() < deadline) {
+      await sleep(1500);
+      let response: Response;
+      try {
+        response = await fetch(`${normalizedBase}/jobs/${encodeURIComponent(accepted.jobId)}`, {
+          method: 'GET',
+          headers: extraHeaders,
+        });
+      } catch (err) {
+        consecutivePollErrors += 1;
+        if (consecutivePollErrors >= 5) {
+          throw new Error('Потеряна связь с сервером при проверке фонового задания. Само задание могло продолжить работу.');
+        }
+        continue;
+      }
+
+      const responseText = await response.text();
+      let data: any;
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        if ((response.status === 502 || response.status === 503) && consecutivePollErrors < 4) {
+          consecutivePollErrors += 1;
+          continue;
+        }
+        throw new Error(data?.error?.message || data?.message || `Не удалось проверить задание PROMPTGPT v2 (${response.status}).`);
+      }
+
+      consecutivePollErrors = 0;
+      if (data.status === 'completed') {
+        if (data.result && typeof data.result === 'object') return data.result;
+        throw new Error('Фоновое задание завершилось без результата.');
+      }
+      if (data.status === 'failed') {
+        throw new Error(data?.error?.message || 'Фоновое задание PROMPTGPT v2 завершилось с ошибкой.');
+      }
+
+      const stageLabel = data.stage === 'preparing'
+        ? 'подготовка смысловой карты'
+        : data.stage === 'executing'
+          ? 'перенос стиля и проверка'
+          : 'обработка';
+      const elapsedSeconds = Math.round((performance.now() - (deadline - 11 * 60 * 1000)) / 1000);
+      setV2Status(`PROMPTGPT v2: ${stageLabel} · ${elapsedSeconds} сек.`);
+    }
+
+    throw new Error('Превышено безопасное время ожидания фонового задания (11 минут). Проверьте журнал диагностики.');
+  };
+
   const applyScores = (items: any[]) => {
     setDetectorScores((prev) => {
       const updated = { ...prev };
@@ -2300,7 +2367,7 @@ export default function App() {
       }
 
       // Keep the client contract aligned with the authenticated PROMPTGPT v2 router.
-      const data = await safePost(
+      const data = await safePostJob(
         '/api/v2/style-transfer',
         {
           donorText,
@@ -2311,7 +2378,6 @@ export default function App() {
           unfilteredMode,
           stableMode,
         },
-        3,
         headers
       );
 
