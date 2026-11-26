@@ -61,6 +61,43 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   assert(prompt !== secondPrompt, "candidate indices produce deliberately distinct stylistic approaches");
   names.push("prompt content, semantic constraints, donor spelling preservation and candidate diversity");
 
+  const nativeConnectorDonorText = donorWithIrregularity + "\nТем не менее, данное положение сохраняет значение.";
+  const nativeConnectorProfile = analyzeStyleDNA(nativeConnectorDonorText, {
+    minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+  });
+  const nativeConnectorBaseline = createDonorStyleBaseline(nativeConnectorProfile, nativeConnectorDonorText);
+  assert(nativeConnectorBaseline.ok && !!nativeConnectorBaseline.baseline, "native donor connector baseline is available");
+  const nativeConnectorSource = "Тем не менее, автор описал событие.";
+  const nativeConnectorPrompt = buildCandidatePrompt({
+    sourceText: nativeConnectorSource,
+    inventory: buildFactInventory(nativeConnectorSource),
+    donorBaseline: nativeConnectorBaseline.baseline!,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 8,
+  });
+  assert(
+    !nativeConnectorPrompt.includes("ЧУЖДЫЕ ДОНОРУ СВЯЗКИ ИСХОДНИКА: «тем не менее»"),
+    "a connector present in both source and donor must not be listed as foreign",
+  );
+  names.push("donor-native connectors are not forbidden by source-overlap detection");
+
+  const quotedSource = "Автор связывает это с понятием «лучшей жизни».";
+  const quotedPrompt = buildCandidatePrompt({
+    sourceText: quotedSource,
+    inventory: buildFactInventory(quotedSource),
+    donorBaseline: baseline,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 8,
+  });
+  assert(
+    quotedPrompt.includes("Обязательные цитатные якоря") &&
+    !quotedPrompt.includes("НЕ бери в кавычки обычные словосочетания вроде «лучшей жизни»"),
+    "mandatory quoted anchors must not be contradicted by generic punctuation guidance",
+  );
+  names.push("quoted semantic anchors take precedence over generic quotation-frequency guidance");
+
   let active = 0;
   let maxActive = 0;
   const result = await generateCandidates({
@@ -166,7 +203,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     planPrompt.includes("КОНТРОЛЬ РЕЗУЛЬТАТА") &&
     planPrompt.includes("ГЛУБОКАЯ ПЕРЕСТРОЙКА БЕЗ МЕХАНИЧЕСКОГО АНТИ-КОПИРОВАНИЯ") &&
     planPrompt.includes("ЗАПРЕТ ИНВЕРСИИ ПРИЧИНЫ И СЛЕДСТВИЯ") &&
-    planPrompt.includes("Квоты пунктуации") &&
+    planPrompt.includes("ПУНКТУАЦИОННЫЕ ОРИЕНТИРЫ, НЕ МЕХАНИЧЕСКИЕ КВОТЫ") &&
     planPrompt.includes("ДРОБИ длинные фразы") &&
     planPrompt.includes("не навязывай фиксированное число абзацев") &&
     planPrompt.includes("не исправляй весь текст до нейтральной нормы"),
