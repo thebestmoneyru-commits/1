@@ -224,18 +224,21 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(inventory.valid && inventory.inventory, "semantic restoration fixture inventory must be valid");
 
     let generationCalls = 0;
+    let restorationPrompt = "";
+    const restoredCandidateText = "Священник прибыл к людям именно в этот день.";
     const service = new StyleTransferService({
       candidateGenerator: {
         async generate({ prompt }) {
           generationCalls++;
-          return prompt.includes("ЗАДАЧА: восстанови") ? sourceText : candidateText;
+          if (prompt.includes("ЗАДАЧА: восстанови")) { restorationPrompt = prompt; return restoredCandidateText; }
+          return candidateText;
         },
       },
       critic: { async review() { throw new Error("critic must not run for a restored accepted candidate"); } },
       repair: { async repair() { throw new Error("style repair must not run for a restored accepted candidate"); } },
       semanticVerifier: {
         async assess({ candidateText: checkedText }) {
-          const preserved = checkedText === sourceText;
+          const preserved = checkedText === restoredCandidateText;
           return [{
             propositionId: "p-time-qualification",
             status: preserved ? "preserved" as const : "changed" as const,
@@ -254,7 +257,8 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     });
     const result = await service.execute({ ...request, inventory: inventory.inventory });
     assert(result.status === "accepted", "candidate should be accepted after verified semantic restoration");
-    assert(result.selectedText === sourceText, "restoration should recover the exact missing source detail");
+    assert(result.selectedText === restoredCandidateText, "restoration should recover the missing detail in fresh candidate wording");
+    assert(!restorationPrompt.includes("IMMUTABLE ORIGINAL SOURCE JSON") && !restorationPrompt.includes(JSON.stringify(sourceText)), "restoration prompt must not expose the complete source text for reconstruction");
     assert(generationCalls === 2, "semantic restoration should make exactly one additional generation call");
     assert(result.candidates[0]?.initial.semanticReport.passed === false,
       "initial evaluation must retain the original semantic failure");
