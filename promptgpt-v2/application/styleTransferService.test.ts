@@ -224,18 +224,21 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     assert(inventory.valid && inventory.inventory, "semantic restoration fixture inventory must be valid");
 
     let generationCalls = 0;
+    let restorationPrompt = "";
+    const restoredCandidateText = candidateText.replaceAll("священник пришёл к людям и совершил молитву", "священник пришёл к людям именно в этот день и совершил молитву");
     const service = new StyleTransferService({
       candidateGenerator: {
         async generate({ prompt }) {
           generationCalls++;
-          return prompt.includes("ЗАДАЧА: восстанови") ? sourceText : candidateText;
+          if (prompt.includes("ЗАДАЧА: восстанови")) { restorationPrompt = prompt; return restoredCandidateText; }
+          return candidateText;
         },
       },
       critic: { async review() { throw new Error("critic must not run for a restored accepted candidate"); } },
       repair: { async repair() { throw new Error("style repair must not run for a restored accepted candidate"); } },
       semanticVerifier: {
         async assess({ candidateText: checkedText }) {
-          const preserved = checkedText === sourceText;
+          const preserved = checkedText === restoredCandidateText;
           return [{
             propositionId: "p-time-qualification",
             status: preserved ? "preserved" as const : "changed" as const,
@@ -254,7 +257,8 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
     });
     const result = await service.execute({ ...request, inventory: inventory.inventory });
     assert(result.status === "accepted", "candidate should be accepted after verified semantic restoration");
-    assert(result.selectedText === sourceText, "restoration should recover the exact missing source detail");
+    assert(result.selectedText === restoredCandidateText, "restoration should recover the missing detail in fresh candidate wording");
+    assert(!restorationPrompt.includes("IMMUTABLE ORIGINAL SOURCE JSON") && !restorationPrompt.includes(JSON.stringify(sourceText)), "restoration prompt must not expose the complete source text for reconstruction");
     assert(generationCalls === 2, "semantic restoration should make exactly one additional generation call");
     assert(result.candidates[0]?.initial.semanticReport.passed === false,
       "initial evaluation must retain the original semantic failure");
@@ -878,6 +882,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       mandatory: true,
     }]);
     assert(built.valid && built.inventory, "restoration retry fixture inventory must be valid");
+    const restoredRetryText = sourceText.replaceAll("В этот день священник пришёл к людям", "Священник пришёл к людям именно в этот день");
     let restorationCalls = 0;
     const service = new StyleTransferService({
       candidateGenerator: {
@@ -885,7 +890,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
           if (prompt.startsWith("ЗАДАЧА: восстанови в преобразованном тексте")) {
             restorationCalls++;
             if (restorationCalls === 1) throw new Error("503 UNAVAILABLE");
-            return sourceText;
+            return restoredRetryText;
           }
           return candidateText;
         },
@@ -894,7 +899,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       repair: { async repair() { throw new Error("repair must not run"); } },
       semanticVerifier: {
         async assess({ candidateText: checkedText }) {
-          const preserved = checkedText === sourceText;
+          const preserved = checkedText === restoredRetryText;
           return [{
             propositionId: "p-restore-retry",
             status: preserved ? "preserved" as const : "changed" as const,
@@ -917,7 +922,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
       generation: { ...request.generation, candidateCount: 1, adaptive: true },
     });
     assert(
-      restorationCalls === 2 && result.status === "accepted" && result.selectedText === sourceText,
+      restorationCalls === 2 && result.status === "accepted" && result.selectedText === restoredRetryText,
       "semantic restoration must retry once after transient 503 UNAVAILABLE",
     );
     names.push("semantic restoration retries once on transient 503 error");

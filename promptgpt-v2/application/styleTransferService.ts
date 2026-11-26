@@ -821,9 +821,8 @@ export class StyleTransferService {
                   const restoredOverlap = computeWordTrigramOverlap(request.sourceText, restoredText);
                   const isSourceRegression =
                     request.unfilteredMode !== true &&
-                    preRestorationOverlap < 0.45 &&
-                    restoredOverlap >= 0.42 &&
-                    restoredOverlap > preRestorationOverlap + 0.18;
+                    restoredOverlap >= 0.68 &&
+                    restoredOverlap > preRestorationOverlap + 0.05;
                   if (isSourceRegression) {
                     restorationWarnings.push("Восстановление содержания откатилось к синтаксису исходника; откат отклонён.");
                     break;

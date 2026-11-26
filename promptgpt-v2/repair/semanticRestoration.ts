@@ -3,6 +3,12 @@ import type { LogicalRelationAssessment } from "../semantic/logicalRelationPrese
 import type { DonorStyleBaseline } from "../style/styleTypes";
 import { countWords } from "../style/tokenizer";
 
+function semanticTokens(value: string | undefined): string[] {
+  if (!value) return [];
+  return (value.toLocaleLowerCase("ru-RU").match(/[\p{L}\p{N}-]+/gu) ?? []).sort((a, b) => a.length - b.length || a.localeCompare(b, "ru-RU"));
+}
+
+
 /**
  * Builds a single bounded restoration pass when independent verification finds
  * concrete semantic omissions. The current candidate is the style carrier;
@@ -17,23 +23,15 @@ export function buildSemanticRestorationPrompt(input: {
   semanticReport: SemanticReport;
   donorBaseline?: DonorStyleBaseline;
 }): string {
-  const failedPropositions = input.propositionAssessments
-    .filter((item) => item.status !== "preserved")
-    .map((item) => ({
-      propositionId: item.propositionId,
-      status: item.status,
-      outputEvidence: item.outputEvidence,
-      verifierFinding: item.rationale,
-      sourceProposition: input.inventory.propositions.find((p) => p.id === item.propositionId),
-    }));
-  const failedRelations = input.relationAssessments
-    .filter((item) => item.status !== "preserved")
-    .map((item) => ({
-      relationKey: item.relationKey,
-      status: item.status,
-      outputEvidence: item.outputEvidence,
-      verifierFinding: item.rationale,
-    }));
+  const failedPropositions = input.propositionAssessments.filter((item) => item.status !== "preserved").map((item) => {
+    const proposition = input.inventory.propositions.find((p) => p.id === item.propositionId);
+    return { propositionId: item.propositionId, status: item.status, outputEvidence: item.outputEvidence, verifierFinding: item.rationale,
+      semanticAtoms: proposition ? { subjectTokens: semanticTokens(proposition.subject), predicateTokens: semanticTokens(proposition.predicate), objectTokens: semanticTokens(proposition.object), polarity: proposition.polarity,
+        modality: proposition.modality ? { kind: proposition.modality.kind, valueTokens: semanticTokens(proposition.modality.value), scopeTokens: semanticTokens(proposition.modality.scope) } : undefined,
+        qualifications: proposition.qualifications.map((item) => ({ kind: item.kind, valueTokens: semanticTokens(item.value) })),
+        relations: proposition.relations.map(({ kind, from, to }) => ({ kind, from, to })), mandatory: proposition.mandatory } : undefined };
+  });
+  const failedRelations = input.relationAssessments.filter((item) => item.status !== "preserved").map((item) => ({ relationKey: item.relationKey, status: item.status, outputEvidence: item.outputEvidence, verifierFinding: item.rationale }));
   const missingAnchors = input.semanticReport.anchorChecks
     .filter((item) => item.status === "missing")
     .map((item) => {
@@ -73,19 +71,19 @@ export function buildSemanticRestorationPrompt(input: {
   return [
     "ЗАДАЧА: восстанови в преобразованном тексте все утраченные элементы исходного содержания.",
     "Это ТОЧЕЧНОЕ смысловое дополнение/уточнение ТЕКУЩЕГО КАНДИДАТА, а не возврат к тексту исходника! Сохраняй структуру, ритм, разбивку на короткие/длинные фразы, тире, скобки и авторские зачины CURRENT CANDIDATE JSON — меняй или дополняй ТОЛЬКО те места, на которые указывают failedPropositions, failedRelations и missingAnchors.",
-    "ЗАПРЕТ ДОСЛОВНОГО КОПИРОВАНИЯ ИСХОДНИКА: КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО вставлять целые предложения или абзацы дословно из IMMUTABLE ORIGINAL SOURCE JSON! Если восстановление возвращает казённый синтаксис исходника — правка испорчена. Встраивай недостающий смысл исключительно почерком и синтаксисом кандидата/донора.",
+    "ЗАПРЕТ ДОСЛОВНОГО КОПИРОВАНИЯ ИСХОДНИКА: КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО вставлять целые предложения или абзацы дословно из первоначального исходного текста! Если восстановление возвращает казённый синтаксис исходника — правка испорчена. Встраивай недостающий смысл исключительно почерком и синтаксисом кандидата/донора.",
     "Сохрани удачные синтаксические и ритмические решения кандидата и его ДНК донора, меняя только то, что необходимо для восстановления полного смысла. Не исправляй уже перенесённые из донора орфографические отклонения, опечатки, грамматические несогласования и разрежённую или нестандартную пунктуацию (например, отсутствие запятых) к нейтральной литературной норме — удерживай манеру кандидата без смущения и нормализации. В то же время исправь случайные бессмысленные подмены слов или порчу ключевых терминов (если таковые попали в черновик), вернув точный смысл исходника.",
     "Обязательно восстанови каждое пропущенное или изменённое положение, включая определения, наречия степени и частотности, усилители, ограничения, условия, временные уточнения, оговорки, сравнения, причинные пояснения и смысловые оттенки.",
     "ЗАПРЕТ ИНВЕРСИИ ЛОГИЧЕСКИХ СВЯЗЕЙ: если в failedRelations указана перевёрнутая или ослабленная связь (для cause: from — причина, to — следствие; для effect: from — следствие, to — причина), строго восстанови исходное направление отношения между теми же положениями в синтаксисе донора! Не подменяй причину следствием.",
     "НЕ ТРЕБУЙ ДОСЛОВНОГО ПОВТОРА СОЮЗА: проверяй сохранение типа, направления и силы отношения между теми же пропозициями. Семантически равнозначная конструкция в манере донора допустима, только если связь остаётся однозначной; вводное слово или простое соседство предложений не заменяет причинную, целевую, уступительную или временную связь.",
     "Не считай сохранение общего тезиса достаточным, если из него исчезло хотя бы одно существенное уточнение. Не заменяй конкретное положение более общим выражением.",
     "Сохрани все исходные числа, даты, имена, термины, цитаты, отрицания, модальность, атрибуцию и логические отношения. Не добавляй сведений, которых нет в оригинале.",
-    "Сверь каждую пропозицию и каждую связь из SOURCE INVENTORY с итоговым текстом. Семантически равнозначная формулировка в стиле донора допустима, но все исходные смысловые компоненты должны присутствовать.",
+    "Сверь только отмеченные нарушения: семантические атомы даны без исходного порядка слов. Не пересобирай весь текст по смысловой карте и не переписывай сохранённые положения.",
     "Не копируй факты, лексику или предметное содержание из донорских текстов. Не добавляй объяснений от себя.",
     ...(donorStyleNote ? [donorStyleNote] : []),
     ...(donorExcerpt ? ["ОБРАЗЕЦ СИНТАКСИСА ДОНОРА (удерживай именно такой ритм и форму, НЕ копируй факты):", JSON.stringify(donorExcerpt)] : []),
-    "Ориентир по объёму — не менее 90% числа слов исходника, если только точное сохранение содержания не требует иного. Текущий кандидат короче исходника — проверь, не вызвано ли это пропусками.",
-    "КРИТИЧЕСКОЕ ПРАВИЛО БАЗОВОГО ТЕКСТА: твоя основа — CURRENT CANDIDATE JSON! Начни редактирование именно с CURRENT CANDIDATE JSON и точечно дополни ТОЛЬКО те места, где потеряны пункты из VERIFICATION FINDINGS JSON. Все уже сохранённые предложения CURRENT CANDIDATE JSON ЗАПРЕЩЕНО откатывать обратно к формулировкам из IMMUTABLE ORIGINAL SOURCE JSON!",
+    "Ориентир по объёму — сохраняй естественный объём текущего кандидата; не наращивай текст ради механического достижения процента от исходника.",
+    "КРИТИЧЕСКОЕ ПРАВИЛО: единственная текстовая основа — CURRENT CANDIDATE JSON. Сохрани все уже удачно сформулированные предложения, композицию и донорскую манеру. Исправляй только конкретные отмеченные потери; запрещено восстанавливать исходный порядок слов, фразы или композицию.",
     "Верни только полный исправленный текст, сохранив абзацы. Не возвращай JSON, отчёт, комментарии или список изменений.",
     "",
     "CURRENT CANDIDATE JSON:",
@@ -99,19 +97,10 @@ export function buildSemanticRestorationPrompt(input: {
       semanticIssues: input.semanticReport.issues,
     }, null, 2),
     "",
-    "SOURCE INVENTORY JSON:",
-    JSON.stringify({
-      anchors: input.inventory.anchors,
-      propositions: input.inventory.propositions,
-    }, null, 2),
-    "",
-    "SOURCE WORD COUNT:",
+    "SOURCE WORD COUNT (REFERENCE ONLY; DO NOT RECONSTRUCT SOURCE):",
     String(sourceWords),
     "",
     "CURRENT CANDIDATE WORD COUNT:",
     String(candidateWords),
-    "",
-    "IMMUTABLE ORIGINAL SOURCE JSON:",
-    JSON.stringify(input.sourceText),
   ].join("\n");
 }
