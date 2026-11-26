@@ -39,22 +39,11 @@ export function runRepairVerificationSelfTests(): { passed: number; names: strin
 
   const donorProfileWithQuirk = {
     ...donorProfile,
-    features: [
-      ...donorProfile.features,
-      {
-        id: "lexical.adjacent-repeat",
-        family: "lexical" as const,
-        label: "Соседний повтор",
-        count: 1,
-        denominator: 1,
-        rate: 1,
-        unit: "share" as const,
-        confidence: 1,
-        observations: 1,
-        evidence: [],
-        interpretation: "Подтверждённый повтор в донорском корпусе.",
-      },
-    ],
+    features: donorProfile.features.map((feature) =>
+      feature.id === "lexical.adjacent-repeat"
+        ? { ...feature, observations: Math.max(1, feature.observations) }
+        : feature,
+    ),
   };
   const quirkBaselineResult = createDonorStyleBaseline(donorProfileWithQuirk, corpus());
   assert(quirkBaselineResult.ok && quirkBaselineResult.baseline, "donor baseline with an observed quirk must be valid");
