@@ -22,6 +22,7 @@ export interface StyleTransferPreparationInput {
   sourceText: string;
   donorText: string;
   unfilteredMode?: boolean;
+  stableMode?: boolean;
   signal: AbortSignal;
 }
 
@@ -55,6 +56,7 @@ interface TransferBody {
   sourceText?: unknown;
   donorText?: unknown;
   unfilteredMode?: unknown;
+  stableMode?: unknown;
   styleIntensity?: unknown;
   customInstructions?: unknown;
 }
@@ -71,6 +73,7 @@ function readBody(value: unknown):
       sourceText: string;
       donorText: string;
       unfilteredMode: boolean;
+      stableMode: boolean;
       styleIntensity?: 1 | 2 | 3 | 4 | 5;
       customInstructions?: string;
     };
@@ -88,6 +91,7 @@ function readBody(value: unknown):
     ? body.requestId.trim().slice(0, 128)
     : `style-transfer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const unfilteredMode = body.unfilteredMode === true;
+  const stableMode = body.stableMode === true;
   const rawIntensity = typeof body.styleIntensity === "number" && Number.isFinite(body.styleIntensity)
     ? Math.max(1, Math.min(5, Math.round(body.styleIntensity))) as 1 | 2 | 3 | 4 | 5
     : undefined;
@@ -101,6 +105,7 @@ function readBody(value: unknown):
       sourceText: body.sourceText,
       donorText: body.donorText,
       unfilteredMode,
+      stableMode,
       ...(rawIntensity !== undefined ? { styleIntensity: rawIntensity } : {}),
       ...(customInstructions !== undefined ? { customInstructions } : {}),
     },
