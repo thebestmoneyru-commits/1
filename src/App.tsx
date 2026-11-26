@@ -2050,7 +2050,16 @@ export default function App() {
         continue;
       }
 
-      const responseText = await response.text();
+      let responseText: string;
+      try {
+        responseText = await response.text();
+      } catch {
+        consecutivePollErrors += 1;
+        if (consecutivePollErrors >= 5) {
+          throw new Error('Потеряна связь с сервером при чтении статуса фонового задания. Само задание могло продолжить работу.');
+        }
+        continue;
+      }
       let data: any;
       try {
         data = responseText ? JSON.parse(responseText) : {};
@@ -2232,10 +2241,7 @@ export default function App() {
     setDnaElapsedMs(null);
     setDnaDiagnostics(null);
 
-    const activeFlagNames = [
-      ...MODULES.filter((m) => flags[m.key]).map((m) => m.title),
-      stableMode ? 'Резервный режим смыслового извлечения (до PR49)' : 'Текущий режим смыслового извлечения (PR49)',
-    ];
+    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
     const composedPromptSummary = [
       `Режим: Style DNA Transfer V5.0 | Модель: ${selectedModel}`,
       `Модули (${activeFlagNames.length}): ${activeFlagNames.join('; ')}`,
@@ -2360,7 +2366,10 @@ export default function App() {
     setError(null);
     setV2Status('Запуск PromptGPT v2...');
 
-    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
+    const activeFlagNames = [
+      ...MODULES.filter((m) => flags[m.key]).map((m) => m.title),
+      stableMode ? 'Резервный режим смыслового извлечения (до PR49)' : 'Текущий режим смыслового извлечения (PR49)',
+    ];
     const chosenModel = v2ModelId.trim() || selectedModel;
 
     try {
