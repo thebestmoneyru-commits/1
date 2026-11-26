@@ -258,6 +258,12 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     relPrompt.includes("ключевые слова не искажай"),
     "prompt must expose logical relations, pair-aware punctuation quotas, and keyword anti-garbling guard",
   );
+  assert(
+    relPrompt.includes('"subject":"дождь"') &&
+      relPrompt.includes('"predicate":"усилился"') &&
+      !relPrompt.includes('"summary":"Дождь усилился."'),
+    "model-facing proposition map must prefer structured semantic atoms over source-like sentence summaries",
+  );
   names.push("logical relations, pair punctuation quotas, and anti-garbling rules");
 
   return { passed: names.length, names };
