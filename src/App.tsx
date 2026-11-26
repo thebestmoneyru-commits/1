@@ -1526,6 +1526,24 @@ export default function App() {
       return next;
     });
   };
+  const [stableMode, setStableMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('promptgpt_stable_mode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const toggleStableMode = () => {
+    setStableMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('promptgpt_stable_mode', String(next));
+      } catch {
+        /* ignore storage error */
+      }
+      return next;
+    });
+  };
   const [v2StyleIntensity, setV2StyleIntensity] = useState<1 | 2 | 3 | 4 | 5>(() => {
     try {
       const saved = Number(localStorage.getItem('promptgpt_v2_style_intensity'));
@@ -2002,6 +2020,82 @@ export default function App() {
     throw new Error('Не удалось связаться с сервером. Пожалуйста, обновите страницу.');
   };
 
+  const safePostJob = async (
+    baseUrl: string,
+    body: any,
+    extraHeaders: Record<string, string> = {}
+  ): Promise<any> => {
+    const normalizedBase = baseUrl.replace(/\/$/, '');
+    const accepted = await safePost(`${normalizedBase}/jobs`, body, 3, extraHeaders);
+    if (!accepted?.jobId || typeof accepted.jobId !== 'string') {
+      throw new Error('Сервер не вернул номер фонового задания PROMPTGPT v2.');
+    }
+
+    const deadline = performance.now() + 11 * 60 * 1000;
+    let consecutivePollErrors = 0;
+
+    while (performance.now() < deadline) {
+      await sleep(1500);
+      let response: Response;
+      try {
+        response = await fetch(`${normalizedBase}/jobs/${encodeURIComponent(accepted.jobId)}`, {
+          method: 'GET',
+          headers: extraHeaders,
+        });
+      } catch (err) {
+        consecutivePollErrors += 1;
+        if (consecutivePollErrors >= 5) {
+          throw new Error('Потеряна связь с сервером при проверке фонового задания. Само задание могло продолжить работу.');
+        }
+        continue;
+      }
+
+      let responseText: string;
+      try {
+        responseText = await response.text();
+      } catch {
+        consecutivePollErrors += 1;
+        if (consecutivePollErrors >= 5) {
+          throw new Error('Потеряна связь с сервером при чтении статуса фонового задания. Само задание могло продолжить работу.');
+        }
+        continue;
+      }
+      let data: any;
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        if ((response.status === 502 || response.status === 503) && consecutivePollErrors < 4) {
+          consecutivePollErrors += 1;
+          continue;
+        }
+        throw new Error(data?.error?.message || data?.message || `Не удалось проверить задание PROMPTGPT v2 (${response.status}).`);
+      }
+
+      consecutivePollErrors = 0;
+      if (data.status === 'completed') {
+        if (data.result && typeof data.result === 'object') return data.result;
+        throw new Error('Фоновое задание завершилось без результата.');
+      }
+      if (data.status === 'failed') {
+        throw new Error(data?.error?.message || 'Фоновое задание PROMPTGPT v2 завершилось с ошибкой.');
+      }
+
+      const stageLabel = data.stage === 'preparing'
+        ? 'подготовка смысловой карты'
+        : data.stage === 'executing'
+          ? 'перенос стиля и проверка'
+          : 'обработка';
+      const elapsedSeconds = Math.round((performance.now() - (deadline - 11 * 60 * 1000)) / 1000);
+      setV2Status(`PROMPTGPT v2: ${stageLabel} · ${elapsedSeconds} сек.`);
+    }
+
+    throw new Error('Превышено безопасное время ожидания фонового задания (11 минут). Проверьте журнал диагностики.');
+  };
+
   const applyScores = (items: any[]) => {
     setDetectorScores((prev) => {
       const updated = { ...prev };
@@ -2272,7 +2366,10 @@ export default function App() {
     setError(null);
     setV2Status('Запуск PromptGPT v2...');
 
-    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
+    const activeFlagNames = [
+      ...MODULES.filter((m) => flags[m.key]).map((m) => m.title),
+      stableMode ? 'Резервный режим смыслового извлечения (до PR49)' : 'Текущий режим смыслового извлечения (PR49)',
+    ];
     const chosenModel = v2ModelId.trim() || selectedModel;
 
     try {
@@ -2282,7 +2379,7 @@ export default function App() {
       }
 
       // Keep the client contract aligned with the authenticated PROMPTGPT v2 router.
-      const data = await safePost(
+      const data = await safePostJob(
         '/api/v2/style-transfer',
         {
           donorText,
@@ -2291,8 +2388,8 @@ export default function App() {
           styleIntensity: v2StyleIntensity,
           customInstructions: v2CustomInstructions,
           unfilteredMode,
+          stableMode,
         },
-        3,
         headers
       );
 
@@ -2823,6 +2920,13 @@ export default function App() {
               <p className="text-xs text-slate-400">
                 Стиль ДНК • {DETECTORS_LIST.length} детекторов • Черновики и анализ
               </p>
+              <div
+                data-testid="branch-version-label"
+                className="mt-1 inline-flex max-w-full items-center rounded-md border border-emerald-500/50 bg-emerald-950/70 px-2 py-1 text-[11px] font-semibold text-emerald-300"
+                title="Открыта рабочая экспериментальная ветка"
+              >
+                feature/promptgpt-one-click-stable-mode-2026-11-26
+              </div>
             </div>
           </div>
 
@@ -3020,6 +3124,21 @@ export default function App() {
                     title="Включает режим без смягчений и цензуры для генерации и анализа"
                   >
                     {unfilteredMode ? 'Без фильтрации: ВКЛ' : 'Без фильтрации: ВЫКЛ'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={toggleStableMode}
+                    disabled={isGeneratingDna}
+                    data-testid="stable-mode-toggle"
+                    aria-pressed={stableMode}
+                    className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold transition cursor-pointer ${
+                      stableMode
+                        ? 'bg-amber-950/90 text-amber-200 border-amber-500/80'
+                        : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-slate-200'
+                    }`}
+                    title="Переключает смысловое извлечение между текущим вариантом и резервным вариантом до PR49. Настройка применяется к следующему запуску."
+                  >
+                    {stableMode ? 'Резервный режим: ВКЛ' : 'Резервный режим: ВЫКЛ'}
                   </button>
                 </div>
                 <div className="text-xs font-mono text-cyan-300" data-testid="v2-status-label">
