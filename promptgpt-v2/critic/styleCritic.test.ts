@@ -209,7 +209,7 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
   });
   assert(
     !connectorPrompt.includes("чуждые донору реферативно-канцелярские обороты") &&
-    connectorPrompt.includes("Не помечай связки, реально встречающиеся в доноре"),
+    connectorPrompt.includes("не помечай связки, реально встречающиеся в доноре"),
     "critic must not flag a source connector that is also attested in the donor",
   );
   const wsExcerpt = donorExcerpt.replace(/\s+/gu, "  ");
