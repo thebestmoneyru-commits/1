@@ -43,7 +43,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     "topic-specific repeated words and exact donor endings are not presented as style instructions");
   assert(prompt.includes("сверь все смысловые элементы") && prompt.includes("все смысловые элементы"),
     "generation prompt explicitly requires a complete semantic review");
-  assert(prompt.includes("не исправляй их автоматически") && prompt.includes("естественный аналог"),
+  assert(prompt.toLocaleLowerCase("ru-RU").includes("не исправляй их автоматически") && prompt.includes("естественный аналог"),
     "donor irregularities must be preserved contextually instead of normalized or copied mechanically");
   const longInstructions = "УКАЗАНИЕ".repeat(700);
   const uncappedPrompt = buildCandidatePrompt({
@@ -60,6 +60,43 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   });
   assert(prompt !== secondPrompt, "candidate indices produce deliberately distinct stylistic approaches");
   names.push("prompt content, semantic constraints, donor spelling preservation and candidate diversity");
+
+  const nativeConnectorDonorText = donorWithIrregularity + "\nТем не менее, данное положение сохраняет значение.";
+  const nativeConnectorProfile = analyzeStyleDNA(nativeConnectorDonorText, {
+    minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+  });
+  const nativeConnectorBaseline = createDonorStyleBaseline(nativeConnectorProfile, nativeConnectorDonorText);
+  assert(nativeConnectorBaseline.ok && !!nativeConnectorBaseline.baseline, "native donor connector baseline is available");
+  const nativeConnectorSource = "Тем не менее, автор описал событие.";
+  const nativeConnectorPrompt = buildCandidatePrompt({
+    sourceText: nativeConnectorSource,
+    inventory: buildFactInventory(nativeConnectorSource),
+    donorBaseline: nativeConnectorBaseline.baseline!,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 8,
+  });
+  assert(
+    !nativeConnectorPrompt.includes("ЧУЖДЫЕ ДОНОРУ СВЯЗКИ ИСХОДНИКА"),
+    "a connector present in both source and donor must not be listed as foreign",
+  );
+  names.push("donor-native connectors are not forbidden by source-overlap detection");
+
+  const quotedSource = "Автор связывает это с понятием «лучшей жизни».";
+  const quotedPrompt = buildCandidatePrompt({
+    sourceText: quotedSource,
+    inventory: buildFactInventory(quotedSource),
+    donorBaseline: baseline,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 8,
+  });
+  assert(
+    quotedPrompt.includes("ОБЯЗАТЕЛЬНЫЕ ЯКОРЯ") &&
+    !quotedPrompt.includes("НЕ бери в кавычки обычные словосочетания вроде «лучшей жизни»"),
+    "mandatory quoted anchors must not be contradicted by generic punctuation guidance",
+  );
+  names.push("quoted semantic anchors take precedence over generic quotation-frequency guidance");
 
   let active = 0;
   let maxActive = 0;
@@ -166,7 +203,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     planPrompt.includes("КОНТРОЛЬ РЕЗУЛЬТАТА") &&
     planPrompt.includes("ГЛУБОКАЯ ПЕРЕСТРОЙКА БЕЗ МЕХАНИЧЕСКОГО АНТИ-КОПИРОВАНИЯ") &&
     planPrompt.includes("ЗАПРЕТ ИНВЕРСИИ ПРИЧИНЫ И СЛЕДСТВИЯ") &&
-    planPrompt.includes("Квоты пунктуации") &&
+    planPrompt.includes("ПУНКТУАЦИОННЫЕ ОРИЕНТИРЫ, НЕ МЕХАНИЧЕСКИЕ КВОТЫ") &&
     planPrompt.includes("ДРОБИ длинные фразы") &&
     planPrompt.includes("не навязывай фиксированное число абзацев") &&
     planPrompt.includes("не исправляй весь текст до нейтральной нормы"),
@@ -218,7 +255,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     relPrompt.includes('"expression":"вследствие чего"') &&
     relPrompt.includes("пар скобок") &&
     relPrompt.includes("пар кавычек") &&
-    relPrompt.includes("не коверкай"),
+    relPrompt.includes("ключевые слова не искажай"),
     "prompt must expose logical relations, pair-aware punctuation quotas, and keyword anti-garbling guard",
   );
   names.push("logical relations, pair punctuation quotas, and anti-garbling rules");

@@ -185,10 +185,32 @@ export async function runStyleCriticSelfTests(): Promise<{ passed: number; names
     sourceText, candidateText, inventory, donorBaseline: irregularBaseline.baseline!,
   });
   assert(criticPrompt.includes("обруживает"), "critic receives the exact donor spelling irregularity");
-  assert(criticPrompt.includes("не помечай их как unnatural-construction"), "critic is instructed not to penalize donor-grounded irregularities");
+  assert(criticPrompt.includes("unnatural-construction") && criticPrompt.includes("не выравнивай текст до школьной нормы"), "critic is instructed not to penalize donor-grounded irregularities");
   assert(
     criticPrompt.includes('"corpusSummary"') && criticPrompt.includes('"absentDonorTraits"'),
     "critic prompt must expose corpusSummary and absentDonorTraits",
+  );
+  assert(
+    criticPrompt.includes('"examples"') && criticPrompt.includes("обруживает"),
+    "critic must receive exact evidence excerpts for observed donor irregularities",
+  );
+  const connectorDonorText = donorText() + "\nТем не менее, автор сохраняет эту особенность.";
+  const connectorProfile = analyzeStyleDNA(connectorDonorText, {
+    minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10,
+  });
+  const connectorBaseline = createDonorStyleBaseline(connectorProfile, connectorDonorText);
+  assert(connectorBaseline.ok && !!connectorBaseline.baseline, "connector donor baseline is available");
+  const connectorSource = "Тем не менее, автор описал событие.";
+  const connectorPrompt = buildStyleCriticPrompt({
+    sourceText: connectorSource,
+    candidateText: "Тем не менее, автор событие описал.",
+    inventory: buildFactInventory(connectorSource),
+    donorBaseline: connectorBaseline.baseline!,
+  });
+  assert(
+    !connectorPrompt.includes("чуждые донору реферативно-канцелярские обороты") &&
+    connectorPrompt.toLocaleLowerCase("ru-RU").includes("не объявляй оборот чуждым донору"),
+    "critic must not flag a source connector that is also attested in the donor",
   );
   const wsExcerpt = donorExcerpt.replace(/\s+/gu, "  ");
   const wsNormalizedResult = await runStyleCritic({
