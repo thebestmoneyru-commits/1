@@ -1776,9 +1776,11 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   names.push("non-blocking stopOnAuditFindings preserves unresolved audit warnings without halting preparation");
 
   let unfilteredGenerateCalls = 0;
+  let stableModeCapturedPrompt = "";
   const unfilteredPrepared = await createStyleTransferRequestPreparer(
     {
-      async generate() {
+      async generate(input: { prompt?: string }) {
+        stableModeCapturedPrompt = input.prompt || "";
         unfilteredGenerateCalls += 1;
         if (unfilteredGenerateCalls > 1) {
           throw new Error("unfilteredMode must not invoke completeness, interpretation, or structure audits");
@@ -1795,7 +1797,7 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     } as unknown as ModelRouter,
     routes,
     { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 }, stopOnAuditFindings: true },
-  )({ requestId: "unfiltered-mode-prep", sourceText: russianSyntaxSplitSource, donorText: donor, unfilteredMode: true });
+  )({ requestId: "unfiltered-mode-prep", sourceText: russianSyntaxSplitSource, donorText: donor, unfilteredMode: true, stableMode: true });
   assert(
     unfilteredGenerateCalls === 1 &&
     unfilteredPrepared.inventory.propositions.length >= 1 &&
@@ -1804,6 +1806,8 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
     "unfilteredMode must skip all audits and fall back cleanly even when extracted propositions fail validation",
   );
   names.push("unfilteredMode disables semantic audits and prevents validation halts");
+  assert(!stableModeCapturedPrompt.includes("КРИТИЧЕСКОЕ ПРАВИЛО СОХРАНЕНИЯ ПРИЧАСТНЫХ И АТРИБУТИВНЫХ МОДИФИКАТОРОВ"), "stableMode must omit the latest PR49-only extraction instruction");
+  names.push("stableMode restores the pre-PR49 semantic extraction prompt");
 
   const transientUnfilteredTimeoutPrepared = await createStyleTransferRequestPreparer(
     {
