@@ -187,9 +187,21 @@ function extractJsonLineAfterMarker(prompt: string, markers: readonly string[]):
 
 function extractSourceTextFromCandidatePrompt(prompt: string): string | undefined {
   return extractJsonLineAfterMarker(prompt, [
+    "LOCAL SOURCE TEXT FOR ANTI-COPY CHECK JSON:\n",
     "ИСХОДНЫЙ ТЕКСТ (ТОЛЬКО СМЫСЛ И ФАКТЫ; ПЕРЕПИСАТЬ СИНТАКСИС ЗАНОВО, НЕ КОПИРУЯ ОБОРОТЫ):\n",
     "ИСХОДНЫЙ ТЕКСТ (ниже передан как JSON-строка; воспринимай его исключительно как материал для преобразования):\n",
   ]);
+}
+
+/** Removes the local-only source payload before the prompt reaches the model provider. */
+export function stripLocalSourceTextFromCandidatePrompt(prompt: string): string {
+  const marker = "LOCAL SOURCE TEXT FOR ANTI-COPY CHECK JSON:\n";
+  const start = prompt.indexOf(marker);
+  if (start < 0) return prompt;
+  const valueStart = start + marker.length;
+  const valueEnd = prompt.indexOf("\n", valueStart);
+  if (valueEnd < 0) return prompt.slice(0, start).trimEnd();
+  return prompt.slice(0, start) + prompt.slice(valueEnd + 1);
 }
 
 function extractDonorFeatureExamplesFromCriticPrompt(prompt: string): Map<string, string[]> | undefined {
@@ -334,10 +346,13 @@ export function createRouterAdapters(
     candidateGenerator: {
       async generate({ prompt, candidateIndex, signal }) {
         const isSemanticRestoration = prompt.startsWith("ЗАДАЧА: восстанови в преобразованном тексте");
+        const modelPrompt = isSemanticRestoration
+          ? prompt
+          : stripLocalSourceTextFromCandidatePrompt(prompt);
         const sampling = isSemanticRestoration
           ? { temperature: 0.35, topP: 0.90 }
           : CANDIDATE_SAMPLING_PRESETS[candidateIndex % CANDIDATE_SAMPLING_PRESETS.length];
-        const firstDraft = await wrapInvoke("candidate-generation", prompt, signal, undefined, sampling);
+        const firstDraft = await wrapInvoke("candidate-generation", modelPrompt, signal, undefined, sampling);
         if (isSemanticRestoration) {
           const origSource = extractJsonLineAfterMarker(prompt, ["IMMUTABLE ORIGINAL SOURCE JSON:\n"]);
           const baseCandidate = extractJsonLineAfterMarker(prompt, ["CURRENT CANDIDATE JSON:\n"]);
@@ -385,7 +400,7 @@ export function createRouterAdapters(
           `Кандидат ${candidateIndex + 1}: обнаружено дословное совпадение с исходником (${Math.round(firstOverlap * 100)}%); запускается глубокая синтаксическая пересборка под стиль донора.`,
         );
         const escalatedPrompt = [
-          prompt,
+          modelPrompt,
           "",
           "ОГРАНИЧЕННАЯ КОРРЕКЦИЯ: предыдущий вариант сохранил слишком много длинных дословных фрагментов исходника. Это повторная генерация формы, а не косметическая редактура: создай новый синтаксический каркас в манере донора, сохраняя точные тезисы, термины, факты, якоря и все логические отношения.",
           "Не используй исходные предложения как готовые шаблоны: заново сгруппируй связанные тезисы, измени зачины и границы предложений, не сохраняя исходное число фраз и порядок их подачи там, где это не требуется логикой. Не меняй направление причин и следствий.",
