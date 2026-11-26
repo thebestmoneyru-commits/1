@@ -23,6 +23,8 @@ import type { DonorStyleBaseline, StyleDNAProfile } from "../style/styleTypes";
 import { DEFAULT_SEMANTIC_POLICY, type PropositionAssessment } from "../types";
 import type { LogicalRelationAssessment } from "../semantic/logicalRelationPreservation";
 import type {
+  ModelCallDiagnostic,
+  SelectionDiagnostics,
   CandidateDiagnosticStep,
   CandidateOutcome,
   PromptResultHistoryEntry,
@@ -60,6 +62,7 @@ export interface StyleTransferServiceDependencies {
         usedModel?: string;
         fallbackOccurred?: boolean;
         warnings?: readonly string[];
+        modelCalls?: ModelCallDiagnostic[];
       }
     | undefined;
   now?: () => number;
@@ -1520,6 +1523,33 @@ export class StyleTransferService {
       const chosenOutcome = selected ?? review[0] ?? fallbackOutcome;
       const chosenScore = chosenOutcome?.finalEvaluation.styleReport.score ?? null;
       const chosenPrompt = chosenOutcome?.usedPrompt ?? stagePrompts[0]?.prompt;
+      const selectionDiagnostics: SelectionDiagnostics = {
+        decision: status,
+        ...(selected ? { selectedCandidateId: selected.candidateId } : {}),
+        ...(bestAvailableCandidateId ? { bestAvailableCandidateId } : {}),
+        bestAvailableIsGeneratedCandidate: Boolean(bestAvailableText && bestAvailableCandidateId),
+        candidates: outcomes.map((outcome) => ({
+          candidateId: outcome.candidateId,
+          initialDisposition: outcome.initial.disposition,
+          finalDisposition: outcome.finalEvaluation.disposition,
+          initialRejectionReasons: [...outcome.initial.rejectionReasons],
+          finalRejectionReasons: [...outcome.finalEvaluation.rejectionReasons],
+          styleScore: outcome.finalEvaluation.styleReport.score,
+          styleConfidence: outcome.finalEvaluation.styleReport.confidence,
+          semanticPassed: outcome.finalEvaluation.semanticReport.passed,
+          sourceTrigramOverlap: computeWordTrigramOverlap(request.sourceText, outcome.finalText),
+          sourceLengthRatio: request.sourceText.length > 0 ? outcome.finalText.length / request.sourceText.length : 0,
+          selected: outcome.candidateId === selected?.candidateId,
+          bestAvailable: outcome.candidateId === bestAvailableCandidateId,
+        })),
+        explanation: selected
+          ? `Выбран ${selected.candidateId}: кандидат прошёл обязательные проверки и допущен к выдаче.`
+          : review.length
+            ? `Статус needs-review: ни один кандидат не получил автоматическое принятие; ${review.length} кандидат(а) сохранены для ручной проверки.`
+            : bestAvailableText
+              ? `Статус rejected при наличии bestAvailableText: текст ${bestAvailableCandidateId ?? "без ID"} сохранён как диагностический/резервный результат, но не прошёл критерии автоматического принятия. Это не означает, что он был выбран как accepted.`
+              : "Статус rejected: ни один кандидат не прошёл критерии, пригодного сгенерированного текста для выдачи нет.",
+      };
 
       // The 40-point report is informational: a diagnostics failure must never
       // turn a valid generated result into a failed transfer.
@@ -1584,6 +1614,8 @@ export class StyleTransferService {
         totalDurationMs,
         ...(chosenPrompt ? { usedPrompt: chosenPrompt } : {}),
         stagePrompts,
+        ...(modelDiagnostics?.modelCalls ? { modelCalls: modelDiagnostics.modelCalls } : {}),
+        selectionDiagnostics,
         ...(historyEntry ? { historyEntry } : {}),
         sourceFingerprint,
         donorBaselineId: baselineId,
