@@ -92,7 +92,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     maxDonorExamples: 8,
   });
   assert(
-    quotedPrompt.includes("Обязательные цитатные якоря") &&
+    quotedPrompt.includes("ОБЯЗАТЕЛЬНЫЕ ЯКОРЯ") &&
     !quotedPrompt.includes("НЕ бери в кавычки обычные словосочетания вроде «лучшей жизни»"),
     "mandatory quoted anchors must not be contradicted by generic punctuation guidance",
   );
