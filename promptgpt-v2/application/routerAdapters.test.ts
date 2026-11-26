@@ -58,7 +58,7 @@ export function runRouterAdapterSelfTests(): { passed: number; names: string[] }
     JSON.stringify(privateSource),
     "",
     "ОБЯЗАТЕЛЬНЫЕ УТВЕРЖДЕНИЯ: [{\\"subject\\":\\"тезис\\",\\"predicate\\":\\"сохранить\\",\\"object\\":\\"смысл\\}]",
-  ].join("\\n");
+  ].join("\n");
   const modelFacingPrompt = stripLocalSourceTextFromCandidatePrompt(localOnlyPrompt);
   assert(
     !modelFacingPrompt.includes(privateSource) &&
