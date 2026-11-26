@@ -2823,6 +2823,13 @@ export default function App() {
               <p className="text-xs text-slate-400">
                 Стиль ДНК • {DETECTORS_LIST.length} детекторов • Черновики и анализ
               </p>
+              <div
+                data-testid="branch-version-label"
+                className="mt-1 inline-flex items-center rounded-md border border-sky-500/50 bg-sky-950/70 px-2 py-1 text-[11px] font-semibold text-sky-300"
+                title="Основная стабильная ветка проекта"
+              >
+                Основной MAIN
+              </div>
             </div>
           </div>
 
