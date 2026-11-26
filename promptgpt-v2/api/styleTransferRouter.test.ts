@@ -195,7 +195,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     const unfilteredJobStart = await fetch(`${base}/jobs`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-test-auth": "allowed" },
-      body: JSON.stringify({ requestId: "unfiltered-job-test", sourceText: "Текст", donorText: "Донор", unfilteredMode: true }),
+      body: JSON.stringify({ requestId: "unfiltered-job-test", sourceText: "Текст", donorText: "Донор", unfilteredMode: true, stableMode: true }),
     });
     const unfilteredStartBody = await unfilteredJobStart.json() as { jobId?: string };
     assert(unfilteredJobStart.status === 202 && typeof unfilteredStartBody.jobId === "string", "unfiltered POST /jobs must return 202");
@@ -209,6 +209,8 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     }
     assert(lastPrepareUnfiltered === true && lastExecuteUnfiltered === true,
       "unfilteredMode: true must propagate to both prepareRequest and service.execute");
+    assert(lastPrepareStableMode === true,
+      "stableMode: true must propagate through the background-job preparation route");
     names.push("propagate unfilteredMode flag to preparer and execution service");
 
     const customJobStart = await fetch(`${base}/jobs`, {
