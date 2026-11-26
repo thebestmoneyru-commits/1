@@ -570,10 +570,10 @@ export function buildCandidatePrompt(input: {
     };
   });
   const seenRelations = new Set<string>();
-  const compactRelations: Array<{ kind: string; from: string; to: string; expression?: string }> = [];
+  const compactRelations: Array<{ kind: string; from: string; to: string }> = [];
   for (const prop of input.inventory.propositions) {
     for (const rel of prop.relations) {
-      const key = `${rel.kind}|${rel.from}|${rel.to}|${rel.expression ?? ""}`;
+      const key = `${rel.kind}|${rel.from}|${rel.to}`;
       if (seenRelations.has(key)) continue;
       seenRelations.add(key);
       compactRelations.push({
