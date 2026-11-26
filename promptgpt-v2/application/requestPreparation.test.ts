@@ -1809,6 +1809,30 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(!stableModeCapturedPrompt.includes("КРИТИЧЕСКОЕ ПРАВИЛО СОХРАНЕНИЯ ПРИЧАСТНЫХ И АТРИБУТИВНЫХ МОДИФИКАТОРОВ"), "stableMode must omit the latest PR49-only extraction instruction");
   names.push("stableMode restores the pre-PR49 semantic extraction prompt");
 
+  let currentModeCapturedPrompt = "";
+  await createStyleTransferRequestPreparer(
+    {
+      async generate(input: { prompt?: string }) {
+        currentModeCapturedPrompt = input.prompt || "";
+        return {
+          text: "[]",
+          requestedModel: "test",
+          usedModel: "test",
+          fallbackOccurred: false,
+          attempts: [],
+          warnings: [],
+        };
+      },
+    } as unknown as ModelRouter,
+    routes,
+    { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+  )({ requestId: "current-mode-prompt", sourceText: russianSyntaxSplitSource, donorText: donor, unfilteredMode: true });
+  assert(
+    currentModeCapturedPrompt.includes("КРИТИЧЕСКОЕ ПРАВИЛО СОХРАНЕНИЯ ПРИЧАСТНЫХ И АТРИБУТИВНЫХ МОДИФИКАТОРОВ"),
+    "the default current mode must keep the latest PR49 extraction instruction",
+  );
+  names.push("default current mode retains the PR49 semantic extraction prompt");
+
   const transientUnfilteredTimeoutPrepared = await createStyleTransferRequestPreparer(
     {
       async generate() {
