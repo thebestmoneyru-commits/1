@@ -530,16 +530,20 @@ export function buildCandidatePrompt(input: {
         requiredOccurrences: anchor.requiredOccurrences,
       })),
   );
-  const compactPropositions = input.inventory.propositions.map((item) => ({
-    id: item.id,
-    summary: item.summary,
-    ...(item.subject ? { subject: item.subject } : {}),
-    ...(item.predicate ? { predicate: item.predicate } : {}),
-    ...(item.object ? { object: item.object } : {}),
-    ...(item.polarity !== "positive" ? { polarity: item.polarity } : {}),
-    ...(item.modality ? { modality: item.modality.value } : {}),
-    ...(item.qualifications.length ? { quals: item.qualifications.map((q) => q.value) } : {}),
-  }));
+  const compactPropositions = input.inventory.propositions.map((item) => {
+    const hasStructuredMeaning = Boolean(item.subject || item.predicate || item.object);
+    return {
+      id: item.id,
+      ...(!hasStructuredMeaning ? { summary: item.summary } : {}),
+      ...(item.subject ? { subject: item.subject } : {}),
+      ...(item.predicate ? { predicate: item.predicate } : {}),
+      ...(item.object ? { object: item.object } : {}),
+      ...(item.polarity !== "positive" ? { polarity: item.polarity } : {}),
+      ...(item.modality ? { modality: { kind: item.modality.kind, value: item.modality.value, scope: item.modality.scope } } : {}),
+      ...(item.qualifications.length ? { qualifications: item.qualifications.map((q) => ({ kind: q.kind, value: q.value })) } : {}),
+      ...(item.mandatory ? { mandatory: true } : {}),
+    };
+  });
   const seenRelations = new Set<string>();
   const compactRelations: Array<{ kind: string; from: string; to: string; expression?: string }> = [];
   for (const prop of input.inventory.propositions) {
