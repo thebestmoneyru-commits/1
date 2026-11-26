@@ -225,7 +225,7 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
 
     let generationCalls = 0;
     let restorationPrompt = "";
-    const restoredCandidateText = "Священник пришёл к людям в этот день.";
+    const restoredCandidateText = candidateText.replaceAll("священник пришёл к людям и совершил молитву", "священник пришёл к людям именно в этот день и совершил молитву");
     const service = new StyleTransferService({
       candidateGenerator: {
         async generate({ prompt }) {
