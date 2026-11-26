@@ -1,4 +1,4 @@
-import { computeWordTrigramOverlap, shouldAcceptAntiCopyRewrite } from "./routerAdapters";
+import { computeWordTrigramOverlap, shouldAcceptAntiCopyRewrite, stripLocalSourceTextFromCandidatePrompt } from "./routerAdapters";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Router adapter self-test failed: ${message}`);
@@ -50,6 +50,23 @@ export function runRouterAdapterSelfTests(): { passed: number; names: string[] }
   );
   names.push("enforce absolute anti-copy ceiling");
 
+
+  const privateSource = "Исходный текст, который нужен только локальному anti-copy контролю.";
+  const localOnlyPrompt = [
+    "ЗАДАЧА: написать новый текст по смысловой карте.",
+    "LOCAL SOURCE TEXT FOR ANTI-COPY CHECK JSON:",
+    JSON.stringify(privateSource),
+    "",
+    "ОБЯЗАТЕЛЬНЫЕ УТВЕРЖДЕНИЯ: [{\\"subject\\":\\"тезис\\",\\"predicate\\":\\"сохранить\\",\\"object\\":\\"смысл\\}]",
+  ].join("\\n");
+  const modelFacingPrompt = stripLocalSourceTextFromCandidatePrompt(localOnlyPrompt);
+  assert(
+    !modelFacingPrompt.includes(privateSource) &&
+      modelFacingPrompt.includes("ОБЯЗАТЕЛЬНЫЕ УТВЕРЖДЕНИЯ") &&
+      modelFacingPrompt.includes("ЗАДАЧА: написать новый текст"),
+    "strip the local source payload while retaining the model-facing semantic instructions",
+  );
+  names.push("keep full source text available for local anti-copy checks but hidden from model generation");
 
   const userSourceExample = `В рамках атеистической парадигмы смысл человеческого существования неизбежно редуцируется к процессу последовательного и сугубо материального улучшения внешних условий бытия, где всё многообразие мировых явлений выступает не более чем естественным процессом, детерминированным строгими физико-химическими законами. В этой жестко заданной системе координат сам человек предстает лишь результатом случайной комбинации материи, вследствие чего единственно возможный вектор развития мировой истории усматривается в прогрессивном преобразовании вещественного мира. В отсутствие же высших духовных ориентиров именно категория наслаждения закономерно возводится в ранг ключевого мерила "лучшей жизни".
 
