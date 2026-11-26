@@ -2232,7 +2232,10 @@ export default function App() {
     setDnaElapsedMs(null);
     setDnaDiagnostics(null);
 
-    const activeFlagNames = MODULES.filter((m) => flags[m.key]).map((m) => m.title);
+    const activeFlagNames = [
+      ...MODULES.filter((m) => flags[m.key]).map((m) => m.title),
+      stableMode ? 'Резервный режим смыслового извлечения (до PR49)' : 'Текущий режим смыслового извлечения (PR49)',
+    ];
     const composedPromptSummary = [
       `Режим: Style DNA Transfer V5.0 | Модель: ${selectedModel}`,
       `Модули (${activeFlagNames.length}): ${activeFlagNames.join('; ')}`,
@@ -3109,6 +3112,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={toggleStableMode}
+                    disabled={isGeneratingDna}
                     data-testid="stable-mode-toggle"
                     aria-pressed={stableMode}
                     className={`text-[11px] px-2.5 py-0.5 rounded-full border font-semibold transition cursor-pointer ${
@@ -3116,7 +3120,7 @@ export default function App() {
                         ? 'bg-amber-950/90 text-amber-200 border-amber-500/80'
                         : 'bg-slate-950 text-slate-400 border-slate-700 hover:text-slate-200'
                     }`}
-                    title="Одним нажатием возвращает прежний вариант смыслового извлечения, сохранённый в резервной версии до последнего изменения."
+                    title="Переключает смысловое извлечение между текущим вариантом и резервным вариантом до PR49. Настройка применяется к следующему запуску."
                   >
                     {stableMode ? 'Резервный режим: ВКЛ' : 'Резервный режим: ВЫКЛ'}
                   </button>
