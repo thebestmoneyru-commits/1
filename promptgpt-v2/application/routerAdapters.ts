@@ -13,6 +13,22 @@ import { resolveVerbatimSpan } from "../semantic/spanAnchor";
 import { computeWordTrigramOverlap } from "../style/textOverlap";
 export { computeWordTrigramOverlap };
 
+/** Accept the single anti-copy retry only when it makes a substantial, not cosmetic, improvement. */
+export function shouldAcceptAntiCopyRewrite(input: {
+  sourceOverlap: number;
+  rewrittenOverlap: number;
+  sourceLength: number;
+  rewrittenLength: number;
+}): boolean {
+  const reasonableLength =
+    input.rewrittenLength >= input.sourceLength * 0.82;
+  const requiredReduction = Math.max(0.08, input.sourceOverlap * 0.12);
+  const meaningfulReduction =
+    input.rewrittenOverlap <= input.sourceOverlap - requiredReduction;
+  const absoluteCeiling = input.rewrittenOverlap <= 0.68;
+  return reasonableLength && meaningfulReduction && absoluteCeiling;
+}
+
 const PROPOSITION_ASSESSMENT_ARRAY_SCHEMA = {
   type: Type.ARRAY,
   items: {
@@ -381,8 +397,12 @@ export function createRouterAdapters(
           });
           if (!rewritten.trim()) return firstDraft;
           const rewrittenOverlap = computeWordTrigramOverlap(sourceText, rewritten);
-          const reasonableLength = rewritten.trim().length >= sourceText.trim().length * 0.45;
-          if (reasonableLength && rewrittenOverlap < firstOverlap) {
+          if (shouldAcceptAntiCopyRewrite({
+            sourceOverlap: firstOverlap,
+            rewrittenOverlap,
+            sourceLength: sourceText.trim().length,
+            rewrittenLength: rewritten.trim().length,
+          })) {
             return rewritten;
           }
         } catch {
@@ -476,7 +496,7 @@ export function createRouterAdapters(
           "Выполни две отдельные проверки сохранения смысла кандидата относительно оригинала. Это два самостоятельных отчёта в одном JSON-ответе; не смешивай их элементы.",
           "КРИТИЧЕСКОЕ ПРАВИЛО ЦИТИРОВАНИЯ outputEvidence: каждая строка внутри массива outputEvidence ОБЯЗАНА быть точной, непрерывной, дословной подстрокой ИМЕННО из CANDIDATE JSON (копируй символ-в-символ из кандидата!). НИКОГДА не используй многоточия (...), не склеивай несмежные куски, не меняй слова и не копируй формулировки из ORIGINAL SOURCE JSON, если кандидат переписал фразу иначе! Если нужные части находятся в разных местах, укажи 2 коротких точных фрагмента подряд в массиве outputEvidence (например, [\"первый фрагмент\", \"второй фрагмент\"]).",
           "ОТЧЁТ 1 — propositionAssessments: проверь каждую исходную пропозицию отдельно: субъект, предикат, объект, отрицание, модальность, условия, оговорки, причинность, последовательность и атрибуцию. Отдельно сверь КАЖДОЕ значение qualifications и modality: нельзя признать пропозицию полностью сохранённой, если основной тезис остался, но исчезло существенное уточнение, ограничение, степень, частотность, временная оговорка или усилитель. Смысловой эквивалент в синтаксисе и лексике донора полностью допускается; буквальное совпадение с исходником не требуется. Верни ровно одну оценку на каждый propositionId. Статусы: preserved, changed, omitted, uncertain. outputEvidence — точные непустые фрагменты CANDIDATE JSON. При сомнении используй uncertain.",
-          "ОТЧЁТ 2 — relationAssessments: проверь каждую исходную логическую связь отдельно. Наличие обоих фактов не доказывает сохранение связи. Проверь направление, тип, причинность, временной порядок, условия, уступки, цель, противопоставление, сравнение и атрибуцию. Не требуй исходного союза дословно: допускай равнозначную синтаксическую конструкцию в манере донора, но только если она сохраняет то же отношение между теми же положениями и его направление. Для preserved outputEvidence должен состоять из 1–2 точных дословных подстрок CANDIDATE JSON без сокращений и без «...». Не возвращай пустое evidence для preserved. Для каждой relationKey верни ровно одну оценку со статусом preserved, changed, omitted или uncertain.",
+          "ОТЧЁТ 2 — relationAssessments: проверь каждую исходную логическую связь отдельно. Наличие обоих фактов не доказывает сохранение связи. Проверь направление, тип, причинность, временной порядок, условия, уступки, цель, противопоставление, сравнение и атрибуцию. Не требуй исходного союза дословно: допускай равнозначную синтаксическую конструкцию в манере донора, но только если она сохраняет то же отношение между теми же положениями и его направление. Не путай направление графового ребра с порядком упоминания в предложении: для kind=\"cause\" from — причина, to — следствие; для kind=\"effect\" from — следствие, to — причина. Поэтому kind=\"effect\", from=p15, to=p14 означает, что p14 является причиной, а p15 — следствием; формулировка «p14 вызывает p15» сохраняет эту связь, даже если причина названа раньше следствия. Для preserved outputEvidence должен состоять из 1–2 точных дословных подстрок CANDIDATE JSON без сокращений и без «...». Не возвращай пустое evidence для preserved. Для каждой relationKey верни ровно одну оценку со статусом preserved, changed, omitted или uncertain.",
           "КРИТИЧЕСКОЕ ПРАВИЛО О ФОРМЕ, ОШИБКАХ ДОНОРА И ПУНКТУАЦИИ: кандидат намеренно воспроизводит стилевую ДНК текста-донора, включая опечатки, орфографические ошибки, грамматические несогласования (в роде, числе, падеже, управлении), разговорный синтаксис и крайне редкую/нестандартную пунктуацию (например, «2 запятых на 3 абзаца»). Если при наличии таких перенесённых особенностей формы пропозициональный смысл, субъект/предикат/объект, отрицание, модальность, уточнения и логические отношения понятны и сохранены, ОБЯЗАТЕЛЬНО ставь preserved и НИКОГДА не помечай пропозицию или связь как changed/omitted/uncertain и не снижай confidence только из-за орфографической, грамматической или пунктуационной погрешности.",
           "Не пропускай элементы. Не добавляй неизвестные ID или ключи. Если исходных связей нет, верни relationAssessments: []. При любой неопределённости укажи uncertain. Если утверждение или связь сохранены (preserved), ставь confidence >= 0.90; если уверенность ниже 0.85 — указывай status: \"uncertain\" или \"changed\".",
           "ЛАКОНИЧНОСТЬ rationale: пиши rationale максимально кратко (3–10 слов; для preserved достаточно «Сохранено в манере донора»).",
@@ -546,6 +566,7 @@ export function createRouterAdapters(
         const prompt = [
           "Проведи независимое сравнение логической структуры оригинала и преобразованного текста.",
           "Оцени каждую исходную логическую связь ровно один раз: направление причины и следствия, временной порядок, условия, уступки, цель, противопоставление, сравнение и атрибуцию.",
+          "НАПРАВЛЕНИЕ РЕБРА: kind=\"cause\" означает from=причина -> to=следствие; kind=\"effect\" означает from=следствие -> to=причина. Не путай направление ребра с порядком слов/предложений. Например, kind=\"effect\", from=p15, to=p14 означает, что p14 — причина, p15 — следствие; фраза «p14 вызывает p15» сохраняет связь, даже если причина стоит раньше следствия.",
           "Факты могут сохраниться, даже если связь между ними перевёрнута, ослаблена или исчезла. Не считай простое наличие обоих фактов сохранением связи.",
           "Для каждой связи верни status: preserved, changed, omitted или uncertain. Не требуй исходный союз дословно: допускай равнозначную синтаксическую конструкцию, если сохраняется то же отношение между теми же положениями и его направление. Пропуск запятой или стилевые отклонения/ошибки формы, перенесённые из донора, не означают утрату логической связи, если смысл и направление отношения однозначно сохранены. КРИТИЧЕСКОЕ ПРАВИЛО ЦИТИРОВАНИЯ outputEvidence: при preserved массив outputEvidence должен содержать 1–2 точные, непрерывные, дословные подстроки ИМЕННО из CANDIDATE JSON без «...», без изменений и без цитат из ORIGINAL SOURCE JSON. Не оставляй outputEvidence пустым и не выдумывай цитаты.",
           "relationKey должен дословно совпадать с ключом связи из SOURCE RELATIONS JSON. rationale пиши кратко (3–10 слов). Верни только JSON-массив объектов {relationKey,status,outputEvidence,rationale,confidence}.",

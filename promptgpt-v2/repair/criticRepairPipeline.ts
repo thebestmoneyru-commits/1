@@ -54,6 +54,9 @@ export interface CriticRepairPipelineOptions {
   verification?: Partial<RepairVerificationOptions>;
 }
 export interface CriticRepairPipelineResult {
+  /** True when the post-repair verification executed and produced a report, regardless of its verdict. */
+  verificationCompleted: boolean;
+  /** True only when the repaired candidate passed every acceptance gate. */
   completed: boolean;
   finalText: string;
   criticReport: StyleCriticReport;
@@ -205,6 +208,7 @@ export async function runCriticRepairPipeline(
     ...verification.warnings,
   ];
   return {
+    verificationCompleted: true,
     completed: verification.passed,
     finalText,
     criticReport,
