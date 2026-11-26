@@ -517,7 +517,7 @@ function buildTransformationPlan(sourceText: string, donorBaseline: DonorStyleBa
  * original subject/predicate/object phrase as a ready-made sentence fragment.
  */
 function toDeorderedSemanticTokens(value: string, seed: string): string[] {
-  const tokens = value.match(/[\\p{L}\\p{N}]+(?:[-’'][\\p{L}\\p{N}]+)*/gu) ?? [];
+  const tokens = value.match(/[\p{L}\p{N}]+(?:[-’'][\p{L}\p{N}]+)*/gu) ?? [];
   if (tokens.length < 2) return tokens;
   const offset = [...seed].reduce((sum, char) => sum + char.codePointAt(0)!, 0) % tokens.length;
   const rotated = [...tokens.slice(offset), ...tokens.slice(0, offset)];
