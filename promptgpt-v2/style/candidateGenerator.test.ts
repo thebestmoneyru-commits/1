@@ -290,8 +290,8 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     maxDonorExamples: 12,
   });
   const atomMarker = "ОБЯЗАТЕЛЬНЫЕ УТВЕРЖДЕНИЯ";
-  const atomStart = atomPrompt.indexOf("\\n", atomPrompt.indexOf(atomMarker)) + 1;
-  const atomEnd = atomPrompt.indexOf("\\n", atomStart);
+  const atomStart = atomPrompt.indexOf("\n", atomPrompt.indexOf(atomMarker)) + 1;
+  const atomEnd = atomPrompt.indexOf("\n", atomStart);
   const atomPayload = JSON.parse(atomPrompt.slice(atomStart, atomEnd)) as Array<Record<string, unknown>>;
   const firstAtom = atomPayload[0];
   const subjectTokens = firstAtom.subjectTokens as string[];
