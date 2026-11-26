@@ -1161,11 +1161,13 @@ export class StyleTransferService {
             const finalEvaluation = pipeline.verification.after;
             diagnosticSteps.push({
               stage: "style-critic-repair",
-              status: pipeline.completed ? "completed" : "not-completed",
+              status: pipeline.verificationCompleted ? "completed" : "not-completed",
               detail:
                 "Этап критика/правки вызван. Правка применена: " +
                 (pipeline.repairResult.applied ? "да" : "нет") +
-                "; повторная проверка завершена: " +
+                "; повторная проверка выполнена: " +
+                (pipeline.verificationCompleted ? "да" : "нет") +
+                "; кандидат прошёл все проверки: " +
                 (pipeline.completed ? "да" : "нет") +
                 ". " +
                 pipeline.warnings.join(" "),
@@ -1175,13 +1177,15 @@ export class StyleTransferService {
             const afterScore = finalEvaluation.styleReport.score ?? -1;
             const noGainReason: StageScoreDelta["noGainReason"] = !pipeline.repairResult.applied
               ? "not-applied"
-              : !finalEvaluation.semanticReport.passed
-                ? "semantic-check-failed"
-                : !pipeline.completed
-                  ? "reverification-incomplete"
-                  : afterScore <= preCriticScore
-                    ? "score-dropped-or-flat"
-                    : "none";
+              : !pipeline.verificationCompleted
+                ? "reverification-incomplete"
+                : !finalEvaluation.semanticReport.passed
+                  ? "semantic-check-failed"
+                  : finalEvaluation.disposition !== "accepted"
+                    ? "below-acceptance-threshold"
+                    : afterScore <= preCriticScore
+                      ? "score-dropped-or-flat"
+                      : "none";
 
             stageDeltas.push({
               stage: "style-critic-repair",
