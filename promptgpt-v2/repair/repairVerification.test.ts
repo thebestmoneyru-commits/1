@@ -45,7 +45,7 @@ export function runRepairVerificationSelfTests(): { passed: number; names: strin
         : feature,
     ),
   };
-  const quirkBaselineResult = createDonorStyleBaseline(donorProfileWithQuirk, corpus());
+  const quirkBaselineResult = createDonorStyleBaseline(donorProfileWithQuirk);
   assert(quirkBaselineResult.ok && quirkBaselineResult.baseline, "donor baseline with an observed quirk must be valid");
   const quirkReport = verifyRepairedCandidate({
     candidateId: "repair-donor-quirk",
