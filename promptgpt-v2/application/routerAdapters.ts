@@ -149,6 +149,24 @@ function routeFor(routes: ApplicationModelRoutes, task: ModelTask) {
 }
 type ThinkingLevelOption = "low" | "medium" | "high";
 
+export interface ModelTaskOutcome {
+  task: ModelTask;
+  signal?: AbortSignal;
+  requestedModel: string;
+  usedModel?: string;
+  fallbackOccurred: boolean;
+  warnings: readonly string[];
+  label?: string;
+  prompt: string;
+  thinking?: ThinkingLevelOption;
+  sampling?: Record<string, number>;
+  responseSchema?: unknown;
+  responseText?: string;
+  error?: { name?: string; message: string; kind?: string };
+  attempts: Array<{ modelId: string; attempt: number; durationMs: number; errorKind?: string }>;
+  durationMs: number;
+}
+
 const DEFAULT_THINKING_BY_TASK: Record<ModelTask, ThinkingLevelOption> = {
   "style-analysis": "medium",
   "candidate-generation": "medium",
@@ -241,43 +259,53 @@ async function invoke(
   onModelNote?: (note: string) => void,
   thinkingOverride?: ThinkingLevelOption,
   samplingOverride?: Record<string, number>,
-  onTaskOutcome?: (info: {
-    task: ModelTask;
-    signal?: AbortSignal;
-    requestedModel: string;
-    usedModel: string;
-    fallbackOccurred: boolean;
-    warnings: readonly string[];
-  }) => void,
+  onTaskOutcome?: (info: ModelTaskOutcome) => void,
+  label?: string,
 ): Promise<string> {
   const route = routeFor(routes, task);
-  const result = await router.generate({
-    task,
-    preferredModel: route.preferredModel,
-    fallbackModels: route.fallbackModels,
-    prompt,
-    responseSchema,
-    thinking: thinkingOverride ?? DEFAULT_THINKING_BY_TASK[task],
-    sampling: samplingOverride,
-    signal,
-  });
-  onTaskOutcome?.({
-    task,
-    signal,
-    requestedModel: result.requestedModel,
-    usedModel: result.usedModel,
-    fallbackOccurred: result.fallbackOccurred,
-    warnings: result.warnings,
-  });
-  if (onModelNote) {
-    if (result.fallbackOccurred) {
-      onModelNote(`Этап ${task}: выполнен автоматический переход с ${result.requestedModel} на ${result.usedModel}.`);
+  const startedAt = Date.now();
+  const thinking = thinkingOverride ?? DEFAULT_THINKING_BY_TASK[task];
+  try {
+    const result = await router.generate({
+      task,
+      preferredModel: route.preferredModel,
+      fallbackModels: route.fallbackModels,
+      prompt,
+      responseSchema,
+      thinking,
+      sampling: samplingOverride,
+      signal,
+    });
+    onTaskOutcome?.({
+      task, signal, requestedModel: result.requestedModel, usedModel: result.usedModel,
+      fallbackOccurred: result.fallbackOccurred, warnings: result.warnings, label,
+      prompt, thinking, sampling: samplingOverride, responseSchema, responseText: result.text,
+      attempts: result.attempts, durationMs: Math.max(0, Date.now() - startedAt),
+    });
+    if (onModelNote) {
+      if (result.fallbackOccurred) {
+        onModelNote(`Этап ${task}: выполнен автоматический переход с ${result.requestedModel} на ${result.usedModel}.`);
+      }
+      for (const warning of result.warnings) onModelNote(warning);
     }
-    for (const warning of result.warnings) {
-      onModelNote(warning);
-    }
+    return result.text;
+  } catch (error) {
+    const typed = error as { name?: unknown; message?: unknown; kind?: unknown; attempts?: unknown };
+    const attempts = Array.isArray(typed?.attempts)
+      ? typed.attempts as Array<{ modelId: string; attempt: number; durationMs: number; errorKind?: string }>
+      : [];
+    onTaskOutcome?.({
+      task, signal, requestedModel: route.preferredModel, fallbackOccurred: false,
+      warnings: [], label, prompt, thinking, sampling: samplingOverride, responseSchema,
+      error: {
+        ...(typeof typed?.name === "string" ? { name: typed.name } : {}),
+        message: typeof typed?.message === "string" ? typed.message : String(error),
+        ...(typeof typed?.kind === "string" ? { kind: typed.kind } : {}),
+      },
+      attempts, durationMs: Math.max(0, Date.now() - startedAt),
+    });
+    throw error;
   }
-  return result.text;
 }
 
 function validateRelationAssessments(value: unknown): value is LogicalRelationAssessment[] {
@@ -307,14 +335,7 @@ export function createRouterAdapters(
   routes: ApplicationModelRoutes,
   options: {
     onModelNote?: (note: string) => void;
-    onTaskOutcome?: (info: {
-      task: ModelTask;
-      signal?: AbortSignal;
-      requestedModel: string;
-      usedModel: string;
-      fallbackOccurred: boolean;
-      warnings: readonly string[];
-    }) => void;
+    onTaskOutcome?: (info: ModelTaskOutcome) => void;
     thinkingByTask?: Partial<Record<ModelTask, ThinkingLevelOption>>;
   } = {},
 ): {
@@ -329,6 +350,7 @@ export function createRouterAdapters(
     signal?: AbortSignal,
     schema?: unknown,
     sampling?: Record<string, number>,
+    label?: string,
   ) =>
     invoke(
       router,
@@ -341,6 +363,7 @@ export function createRouterAdapters(
       options.thinkingByTask?.[task],
       sampling,
       options.onTaskOutcome,
+      label,
     );
   return {
     candidateGenerator: {
@@ -352,7 +375,7 @@ export function createRouterAdapters(
         const sampling = isSemanticRestoration
           ? { temperature: 0.35, topP: 0.90 }
           : CANDIDATE_SAMPLING_PRESETS[candidateIndex % CANDIDATE_SAMPLING_PRESETS.length];
-        const firstDraft = await wrapInvoke("candidate-generation", modelPrompt, signal, undefined, sampling);
+        const firstDraft = await wrapInvoke("candidate-generation", modelPrompt, signal, undefined, sampling, `candidate-${candidateIndex + 1}:${isSemanticRestoration ? "semantic-restoration" : "initial"}`);
         if (isSemanticRestoration) {
           const origSource = extractJsonLineAfterMarker(prompt, ["IMMUTABLE ORIGINAL SOURCE JSON:\n"]);
           const baseCandidate = extractJsonLineAfterMarker(prompt, ["CURRENT CANDIDATE JSON:\n"]);
@@ -374,7 +397,7 @@ export function createRouterAdapters(
                 const rewritten = await wrapInvoke("candidate-generation", restoreEscalation, signal, undefined, {
                   temperature: 0.42,
                   topP: 0.90,
-                });
+                }, `candidate-${candidateIndex + 1}:semantic-restoration-escalation`);
                 if (rewritten.trim()) {
                   const retryOverlap = computeWordTrigramOverlap(origSource, rewritten);
                   if (rewritten.trim().length >= baseCandidate.trim().length * 0.6 && retryOverlap < restoredOverlap) {
@@ -411,7 +434,7 @@ export function createRouterAdapters(
           const rewritten = await wrapInvoke("candidate-generation", escalatedPrompt, signal, undefined, {
             temperature: 0.84,
             topP: 0.93,
-          });
+          }, `candidate-${candidateIndex + 1}:anti-copy-rewrite`);
           if (!rewritten.trim()) return firstDraft;
           const rewrittenOverlap = computeWordTrigramOverlap(sourceText, rewritten);
           if (shouldAcceptAntiCopyRewrite({

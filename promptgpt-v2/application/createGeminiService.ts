@@ -45,13 +45,21 @@ export function createGeminiStyleTransferService(config: GeminiStyleTransferServ
       usedModel?: string;
       fallbackOccurred: boolean;
       warnings: string[];
+      modelCalls: Array<{
+        sequence: number; task: string; label?: string; requestedModel: string; usedModel?: string;
+        success: boolean; fallbackOccurred: boolean; prompt: string; thinking?: string;
+        sampling?: Record<string, unknown>; responseSchema?: unknown; responseText?: string;
+        error?: { name?: string; message: string; kind?: string };
+        attempts: Array<{ modelId: string; attempt: number; durationMs: number; errorKind?: string }>;
+        durationMs: number;
+      }>;
     }
   >();
   const routed = createRouterAdapters(router, catalog.routes, {
     thinkingByTask: config.thinkingByTask,
     onTaskOutcome(info) {
       if (!info.signal) return;
-      const entry = signalUsage.get(info.signal) ?? { fallbackOccurred: false, warnings: [] };
+      const entry = signalUsage.get(info.signal) ?? { fallbackOccurred: false, warnings: [], modelCalls: [] };
       if (info.task === "candidate-generation") {
         entry.requestedModel = info.requestedModel;
         entry.usedModel = info.usedModel;
@@ -61,6 +69,23 @@ export function createGeminiStyleTransferService(config: GeminiStyleTransferServ
         entry.warnings.push(`Этап ${info.task}: автоматический переход с ${info.requestedModel} на ${info.usedModel}.`);
       }
       for (const w of info.warnings) entry.warnings.push(w);
+      entry.modelCalls.push({
+        sequence: entry.modelCalls.length + 1,
+        task: info.task,
+        ...(info.label ? { label: info.label } : {}),
+        requestedModel: info.requestedModel,
+        ...(info.usedModel ? { usedModel: info.usedModel } : {}),
+        success: !info.error && typeof info.responseText === "string",
+        fallbackOccurred: info.fallbackOccurred,
+        prompt: info.prompt,
+        ...(info.thinking ? { thinking: info.thinking } : {}),
+        ...(info.sampling ? { sampling: { ...info.sampling } } : {}),
+        ...(info.responseSchema !== undefined ? { responseSchema: info.responseSchema } : {}),
+        ...(typeof info.responseText === "string" ? { responseText: info.responseText } : {}),
+        ...(info.error ? { error: info.error } : {}),
+        attempts: info.attempts,
+        durationMs: info.durationMs,
+      });
       signalUsage.set(info.signal, entry);
     },
   });

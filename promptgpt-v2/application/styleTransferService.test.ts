@@ -65,10 +65,31 @@ export async function runStyleTransferServiceSelfTests(): Promise<{ passed: numb
           });
         },
       },
+      getSignalDiagnostics() {
+        return {
+          modelCalls: [{
+            sequence: 1,
+            task: "candidate-generation",
+            label: "candidate-1:initial",
+            requestedModel: "test-model",
+            usedModel: "test-model",
+            success: true,
+            fallbackOccurred: false,
+            prompt: "EXACT MODEL-FACING PROMPT",
+            responseText: "EXACT PROVIDER RESPONSE",
+            attempts: [{ modelId: "test-model", attempt: 1, durationMs: 12 }],
+            durationMs: 12,
+          }],
+        };
+      },
     });
     const result = await service.execute(request);
     assert(result.status === "accepted", "an identical, semantically valid candidate should be accepted");
     assert(result.selectedText === sourceText, "the selected text must be the generated candidate");
+    assert(result.modelCalls?.[0]?.prompt === "EXACT MODEL-FACING PROMPT", "diagnostics must preserve the exact model-facing prompt");
+    assert(result.modelCalls?.[0]?.responseText === "EXACT PROVIDER RESPONSE", "diagnostics must preserve the provider response before post-processing");
+    assert(result.selectionDiagnostics?.decision === "accepted" && result.selectionDiagnostics.candidates[0]?.selected,
+      "diagnostics must explain the selected candidate and final decision");
     assert(generationCalls === 1, "one candidate should cause one generation call");
     assert(criticCalls === 0, "an already accepted candidate should bypass critic and repair");
     assert(result.trace.some((event) => event.stage === "completed"), "successful execution should be traced");

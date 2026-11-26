@@ -111,6 +111,46 @@ export interface PromptResultHistoryEntry {
   metadata?: Record<string, unknown>;
 }
 
+export interface ModelCallDiagnostic {
+  sequence: number;
+  task: string;
+  label?: string;
+  requestedModel: string;
+  usedModel?: string;
+  success: boolean;
+  fallbackOccurred: boolean;
+  prompt: string;
+  thinking?: string;
+  sampling?: Record<string, unknown>;
+  responseSchema?: unknown;
+  responseText?: string;
+  error?: { name?: string; message: string; kind?: string };
+  attempts: Array<{ modelId: string; attempt: number; durationMs: number; errorKind?: string }>;
+  durationMs: number;
+}
+
+export interface SelectionDiagnostics {
+  decision: "accepted" | "needs-review" | "rejected" | "cancelled";
+  selectedCandidateId?: string;
+  bestAvailableCandidateId?: string;
+  bestAvailableIsGeneratedCandidate: boolean;
+  candidates: Array<{
+    candidateId: string;
+    initialDisposition: string;
+    finalDisposition: string;
+    initialRejectionReasons: string[];
+    finalRejectionReasons: string[];
+    styleScore: number | null;
+    styleConfidence: number;
+    semanticPassed: boolean;
+    sourceTrigramOverlap: number;
+    sourceLengthRatio: number;
+    selected: boolean;
+    bestAvailable: boolean;
+  }>;
+  explanation: string;
+}
+
 export interface StyleTransferResponse {
   requestId: string;
   status: "accepted" | "needs-review" | "rejected" | "cancelled";
@@ -125,6 +165,10 @@ export interface StyleTransferResponse {
   totalDurationMs?: number;
   usedPrompt?: string;
   stagePrompts?: StagePromptRecord[];
+  /** Exact model-facing prompts and returned texts for each provider call. */
+  modelCalls?: ModelCallDiagnostic[];
+  /** Explicit explanation of candidate selection and rejected-output fallback. */
+  selectionDiagnostics?: SelectionDiagnostics;
   sourceFingerprint: string;
   donorBaselineId: string;
   generation: CandidateGenerationResult;
