@@ -57,6 +57,7 @@ export async function runCriticRepairPipelineSelfTests(): Promise<{ passed: numb
     },
   });
 
+  assert(result.verificationCompleted, "post-repair verification execution is recorded independently of its verdict");
   assert(result.completed && result.finalText === sourceText, "approved candidate completes without text mutation");
   assert(!result.repairResult.applied && repairCalls === 0, "critic-approved candidate bypasses repair model");
   assert(semanticCalls === 1, "unchanged text reuses its already completed semantic verification");
@@ -116,6 +117,7 @@ export async function runCriticRepairPipelineSelfTests(): Promise<{ passed: numb
       requireAllMandatoryPropositions: true,
     },
   });
+  assert(strictResult.verificationCompleted, "a completed verification may still reject a candidate");
   assert(!strictResult.completed, "repair verification must enforce the request-specific semantic confidence threshold");
   assert(!strictResult.verification.after.semanticReport.passed, "custom semantic policy must reach final verification");
   names.push("semantic policy preserved through repair verification");
