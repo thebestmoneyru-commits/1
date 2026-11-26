@@ -21,6 +21,17 @@ function fakeRouter(...outputs: unknown[]): ModelRouter {
     },
   } as unknown as ModelRouter;
 }
+function fakeRouterWithPromptCapture(outputs: unknown[], prompts: string[]): ModelRouter {
+  let call = 0;
+  return {
+    async generate(request?: { prompt?: string }) {
+      prompts.push(request?.prompt ?? "");
+      const output = outputs[Math.min(call, outputs.length - 1)];
+      call += 1;
+      return { text: JSON.stringify(output), requestedModel: "test", usedModel: "test", fallbackOccurred: false, attempts: [], warnings: [] };
+    },
+  } as unknown as ModelRouter;
+}
 const interpretationAudit = (ids: string[], issues: unknown[] = []) => ({ checkedPropositionIds: ids, issues });
 const structureAudit = (ids: string[], issues: unknown[] = []) => ({ checkedPropositionIds: ids, checkedRelationKeys: [], issues });
 const donor = Array.from({ length: 40 }, (_, i) =>
@@ -38,6 +49,50 @@ export async function runRequestPreparationSelfTests(): Promise<{ passed: number
   assert(result.inventory.sourceLength === source.length, "inventory must bind to exact source length");
   assert(result.donorBaseline.profile.status === "sufficient", "sufficient donor sample must produce a frozen baseline");
   names.push("build source-bound inventory and donor baseline");
+
+  {
+    const modifierSource = "Любая модель смысла, базирующаяся исключительно на материи, обнаруживает свою предельную несостоятельность, неизбежно сталкиваясь с неутолимой жаждой вечности.";
+    const modifierStart = modifierSource.indexOf("Любая");
+    const modifierExtraction = [{
+      id: "p1",
+      summary: "Модель смысла, основанная исключительно на материи, обнаруживает несостоятельность.",
+      sourceSpan: { start: modifierStart, end: modifierSource.length, text: modifierSource.slice(modifierStart) },
+      subject: "любая модель смысла",
+      predicate: "обнаруживает",
+      object: "свою предельную несостоятельность",
+      polarity: "positive",
+      qualifications: [{ kind: "other", value: "базирующаяся исключительно на материи" }],
+      relations: [],
+      mandatory: true,
+    }];
+    const prompts: string[] = [];
+    const modifierPrepared = await createStyleTransferRequestPreparer(
+      fakeRouterWithPromptCapture([
+        modifierExtraction,
+        { missingPropositions: [], missingRelations: [] },
+        interpretationAudit(["p1"]),
+        structureAudit(["p1"]),
+      ], prompts),
+      routes,
+      { analyzer: { minWordsForReliableProfile: 100, minSentencesForReliableProfile: 10 } },
+    )({ requestId: "attributive-modifier-preservation", sourceText: modifierSource, donorText: donor });
+    const extractionPrompt = prompts[0] ?? "";
+    const interpretationPrompt = prompts.find((item) => item.includes("ОБЯЗАТЕЛЬНО ПРОВЕРЯЙ ПОЛНОТУ ПРИЧАСТНЫХ"));
+    assert(
+      extractionPrompt.includes("базирующаяся исключительно на материи") &&
+      extractionPrompt.includes("Не сокращай такой модификатор до одного наречия") &&
+      interpretationPrompt?.includes("утрачено основное отношение/признак"),
+      "extraction and independent interpretation audit prompts must explicitly preserve full participial modifiers rather than isolated adverbs",
+    );
+    assert(
+      modifierPrepared.inventory.propositions[0]?.qualifications.some((item) =>
+        item.value === "базирующаяся исключительно на материи",
+      ),
+      "the complete participial modifier must remain in the validated semantic inventory",
+    );
+    names.push("preserve complete participial subject modifiers through extraction and interpretation audit");
+  }
+
 
   const repairableInterpretationIssue = {
     propositionId: "p1",
