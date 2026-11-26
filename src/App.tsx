@@ -2025,7 +2025,7 @@ export default function App() {
     body: any,
     extraHeaders: Record<string, string> = {}
   ): Promise<any> => {
-    const normalizedBase = baseUrl.replace(/\\/$/, '');
+    const normalizedBase = baseUrl.replace(/\/$/, '');
     const accepted = await safePost(`${normalizedBase}/jobs`, body, 3, extraHeaders);
     if (!accepted?.jobId || typeof accepted.jobId !== 'string') {
       throw new Error('Сервер не вернул номер фонового задания PROMPTGPT v2.');
