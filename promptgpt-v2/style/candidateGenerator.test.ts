@@ -43,7 +43,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     "topic-specific repeated words and exact donor endings are not presented as style instructions");
   assert(prompt.includes("сверь все смысловые элементы") && prompt.includes("все смысловые элементы"),
     "generation prompt explicitly requires a complete semantic review");
-  assert(prompt.includes("не исправляй их автоматически") && prompt.includes("естественный аналог"),
+  assert(prompt.toLocaleLowerCase("ru-RU").includes("не исправляй их автоматически") && prompt.includes("естественный аналог"),
     "donor irregularities must be preserved contextually instead of normalized or copied mechanically");
   const longInstructions = "УКАЗАНИЕ".repeat(700);
   const uncappedPrompt = buildCandidatePrompt({
