@@ -252,17 +252,20 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
   });
   assert(
     relPrompt.includes("ЛОГИЧЕСКИЕ СВЯЗИ") &&
-    relPrompt.includes('"expression":"вследствие чего"') &&
+    !relPrompt.includes('"expression":"вследствие чего"') &&
     relPrompt.includes("пар скобок") &&
     relPrompt.includes("пар кавычек") &&
     relPrompt.includes("ключевые слова не искажай"),
     "prompt must expose logical relations, pair-aware punctuation quotas, and keyword anti-garbling guard",
   );
   assert(
-    relPrompt.includes('"subject":"дождь"') &&
-      relPrompt.includes('"predicate":"усилился"') &&
-      !relPrompt.includes('"summary":"Дождь усилился."'),
-    "model-facing proposition map must prefer structured semantic atoms over source-like sentence summaries",
+    relPrompt.includes('"subjectTokens":["дождь"]') &&
+      relPrompt.includes('"predicateTokens":["усилился"]') &&
+      !relPrompt.includes('"subject":"дождь"') &&
+      !relPrompt.includes('"predicate":"усилился"') &&
+      !relPrompt.includes('"summary":"Дождь усилился."') &&
+      !relPrompt.includes('"expression":"вследствие чего"'),
+    "generation receives role-tagged lexical atoms and relation types, never source-ordered phrases or connector wording",
   );
   names.push("logical relations, pair punctuation quotas, and anti-garbling rules");
 
