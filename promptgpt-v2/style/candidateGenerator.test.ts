@@ -77,7 +77,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     maxDonorExamples: 8,
   });
   assert(
-    !nativeConnectorPrompt.includes("ЧУЖДЫЕ ДОНОРУ СВЯЗКИ ИСХОДНИКА: «тем не менее»"),
+    !nativeConnectorPrompt.includes("ЧУЖДЫЕ ДОНОРУ СВЯЗКИ ИСХОДНИКА"),
     "a connector present in both source and donor must not be listed as foreign",
   );
   names.push("donor-native connectors are not forbidden by source-overlap detection");
