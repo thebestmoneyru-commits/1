@@ -57,7 +57,7 @@ export function runRouterAdapterSelfTests(): { passed: number; names: string[] }
     "LOCAL SOURCE TEXT FOR ANTI-COPY CHECK JSON:",
     JSON.stringify(privateSource),
     "",
-    "ОБЯЗАТЕЛЬНЫЕ УТВЕРЖДЕНИЯ: [{\\"subject\\":\\"тезис\\",\\"predicate\\":\\"сохранить\\",\\"object\\":\\"смысл\\}]",
+    'ОБЯЗАТЕЛЬНЫЕ УТВЕРЖДЕНИЯ: [{"subject":"тезис","predicate":"сохранить","object":"смысл"}]',
   ].join("\n");
   const modelFacingPrompt = stripLocalSourceTextFromCandidatePrompt(localOnlyPrompt);
   assert(
