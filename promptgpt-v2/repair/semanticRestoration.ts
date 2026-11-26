@@ -5,7 +5,7 @@ import { countWords } from "../style/tokenizer";
 
 function semanticTokens(value: string | undefined): string[] {
   if (!value) return [];
-  return (value.toLocaleLowerCase("ru-RU").match(/[\\p{L}\\p{N}-]+/gu) ?? []).sort((a, b) => a.length - b.length || a.localeCompare(b, "ru-RU"));
+  return (value.toLocaleLowerCase("ru-RU").match(/[\p{L}\p{N}-]+/gu) ?? []).sort((a, b) => a.length - b.length || a.localeCompare(b, "ru-RU"));
 }
 
 
