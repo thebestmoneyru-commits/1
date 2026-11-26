@@ -448,7 +448,7 @@ function buildTransformationPlan(sourceText: string, donorBaseline: DonorStyleBa
   const punctuationGuardrails: string[] = [];
   if (colonRate < 3) {
     punctuationGuardrails.push(
-      `ДВОЕТОЧИЯ (:): у донора их мало (${(colonRate / 10).toFixed(1)} на 100 сл.) — ставь не более 0–1 двоеточия на весь текст.`,
+      `ДВОЕТОЧИЯ (:): у донора они редки (${(colonRate / 10).toFixed(1)} на 100 сл.) — обычно обходись без них, но используй, когда они естественно нужны для смысла; не соблюдай числовой предел механически.`,
     );
   }
   if (quoteRate < 10) {
@@ -505,7 +505,7 @@ function buildTransformationPlan(sourceText: string, donorBaseline: DonorStyleBa
     ...(subordinateDirective ? [subordinateDirective] : []),
     ...punctuationGuardrails,
     bannedOpenersDirective,
-    ...(punctTargets.length ? [`Ориентиры пунктуации на ~${srcWords} слов: ${punctTargets.join("; ")}.`] : []),
+    ...(punctTargets.length ? [`Ориентиры пунктуации на ~${srcWords} слов (приблизительные, НЕ обязательные квоты): ${punctTargets.join("; ")}. Не вставляй знак ради достижения числа; естественность конструкции, смысл, обязательные цитаты и сохранение логических отношений важнее точного совпадения частоты.`] : []),
     ...(cues.openers.length ? [`Характерные зачины фраз донора: ${cues.openers.map((o) => `«${o}...»`).join(", ")}.`] : []),
     ...(cues.connectors.length ? [`Характерные связки донора: ${cues.connectors.join(", ")}.`] : []),
     ...(forbidden.length ? [`АНТИ-КОПИРОВАНИЕ ИСХОДНИКА: избегай дословного воспроизведения длинных индивидуальных фрагментов (${forbidden.map((f) => `«${f}»`).join(", ")}), но не считай запретными общеупотребительные связки, термины, имена, устойчивые выражения и неизбежные контекстные сочетания. Перестраивай синтаксис и способ подачи, а не заменяй механически слова.`] : []),
