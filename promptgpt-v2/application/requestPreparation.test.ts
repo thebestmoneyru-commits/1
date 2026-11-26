@@ -14,7 +14,7 @@ const validExtraction = [
 function fakeRouter(...outputs: unknown[]): ModelRouter {
   let call = 0;
   return {
-    async generate(request?: { prompt?: string }) {
+    async generate() {
       const output = outputs[Math.min(call, outputs.length - 1)];
       call += 1;
       return { text: JSON.stringify(output), requestedModel: "test", usedModel: "test", fallbackOccurred: false, attempts: [], warnings: [] };
