@@ -592,7 +592,7 @@ export function buildCandidatePrompt(input: {
     `ИНТЕНСИВНОСТЬ: ${input.styleIntensity}/5. ${intensity}`,
     `ПОДХОД: ${candidateApproach}`,
     "",
-    "ИСХОДНЫЙ ТЕКСТ (ТОЛЬКО СМЫСЛ И ФАКТЫ; ПЕРЕПИСАТЬ СИНТАКСИС ЗАНОВО, НЕ КОПИРУЯ ОБОРОТЫ):",
+    "LOCAL SOURCE TEXT FOR ANTI-COPY CHECK JSON:",
     JSON.stringify(input.sourceText),
     "",
     `ОБЯЗАТЕЛЬНЫЕ УТВЕРЖДЕНИЯ (${sourceWordCount} сл. в исходнике — сохранить все, без сокращения смысла):`,
