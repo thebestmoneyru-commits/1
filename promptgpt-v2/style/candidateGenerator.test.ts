@@ -255,7 +255,7 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
     relPrompt.includes('"expression":"вследствие чего"') &&
     relPrompt.includes("пар скобок") &&
     relPrompt.includes("пар кавычек") &&
-    relPrompt.includes("не коверкай"),
+    relPrompt.includes("ключевые слова не искажай"),
     "prompt must expose logical relations, pair-aware punctuation quotas, and keyword anti-garbling guard",
   );
   names.push("logical relations, pair punctuation quotas, and anti-garbling rules");
