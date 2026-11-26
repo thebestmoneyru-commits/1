@@ -267,6 +267,45 @@ export async function runCandidateGeneratorSelfTests(): Promise<{ passed: number
       !relPrompt.includes('"expression":"вследствие чего"'),
     "generation receives role-tagged lexical atoms and relation types, never source-ordered phrases or connector wording",
   );
+  const atomSource = "Смысл человеческого существования неизбежно редуцируется к процессу последовательного и сугубо материального улучшения внешних условий бытия.";
+  const atomBuilt = buildSemanticInventory(atomSource, [{
+    id: "p1",
+    summary: atomSource,
+    sourceSpan: { start: 0, end: atomSource.length, text: atomSource },
+    subject: "смысл человеческого существования",
+    predicate: "неизбежно редуцируется",
+    object: "к процессу последовательного и сугубо материального улучшения внешних условий бытия",
+    polarity: "positive",
+    qualifications: [{ kind: "restriction", value: "В рамках атеистической парадигмы" }],
+    relations: [],
+    mandatory: true,
+  }]);
+  assert(atomBuilt.valid && !!atomBuilt.inventory, "multiword semantic-atom fixture is valid");
+  const atomPrompt = buildCandidatePrompt({
+    sourceText: atomSource,
+    inventory: atomBuilt.inventory!,
+    donorBaseline: shortCreated.baseline!,
+    candidateIndex: 0,
+    styleIntensity: 5,
+    maxDonorExamples: 12,
+  });
+  const atomMarker = "ОБЯЗАТЕЛЬНЫЕ УТВЕРЖДЕНИЯ";
+  const atomStart = atomPrompt.indexOf("\\n", atomPrompt.indexOf(atomMarker)) + 1;
+  const atomEnd = atomPrompt.indexOf("\\n", atomStart);
+  const atomPayload = JSON.parse(atomPrompt.slice(atomStart, atomEnd)) as Array<Record<string, unknown>>;
+  const firstAtom = atomPayload[0];
+  const subjectTokens = firstAtom.subjectTokens as string[];
+  const predicateTokens = firstAtom.predicateTokens as string[];
+  const objectTokens = firstAtom.objectTokens as string[];
+  assert(
+    subjectTokens.length === 3 && subjectTokens.join(" ") !== "смысл человеческого существования" &&
+      predicateTokens.length === 2 && predicateTokens.join(" ") !== "неизбежно редуцируется" &&
+      objectTokens.length > 4 && objectTokens.join(" ") !== "к процессу последовательного и сугубо материального улучшения внешних условий бытия" &&
+      !JSON.stringify(firstAtom).includes("В рамках атеистической парадигмы"),
+    "multiword source phrases and qualification wording are de-ordered while every lexical atom remains available",
+  );
+  names.push("source-order-free subject, predicate, object and qualification atoms");
+
   names.push("logical relations, pair punctuation quotas, and anti-garbling rules");
 
   return { passed: names.length, names };
