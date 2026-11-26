@@ -406,7 +406,7 @@ function buildTransformationPlan(sourceText: string, donorBaseline: DonorStyleBa
   const sVariance = sourceProfile.features.find((f) => f.id === "rhythm.sentence-length-variance")?.rate ?? 0;
   const targetShortCount =
     dCorpus.sentenceLengthDistribution.short.share > 0
-      ? Math.max(2, Math.round(estTargetSentences * dCorpus.sentenceLengthDistribution.short.share))
+      ? Math.max(1, Math.round(estTargetSentences * dCorpus.sentenceLengthDistribution.short.share))
       : 0;
   const targetVeryLongCount =
     dCorpus.sentenceLengthDistribution.veryLong.share > 0
@@ -420,15 +420,15 @@ function buildTransformationPlan(sourceText: string, donorBaseline: DonorStyleBa
     dVariance > Math.max(40, sVariance * 1.5)
       ? `КОНТРАСТ ДЛИН (разброс у донора высокий — ${dVariance.toFixed(0)} против ${sVariance.toFixed(0)} в исходнике): НЕ усредняй все фразы до одного размера! В тексте (~${estTargetSentences} предл.) обязательно сделай ${
           targetShortCount > 0
-            ? `не менее ${targetShortCount} коротких предложений (5–8 слов, доля у донора ${(dCorpus.sentenceLengthDistribution.short.share * 100).toFixed(0)}%)`
+            ? `около ${targetShortCount} коротких предложений (5–8 слов, доля у донора ${(dCorpus.sentenceLengthDistribution.short.share * 100).toFixed(0)}%)`
             : "короткие ёмкие фразы"
         } и ${
           targetVeryLongCount > 0
-            ? `не менее ${targetVeryLongCount} развёрнутого периода (36–48 слов, доля у донора ${(dCorpus.sentenceLengthDistribution.veryLong.share * 100).toFixed(0)}%)`
-            : `не менее ${targetLongCount} длинных периодов (21–35 слов, ${(dCorpus.sentenceLengthDistribution.long.share * 100).toFixed(0)}%)`
+            ? `около ${targetVeryLongCount} развёрнутого периода (36–48 слов, доля у донора ${(dCorpus.sentenceLengthDistribution.veryLong.share * 100).toFixed(0)}%)`
+            : `около ${targetLongCount} длинных периодов (21–35 слов, ${(dCorpus.sentenceLengthDistribution.long.share * 100).toFixed(0)}%)`
         }.`
       : dCorpus.sentenceLengthDistribution.short.share >= 0.12
-        ? `Включай короткие фразы до 8 слов (целевая доля ${(dCorpus.sentenceLengthDistribution.short.share * 100).toFixed(0)}%, не менее ${Math.max(2, targetShortCount)} коротких предложений).`
+        ? `Включай короткие фразы до 8 слов в доле, близкой к донору (${(dCorpus.sentenceLengthDistribution.short.share * 100).toFixed(0)}%; ориентир около ${Math.max(1, targetShortCount)} фраз), если это естественно для смысловой структуры.`
         : "";
 
   const dSubordinate = donorBaseline.profile.features.find((f) => f.id === "syntax.subordinate-markers")?.rate ?? 0;
