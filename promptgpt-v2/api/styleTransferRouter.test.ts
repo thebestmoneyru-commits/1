@@ -19,6 +19,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
   let rateLimitCalls = 0;
   const rateLimit: RequestHandler = (_req, _res, next) => { rateLimitCalls++; next(); };
   let lastPrepareUnfiltered: boolean | undefined;
+  let lastPrepareStableMode: boolean | undefined;
   let lastExecuteUnfiltered: boolean | undefined;
   let lastExecuteGeneration: { styleIntensity?: number; customInstructions?: string } | undefined;
   const service = {
@@ -46,6 +47,7 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     prepareRequest: async (input) => {
       prepareCalls++;
       lastPrepareUnfiltered = input.unfilteredMode;
+      lastPrepareStableMode = input.stableMode;
       if (prepareMode === "rate-limit") {
         throw new ModelRouterError("Quota exceeded on model", "rate-limit", "gemini-3.1-flash-lite");
       }
@@ -94,10 +96,11 @@ export async function runStyleTransferApiSelfTests(): Promise<{ passed: number; 
     const oversized = await fetch(base, {
       method: "POST",
       headers: { "content-type": "application/json", "x-test-auth": "allowed" },
-      body: JSON.stringify({ sourceText: "x".repeat(101), donorText: "Текст автора ".repeat(20) }),
+      body: JSON.stringify({ sourceText: "x".repeat(101), donorText: "Текст автора ".repeat(20), stableMode: true }),
     });
     assert(oversized.status === 200, "source and donor text beyond legacy configured limits must still be processed");
     assert(Number(prepareCalls) === 1 && Number(executeCalls) === 1, "large text must reach preparation and service");
+    assert(lastPrepareStableMode === true, "stableMode must be passed to server-side preparation when requested");
     names.push("ignore legacy per-field text caps");
 
     const malformed = await fetch(base, {
