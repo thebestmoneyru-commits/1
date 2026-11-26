@@ -4,6 +4,7 @@ export type StageNoGainReason =
   | "not-applied"
   | "semantic-check-failed"
   | "reverification-incomplete"
+  | "below-acceptance-threshold"
   | "score-dropped-or-flat";
 
 export interface StageScoreDelta {
