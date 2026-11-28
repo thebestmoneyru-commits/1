@@ -3648,7 +3648,7 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                {(dnaRefinementMeta.authorialDnaMatch?.items?.length || dnaRefinementMeta.donorAnomalyMatch?.items?.length) ? (
+                {(dnaRefinementMeta.authorialDnaMatch?.items?.length || dnaRefinementMeta.donorAnomalyMatch !== undefined && dnaRefinementMeta.donorAnomalyMatch !== null) ? (
                   <div className="border-t border-slate-800 pt-3 space-y-2">
                     <div className="text-[11px] font-bold text-slate-200">
                       Проверка авторских отклонений и ошибок донора
@@ -3664,6 +3664,11 @@ export default function App() {
                         </span>
                       </div>
                     ))}
+                    {dnaRefinementMeta.donorAnomalyMatch && dnaRefinementMeta.donorAnomalyMatch.items.length === 0 ? (
+                      <div className="text-[11px] text-slate-400">
+                        В доноре не выявлено отдельных подтверждённых орфографических/грамматических аномалий для количественного переноса.
+                      </div>
+                    ) : null}
                     {dnaRefinementMeta.donorAnomalyMatch?.items?.map((item, index) => (
                       <div key={`${item.category}-${index}`} className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                         <span className="text-slate-300">Отклонение: {item.category}</span>
@@ -3679,6 +3684,11 @@ export default function App() {
                       Совпадение повторяющихся авторских приёмов: {dnaRefinementMeta.authorialDnaMatch?.averageMatchPct ?? '—'}% · отклонений/ошибок: {dnaRefinementMeta.donorAnomalyMatch?.averageMatchPct ?? '—'}%.
                       Наличие ошибки в доноре само по себе не считается дефектом результата.
                     </div>
+                  </div>
+                ) : null}
+                {dnaRefinementMeta.blueprintExtracted === false ? (
+                  <div className="text-[11px] text-amber-300 border-t border-amber-900/50 pt-2">
+                    Внимание: качественный чертёж донора не получен. Автоматическая сверка отдельных ошибок и отклонений недоступна в этом запуске; результат нельзя считать полностью проверенным по этому слою ДНК.
                   </div>
                 ) : null}
               </div>
