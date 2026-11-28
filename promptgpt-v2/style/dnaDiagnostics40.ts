@@ -74,6 +74,8 @@ export interface DnaDiagnostics40Input {
     warnings?: readonly string[];
     candidates?: ReadonlyArray<{
       candidateId?: string;
+      /** Exact final text bound to this candidate evaluation; prevents stale diagnostics from another candidate. */
+      finalText?: string;
       repaired?: boolean;
       repairPassed?: boolean;
       warnings?: readonly string[];
@@ -752,25 +754,43 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
     codeHint: "promptgpt-v2/style/styleDNAAnalyzer.ts и promptgpt-v2/critic/styleCritic.ts",
   });
 
-  const dCommas = per100(donorProfile, "punctuation.comma");
-  const rCommas = per100(resultProfile, "punctuation.comma");
-  const isSparseDonorCommas = dCommas < 7.0;
-  const commaNormalizedUp = isSparseDonorCommas && rCommas > dCommas + 3.0;
-  const p24Score = commaNormalizedUp ? 42 : computeRateSimilarityScore(dCommas, rCommas, 3.2);
+  const anomalySpecs: Array<[string, string, number, number]> = [
+    ["syntax.punctuation-quirks", "пунктуационные шероховатости", 0.06, 0.5],
+    ["lexical.adjacent-repeat", "смежные повторы/опечатки", 0.15, 0.5],
+    ["lexical.nearby-repeat", "близкие лексические повторы", 1.0, 0.35],
+  ];
+  const anomalyComparisons = anomalySpecs.map(([featureId, label, absoluteTolerance, relativeTolerance]) => {
+    const donorRate = getFeatureRate(donorProfile, featureId);
+    const sourceRate = getFeatureRate(sourceProfile, featureId);
+    const resultRate = getFeatureRate(resultProfile, featureId);
+    const tolerance = Math.max(absoluteTolerance, donorRate * relativeTolerance);
+    return {
+      featureId,
+      label,
+      donorRate,
+      sourceRate,
+      resultRate,
+      score: computeRateSimilarityScore(donorRate, resultRate, tolerance),
+    };
+  });
+  const p24Score = anomalyComparisons.reduce((sum, item) => sum + item.score, 0) / Math.max(1, anomalyComparisons.length);
+  const anomalySummary = anomalyComparisons
+    .map((item) => `${item.label}: донор ${item.donorRate.toFixed(3)}, результат ${item.resultRate.toFixed(3)}`)
+    .join("; ");
   pushParam({
     id: "irregularity-preservation",
     category: "punctuation-flaws",
-    name: "Сохранение донорской плотности запятых",
-    donorValue: isSparseDonorCommas ? `редк. запятые (${dCommas.toFixed(1)}/100)` : `норм. (${dCommas.toFixed(1)}/100)`,
-    sourceValue: `${per100(sourceProfile, "punctuation.comma").toFixed(1)}/100`,
-    resultValue: `${rCommas.toFixed(1)}/100`,
-    targetRule: "сопоставимая частота запятых; прочие ошибки отдельно не классифицируются",
+    name: "Сохранение ошибок и шероховатостей донора",
+    donorValue: anomalyComparisons.map((item) => item.donorRate.toFixed(3)).join(" / "),
+    sourceValue: anomalyComparisons.map((item) => item.sourceRate.toFixed(3)).join(" / "),
+    resultValue: anomalyComparisons.map((item) => item.resultRate.toFixed(3)).join(" / "),
+    targetRule: "не нормализовать подтверждённые донорские отклонения; сопоставимая частота",
     status: statusFromScore(p24Score),
     score: p24Score,
-    diagnosis: commaNormalizedUp
-      ? "Текст «причёсан» по школьной норме запятых вопреки разрежённому донору. Орфографические и грамматические отклонения этим показателем не измеряются."
-      : "Плотность запятых близка к донору; орфографические и грамматические отклонения этим показателем не измеряются.",
-    codeHint: "promptgpt-v2/repair/surgicalRepair.ts и promptgpt-v2/repair/semanticRestoration.ts",
+    diagnosis: p24Score >= 72
+      ? `Донорские шероховатости и повторы перенесены в сопоставимой пропорции. ${anomalySummary}`
+      : `Частоты донорских шероховатостей не совпадают: часть могла быть исправлена или избыточно добавлена. ${anomalySummary}`,
+    codeHint: "promptgpt-v2/style/styleDNAAnalyzer.ts, styleDNAScorer.ts и critic/styleCritic.ts",
   });
 
   // --- 25..32: SYNTAX & VOICE ---
@@ -889,8 +909,15 @@ export function buildDnaDiagnostics40(input: DnaDiagnostics40Input): DnaDiagnost
   const v2 = input.v2Response ?? null;
   const legacy = input.legacyMeta ?? null;
   const candidates: NonNullable<NonNullable<DnaDiagnostics40Input["v2Response"]>["candidates"]> = v2?.candidates ?? [];
+  const requestedCandidateId = v2?.selectedCandidateId || v2?.bestAvailableCandidateId;
   const activeCandidate =
-    candidates.find((c) => c.candidateId === (v2?.selectedCandidateId || v2?.bestAvailableCandidateId)) ?? candidates[0];
+    candidates.find((c) => c.candidateId === requestedCandidateId && c.finalText === resultText) ??
+    candidates.find((c) => c.finalText === resultText);
+  if (v2 && !activeCandidate) {
+    profileWarnings.push(
+      "Не найден кандидат с точным совпадением finalText и resultText. Семантические показатели и этапы не подставляются из другого кандидата."
+    );
+  }
   const steps: NonNullable<(typeof candidates)[number]["diagnosticSteps"]> = activeCandidate?.diagnosticSteps ?? [];
   const stepMap = new Map<string, (typeof steps)[number]>(steps.map((s) => [s.stage ?? "", s] as const));
   const finalEval = activeCandidate?.finalEvaluation ?? activeCandidate?.initial;
