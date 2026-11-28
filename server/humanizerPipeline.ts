@@ -1626,9 +1626,9 @@ export function diagnoseTextDefects(
       resultCount,
       expectedCountInResult,
       matchPct,
-      status: tooShortForReliablePresence
+      status: (tooShortForReliablePresence
         ? 'not_expected_in_short_text'
-        : matchPct >= 70 ? 'matched' : 'underrepresented',
+        : matchPct >= 70 ? 'matched' : 'underrepresented') as AuthorialDnaMatchItem['status'],
     };
   });
   const authorialDnaMatch: AuthorialDnaMatchReport = {
