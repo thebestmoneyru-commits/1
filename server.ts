@@ -1236,7 +1236,9 @@ app.post('/api/style-dna-transfer', async (req, res) => {
     let styleBlueprint: DonorStyleBlueprint | null = null;
     let deSkeleton: DeSkeletonResult | null = null;
 
-    if (runDeepConvergence) {
+    {
+      // Чертёж донора извлекается ВСЕГДА: реестр ошибок и авторских отклонений
+      // не должен зависеть от включения дополнительных циклов сходимости.
       const t1Hash = hashText(text1.trim());
       const t2Hash = hashText(text2.trim());
 
@@ -1262,7 +1264,7 @@ app.post('/api/style-dna-transfer', async (req, res) => {
               );
             })(),
 
-        isUnfilteredMode
+        !runDeepConvergence || isUnfilteredMode
           ? Promise.resolve(null)
           : cachedDs
             ? Promise.resolve(cachedDs)
