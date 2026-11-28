@@ -1821,7 +1821,8 @@ ${text2}
           const candidateDiag = diagnoseTextDefects(
             candidate,
             donorProfile,
-            text2
+            text2,
+            styleBlueprint
           );
           const candidateDet = evaluateDetectorFeedback(
             candidate,
