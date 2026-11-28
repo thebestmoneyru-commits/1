@@ -192,6 +192,8 @@ export interface DonorDNAProfile {
   sampleCadence: number[];
   exemplars: string[];
   authorialDeviations?: AuthorialDeviationProfile;
+  // Фразы из списка AI-клише, реально встречающиеся у донора: их нельзя автоматически штрафовать.
+  donorObservedCliches?: string[];
   // DNA v3: Deep morphosyntax, multi-bin cadence & anti-leakage
   lengthHistogramPct: [number, number, number, number, number]; // [1-5, 6-10, 11-16, 17-24, 25+]
   cadenceDeltaMean: number;
@@ -205,6 +207,15 @@ export interface DonorDNAProfile {
   donorTopicTerms: string[];
 }
 
+export interface DonorAuthorialAnomaly {
+  category: string;
+  observedForms: string[];
+  count: number;
+  per300Words: number;
+  confidence: number;
+  transferRule: string;
+}
+
 export interface DonorStyleBlueprint {
   voiceAndPerson: string;
   lexicalRegister: string;
@@ -213,6 +224,8 @@ export interface DonorStyleBlueprint {
   rhythmNotes: string;
   avoidFeatures: string[];
   structuralTemplates: string[];
+  // Реальные отклонения донора — отдельный слой ДНК, а не список дефектов результата.
+  authorialAnomalies?: DonorAuthorialAnomaly[];
 }
 
 export interface FactInventory {
@@ -1085,6 +1098,7 @@ export function extractDonorDNAProfile(donorText: string): DonorDNAProfile {
     sampleCadence,
     exemplars,
     authorialDeviations,
+    donorObservedCliches: EXTENDED_AI_CLICHES.filter((phrase) => lower.includes(phrase)),
     lengthHistogramPct,
     cadenceDeltaMean,
     nominalizationPer100: morpho.nominalizationPer100,
@@ -1361,6 +1375,22 @@ ${promptStrategy ? `- Особые указания: ${promptStrategy}` : ''}`);
 export const BLUEPRINT_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
+    authorialAnomalies: {
+      type: Type.ARRAY,
+      description: 'Реестр наблюдаемых авторских отклонений и ошибок донора. Это не список того, что надо исправить.',
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          category: { type: Type.STRING, description: 'Тип: орфография, грамматика, пунктуация, повтор, синтаксис, оформление или иное.' },
+          observedForms: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Точные примеры из донора без исправления.' },
+          count: { type: Type.INTEGER, description: 'Число подтверждённых случаев в доноре.' },
+          per300Words: { type: Type.NUMBER, description: 'Частота на 300 слов.' },
+          confidence: { type: Type.NUMBER, description: 'Уверенность, что это реальная особенность образца, 0..1.' },
+          transferRule: { type: Type.STRING, description: 'Как воспроизводить особенность пропорционально, не меняя смысл целевого текста.' },
+        },
+        required: ['category', 'observedForms', 'count', 'per300Words', 'confidence', 'transferRule'],
+      },
+    },
     voiceAndPerson: {
       type: Type.STRING,
       description: 'От какого лица ведется речь, позиция автора, соотношение актива и пассива.',
@@ -1394,6 +1424,7 @@ export const BLUEPRINT_RESPONSE_SCHEMA = {
     },
   },
   required: [
+    'authorialAnomalies',
     'voiceAndPerson',
     'lexicalRegister',
     'syntaxHabits',
@@ -1409,8 +1440,8 @@ export function buildDonorBlueprintPrompt(
 ): { systemInstruction: string; contents: string } {
   return {
     systemInstruction:
-      'Ты — профессор-стилист и лингвист-текстолог. Проанализируй образец автора и извлеки структурный чертёж его манеры письма без пересказа сюжета и фактов. Особое внимание удели повторяющимся особенностям: необычным конструкциям, характерным повторам, синтаксическим отклонениям, пунктуации и ритму. Не объявляй их ошибками только потому, что они отличаются от нейтральной нормы.',
-    contents: `ТЕКСТ-ДОНОР:\n${donorText}\n\nИзвлеки точный стилевой чертёж автора в формате JSON.`,
+      'Ты — профессор-стилист и лингвист-текстолог. Извлеки полный структурный чертёж манеры письма. ОБЯЗАТЕЛЬНО отдельно зафиксируй authorialAnomalies: реальные наблюдаемые орфографические, грамматические, пунктуационные, синтаксические отклонения, нестандартные повторы и особенности оформления. Не исправляй примеры и не подменяй их нормативными вариантами. Для каждого укажи точные формы, число случаев, частоту на 300 слов, уверенность и правило пропорционального переноса. Различай повторяющуюся особенность и единичную вероятную опечатку; единичный случай тоже зафиксируй, но не объявляй устойчивым почерком без оснований. Не переноси тему и факты донора.',
+    contents: `ТЕКСТ-ДОНОР:\n${donorText}\n\nИзвлеки точный стилевой чертёж автора в формате JSON. Поле authorialAnomalies обязательно: если отклонений не обнаружено, верни пустой массив.`,
   };
 }
 
@@ -1586,7 +1617,10 @@ export function diagnoseTextDefects(
 
   const issues: DiagnosticIssue[] = [];
   const lowerFull = text.toLowerCase();
-  const foundCliches = EXTENDED_AI_CLICHES.filter((c) => lowerFull.includes(c));
+  const donorCliches = new Set(donorProfile?.donorObservedCliches ?? []);
+  const foundCliches = EXTENDED_AI_CLICHES.filter(
+    (c) => lowerFull.includes(c) && !donorCliches.has(c)
+  );
 
   const copulaSentences: number[] = [];
   let triadCount = 0;
@@ -1598,7 +1632,9 @@ export function diagnoseTextDefects(
     const sId = idx + 1;
 
     // 1. Машинные клише.
-    const sCliches = EXTENDED_AI_CLICHES.filter((c) => ls.includes(c));
+    const sCliches = EXTENDED_AI_CLICHES.filter(
+      (c) => ls.includes(c) && !donorCliches.has(c)
+    );
 
     if (sCliches.length > 0) {
       issues.push({
