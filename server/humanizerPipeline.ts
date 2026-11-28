@@ -1659,13 +1659,12 @@ export function diagnoseTextDefects(
       : null,
   };
   const anomalyWordCount = Math.max(1, getSentenceWords(text).length);
+  const normalizedAnomalyText = text.toLowerCase().replace(/ё/g, 'е');
   const donorAnomalyItems: DonorAnomalyMatchItem[] = (blueprint?.authorialAnomalies ?? []).map((anomaly) => {
     const forms = Array.from(new Set(anomaly.observedForms.map((form) => form.trim().toLowerCase().replace(/ё/g, 'е')).filter(Boolean)));
     let resultCount = 0;
     for (const form of forms) {
-      const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, '\\  const lengths = sentences.map((s) => getSentenceWords(s).length);');
-      const matches = text.toLowerCase().replace(/ё/g, 'е').match(new RegExp(escaped, 'g'));
-      resultCount += matches?.length ?? 0;
+      resultCount += Math.max(0, normalizedAnomalyText.split(form).length - 1);
     }
     const resultPer300Words = Number(((resultCount / anomalyWordCount) * 300).toFixed(2));
     const expectedCountInResult = Number(((anomaly.per300Words / 300) * anomalyWordCount).toFixed(2));
