@@ -274,6 +274,12 @@ async function invoke(
       responseSchema,
       thinking,
       sampling: samplingOverride,
+      // StyleCritic must not spend minutes retrying a temporarily unavailable model.
+      // One bounded attempt per configured model keeps the failure visible and lets
+      // the service retain the already verified candidate for diagnostics.
+      ...(task === "style-critique"
+        ? { timeoutMs: 35_000, maxAttemptsPerModel: 1 }
+        : {}),
       signal,
     });
     onTaskOutcome?.({
