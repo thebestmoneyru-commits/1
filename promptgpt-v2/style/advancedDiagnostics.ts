@@ -40,7 +40,8 @@ function normalizeStepStatus(raw: unknown): DiagnosticStatus {
   if (["warn", "warning", "not-completed"].includes(value)) return "warn";
   if (["skip", "skipped"].includes(value)) return "skip";
   if (value === "pending") return "pending";
-  return "ok";
+  if (value === "ok" || value === "completed" || value === "success" || value === "passed") return "ok";
+  return "pending";
 }
 
 export function summarizeDiagnosticSteps(steps: ReadonlyArray<DiagnosticStepItem>): DiagnosticSummary {
@@ -56,8 +57,24 @@ export function summarizeDiagnosticSteps(steps: ReadonlyArray<DiagnosticStepItem
     else if (status === "ok") passedSteps++;
   }
   const overallStatus: DiagnosticStatus =
-    errorSteps > 0 ? "error" : warnSteps > 0 ? "warn" : "ok";
-  return { totalSteps: steps.length, passedSteps, warnSteps, errorSteps, skippedSteps, overallStatus };
+    errorSteps > 0
+      ? "error"
+      : warnSteps > 0
+        ? "warn"
+        : passedSteps > 0
+          ? "ok"
+          : "pending";
+  return {
+    totalSteps: steps.length,
+    passedSteps,
+    warnSteps,
+    errorSteps,
+    skippedSteps,
+    overallStatus,
+    ...(steps.length === 0 || passedSteps + warnSteps + errorSteps === 0
+      ? { notes: ["Нет выполненных диагностических шагов; успешный статус не присваивается."] }
+      : {}),
+  };
 }
 
 export function buildAdvancedDiagnostics(
