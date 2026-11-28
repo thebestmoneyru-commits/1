@@ -1417,7 +1417,8 @@ ${text2}
         const diag = diagnoseTextDefects(
           polished,
           donorProfile,
-          text2
+          text2,
+          styleBlueprint
         );
         const det = evaluateDetectorFeedback(
           polished,
@@ -1500,7 +1501,8 @@ ${text2}
       bestDiag = diagnoseTextDefects(
         bestText,
         donorProfile,
-        text2
+        text2,
+        styleBlueprint
       );
       bestDet = evaluateDetectorFeedback(
         bestText,
@@ -1941,6 +1943,7 @@ ${text2}
         donorLeakCount: diagAfter.factsReport.donorLeakTerms?.length ?? 0,
         // Сверка авторских отклонений: частота в доноре против частоты в результате.
         authorialDnaMatch: diagAfter.authorialDnaMatch,
+        donorAnomalyMatch: diagAfter.donorAnomalyMatch,
 
         blueprintExtracted: !!styleBlueprint,
         deSkeletonized: !!deSkeleton,
