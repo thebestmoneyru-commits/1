@@ -304,7 +304,26 @@ export interface DiagnosticIssue {
   message: string;
 }
 
+export interface AuthorialDnaMatchItem {
+  kind: AuthorialDeviationKind;
+  donorPer300Words: number;
+  resultPer300Words: number;
+  donorCount: number;
+  resultCount: number;
+  expectedCountInResult: number;
+  matchPct: number;
+  status: 'matched' | 'underrepresented' | 'not_expected_in_short_text';
+}
+
+export interface AuthorialDnaMatchReport {
+  donorWords: number;
+  resultWords: number;
+  items: AuthorialDnaMatchItem[];
+  averageMatchPct: number | null;
+}
+
 export interface DiagnosticReport {
+  authorialDnaMatch: AuthorialDnaMatchReport;
   sentenceCount: number;
   paragraphCount: number;
   avgLen: number;
@@ -1069,6 +1088,7 @@ export function extractDonorDNAProfile(donorText: string): DonorDNAProfile {
   const authorialDeviations = extractAuthorialDeviationProfile(donorText);
 
   return {
+    authorialDnaMatch,
     sentenceCount: sentences.length,
     paragraphCount: Math.max(1, paragraphs.length),
     avgSentPerPara,
@@ -1587,6 +1607,38 @@ export function diagnoseTextDefects(
     .filter(Boolean);
 
   const sentences = splitSentences(text);
+  const resultAuthorialProfile = extractAuthorialDeviationProfile(text);
+  const donorAuthorialSignals = donorProfile?.authorialDeviations?.signals ?? [];
+  const resultWordCount = Math.max(1, getSentenceWords(text).length);
+  const authorialDnaItems: AuthorialDnaMatchItem[] = donorAuthorialSignals.map((donorSignal) => {
+    const resultSignal = resultAuthorialProfile.signals.find((signal) => signal.kind === donorSignal.kind);
+    const resultCount = resultSignal?.count ?? 0;
+    const resultPer300Words = Number(((resultCount / resultWordCount) * 300).toFixed(2));
+    const expectedCountInResult = Number(((donorSignal.per300Words / 300) * resultWordCount).toFixed(2));
+    const tooShortForReliablePresence = expectedCountInResult < 0.5;
+    const denominator = Math.max(0.2, donorSignal.per300Words);
+    const matchPct = Math.max(0, Math.min(100, Math.round(100 - (Math.abs(resultPer300Words - donorSignal.per300Words) / denominator) * 100)));
+    return {
+      kind: donorSignal.kind,
+      donorPer300Words: donorSignal.per300Words,
+      resultPer300Words,
+      donorCount: donorSignal.count,
+      resultCount,
+      expectedCountInResult,
+      matchPct,
+      status: tooShortForReliablePresence
+        ? 'not_expected_in_short_text'
+        : matchPct >= 70 ? 'matched' : 'underrepresented',
+    };
+  });
+  const authorialDnaMatch: AuthorialDnaMatchReport = {
+    donorWords: donorProfile?.authorialDeviations?.totalWords ?? 0,
+    resultWords: resultWordCount,
+    items: authorialDnaItems,
+    averageMatchPct: authorialDnaItems.length > 0
+      ? Math.round(authorialDnaItems.reduce((sum, item) => sum + item.matchPct, 0) / authorialDnaItems.length)
+      : null,
+  };
   const lengths = sentences.map((s) => getSentenceWords(s).length);
   const totalWords = lengths.reduce((a, b) => a + b, 0) || 1;
   const avgLen = Number((totalWords / (lengths.length || 1)).toFixed(1));
