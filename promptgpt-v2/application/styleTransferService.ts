@@ -1539,7 +1539,9 @@ export class StyleTransferService {
           sourceTrigramOverlap: computeWordTrigramOverlap(request.sourceText, outcome.finalText),
           sourceLengthRatio: request.sourceText.length > 0 ? outcome.finalText.length / request.sourceText.length : 0,
           selected: outcome.candidateId === selected?.candidateId,
-          bestAvailable: outcome.candidateId === bestAvailableCandidateId,
+          bestAvailable:
+            outcome.candidateId === bestAvailableCandidateId &&
+            outcome.finalText === bestAvailableText,
         })),
         explanation: selected
           ? `Выбран ${selected.candidateId}: кандидат прошёл обязательные проверки и допущен к выдаче.`
