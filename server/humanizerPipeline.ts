@@ -1666,8 +1666,8 @@ export function diagnoseTextDefects(
     donorWords: donorProfile?.authorialDeviations?.totalWords ?? 0,
     resultWords: resultWordCount,
     items: authorialDnaItems,
-    averageMatchPct: authorialDnaItems.length > 0
-      ? Math.round(authorialDnaItems.reduce((sum, item) => sum + item.matchPct, 0) / authorialDnaItems.length)
+    averageMatchPct: authorialDnaItems.filter((item) => item.status !== 'not_expected_in_short_text').length > 0
+      ? Math.round(authorialDnaItems.filter((item) => item.status !== 'not_expected_in_short_text').reduce((sum, item) => sum + item.matchPct, 0) / authorialDnaItems.filter((item) => item.status !== 'not_expected_in_short_text').length)
       : null,
   };
   const anomalyWordCount = Math.max(1, getSentenceWords(text).length);
@@ -1703,8 +1703,8 @@ export function diagnoseTextDefects(
   const donorAnomalyMatch: DonorAnomalyMatchReport | null = blueprint?.authorialAnomalies
     ? {
         items: donorAnomalyItems,
-        averageMatchPct: donorAnomalyItems.length > 0
-          ? Math.round(donorAnomalyItems.reduce((sum, item) => sum + item.matchPct, 0) / donorAnomalyItems.length)
+        averageMatchPct: donorAnomalyItems.filter((item) => item.status !== 'not_expected_in_short_text').length > 0
+          ? Math.round(donorAnomalyItems.filter((item) => item.status !== 'not_expected_in_short_text').reduce((sum, item) => sum + item.matchPct, 0) / donorAnomalyItems.filter((item) => item.status !== 'not_expected_in_short_text').length)
           : null,
       }
     : null;
@@ -2330,7 +2330,7 @@ function buildAuthorialProtectionReminder(
 РЕЕСТР ОТКЛОНЕНИЙ И ОШИБОК ИЗ ДОНОРА — ЧАСТЬ ПЕРЕНОСИМОЙ ДНК:
 ${anomalyRegister.map((item) =>
   `• ${item.category}: ${item.count} случаев; ${item.per300Words} на 300 слов; уверенность ${item.confidence}. Примеры: ${item.observedForms.slice(0, 3).map((x) => `«${x}»`).join(' | ')}. Правило: ${item.transferRule}`
-).join('\\n')}
+).join('\n')}
 - Не исправляй и не нормализуй эти формы только потому, что они расходятся с нейтральной нормой.
 - Переноси их с сопоставимой частотой на 300 слов, а не механически копируй примеры.
 - В коротком результате учитывай ожидаемую частоту: не требуй появления каждого единичного случая.
