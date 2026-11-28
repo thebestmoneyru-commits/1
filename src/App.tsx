@@ -1686,6 +1686,26 @@ export default function App() {
     deSkeletonized?: boolean;
     criticScore?: number | null;
     stopReason?: string;
+    authorialDnaMatch?: {
+      averageMatchPct: number | null;
+      items: Array<{
+        kind: string;
+        donorPer300Words: number;
+        resultPer300Words: number;
+        expectedCountInResult: number;
+        status: 'matched' | 'underrepresented' | 'not_expected_in_short_text';
+      }>;
+    };
+    donorAnomalyMatch?: {
+      averageMatchPct: number | null;
+      items: Array<{
+        category: string;
+        donorPer300Words: number;
+        resultPer300Words: number;
+        expectedCountInResult: number;
+        status: 'matched' | 'underrepresented' | 'overrepresented' | 'not_expected_in_short_text';
+      }>;
+    } | null;
   } | null>(null);
 
   // Shields
@@ -3628,6 +3648,39 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+                {(dnaRefinementMeta.authorialDnaMatch?.items?.length || dnaRefinementMeta.donorAnomalyMatch?.items?.length) ? (
+                  <div className="border-t border-slate-800 pt-3 space-y-2">
+                    <div className="text-[11px] font-bold text-slate-200">
+                      Проверка авторских отклонений и ошибок донора
+                    </div>
+                    {dnaRefinementMeta.authorialDnaMatch?.items?.map((item) => (
+                      <div key={item.kind} className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <span className="text-slate-300">{item.kind}</span>
+                        <span className="font-mono text-slate-400">
+                          донор {item.donorPer300Words}/300 · результат {item.resultPer300Words}/300 · ожидаемо {item.expectedCountInResult}
+                        </span>
+                        <span className={item.status === 'matched' ? 'text-emerald-300' : item.status === 'not_expected_in_short_text' ? 'text-slate-400' : 'text-amber-300'}>
+                          {item.status === 'matched' ? 'соответствует' : item.status === 'not_expected_in_short_text' ? 'не требуется в коротком тексте' : 'недостаточно перенесено'}
+                        </span>
+                      </div>
+                    ))}
+                    {dnaRefinementMeta.donorAnomalyMatch?.items?.map((item, index) => (
+                      <div key={`${item.category}-${index}`} className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <span className="text-slate-300">Отклонение: {item.category}</span>
+                        <span className="font-mono text-slate-400">
+                          донор {item.donorPer300Words}/300 · результат {item.resultPer300Words}/300 · ожидаемо {item.expectedCountInResult}
+                        </span>
+                        <span className={item.status === 'matched' ? 'text-emerald-300' : item.status === 'not_expected_in_short_text' ? 'text-slate-400' : 'text-amber-300'}>
+                          {item.status === 'matched' ? 'соответствует' : item.status === 'not_expected_in_short_text' ? 'не требуется в коротком тексте' : item.status === 'overrepresented' ? 'перенесено избыточно' : 'недостаточно перенесено'}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="text-[10px] text-slate-500">
+                      Совпадение повторяющихся авторских приёмов: {dnaRefinementMeta.authorialDnaMatch?.averageMatchPct ?? '—'}% · отклонений/ошибок: {dnaRefinementMeta.donorAnomalyMatch?.averageMatchPct ?? '—'}%.
+                      Наличие ошибки в доноре само по себе не считается дефектом результата.
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
 
