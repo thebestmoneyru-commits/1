@@ -2200,15 +2200,33 @@ export function applySentencePatches(
 }
 
 function buildAuthorialProtectionReminder(
-  donorProfile?: DonorDNAProfile
+  donorProfile?: DonorDNAProfile,
+  blueprint?: DonorStyleBlueprint | null
 ): string {
+  const anomalyRegister = blueprint?.authorialAnomalies ?? [];
+  const anomalyBlock = anomalyRegister.length > 0
+    ? `
+РЕЕСТР ОТКЛОНЕНИЙ И ОШИБОК ИЗ ДОНОРА — ЧАСТЬ ПЕРЕНОСИМОЙ ДНК:
+${anomalyRegister.map((item) =>
+  `• ${item.category}: ${item.count} случаев; ${item.per300Words} на 300 слов; уверенность ${item.confidence}. Примеры: ${item.observedForms.slice(0, 3).map((x) => `«${x}»`).join(' | ')}. Правило: ${item.transferRule}`
+).join('\\n')}
+- Не исправляй и не нормализуй эти формы только потому, что они расходятся с нейтральной нормой.
+- Переноси их с сопоставимой частотой на 300 слов, а не механически копируй примеры.
+- В коротком результате учитывай ожидаемую частоту: не требуй появления каждого единичного случая.
+- Не выдумывай новые разновидности ошибок, которых нет в доноре.`
+    : `
+РЕЕСТР ОТКЛОНЕНИЙ ДОНОРА:
+- Качественный анализ не выявил подтверждённых дополнительных ошибок для отдельного переноса.
+- Не выдумывай ошибки ради имитации почерка; сохраняй остальные обнаруженные особенности.`;
+
   if (!donorProfile?.authorialDeviations) {
     return `
 ЗАЩИТА АВТОРСКОГО ПОЧЕРКА:
 - Не исправляй необычную грамматику только потому, что она отличается от нейтральной нормы.
 - Не удаляй намеренные повторы, тяжеловесные конструкции, короткие фразы и нестандартные зачины автоматически.
 - Если неясно, является ли конструкция ошибкой или особенностью автора, предпочитай сохранение исходного варианта.
-- Исправляй только очевидные случайные ошибки, которые не выглядят частью авторской манеры.`;
+- Исправляй только очевидные случайные ошибки, которые не подтверждаются донорским образцом.
+${anomalyBlock}`;
   }
 
   const profile = donorProfile.authorialDeviations;
@@ -2240,7 +2258,8 @@ ${signals || 'В образце не обнаружено достаточно �
 - Не заменяй авторские повторы случайными синонимами.
 - Не перестраивай тяжеловесные конструкции, если они передают характерную манеру донора.
 - Не добавляй подобные особенности искусственно: переноси их только там, где они органичны.
-- При сомнении сохраняй конструкцию, а не нормализуй её.`;
+- При сомнении сохраняй конструкцию, а не нормализуй её.
+${anomalyBlock}`;
 }
 
 export function extractLastSentences(text: string, count = 2): string {
@@ -2293,7 +2312,7 @@ ${blueprint ? `• Синтаксис: ${blueprint.syntaxHabits.slice(0, 3).join
 ${donorProfile.exemplars[0] ? `• Ориентир интонации: «${donorProfile.exemplars[0]}»` : ''}`
     : '';
 
-  const authorialProtection = buildAuthorialProtectionReminder(donorProfile);
+  const authorialProtection = buildAuthorialProtectionReminder(donorProfile, blueprint);
 
   const systemInstruction = `Ты — точный стилистический редактор.
 Тебе даны нумерованные предложения [N], контекстные окна [N-1 / N / N+1] и список замечаний.
@@ -2367,7 +2386,7 @@ ${blueprint ? `- Привычки синтаксиса: ${blueprint.syntaxHabits
 ${donorProfile.exemplars.length > 0 ? `- Живой эталон тона донора (не копируй тему): «${donorProfile.exemplars[0]}»` : ''}`
     : '';
 
-  const authorialProtection = buildAuthorialProtectionReminder(donorProfile);
+  const authorialProtection = buildAuthorialProtectionReminder(donorProfile, blueprint);
 
   const systemInstruction = `Ты — внимательный филологический редактор и стилист.
 Твоя задача — улучшить текст, устранив только реальные дефекты, сохранив факты, смысл и индивидуальный голос автора.${donorGuidance}
@@ -2451,7 +2470,7 @@ export function buildStyleCriticPrompt(
 ): { systemInstruction: string; contents: string } {
   const { numberedText } = numberSentencesWithParagraphs(candidateText);
 
-  const authorialProtection = buildAuthorialProtectionReminder(donorProfile);
+  const authorialProtection = buildAuthorialProtectionReminder(donorProfile, blueprint);
 
   return {
     systemInstruction: `Ты — независимый критик-стилист.
@@ -2463,6 +2482,7 @@ export function buildStyleCriticPrompt(
 3. Где случайно просочились тема или словарь Текста 1.
 4. Какие конкретные предложения звучат шаблонно, искусственно или не похожи на донора.
 5. Не были ли устранены характерные особенности донора ради нейтральной грамматической нормы.
+6. Совпадает ли частота зафиксированных авторских отклонений и ошибок в кандидате с частотой у донора (на 300 слов); не исправлены ли они и не добавлены ли новые.
 
 ${authorialProtection}
 
@@ -2470,6 +2490,7 @@ ${authorialProtection}
 - Не считай каждую триаду, цепочку родительных падежей, связку «является», повтор или короткое предложение дефектом.
 - Не требуй искусственного разнообразия конструкций.
 - Не предлагай исправления только ради изменения статистических показателей.
+- Если конструкция или ошибка указана в реестре authorialAnomalies, не считай её дефектом кандидата: проверь пропорциональность воспроизведения.
 - Если конструкция соответствует донору и уместна по смыслу, оценивай её как допустимую.
 - Замечания должны быть конкретными и привязанными к определённым предложениям.
 - Не предлагай переписывать текст целиком, если достаточно точечной правки.
