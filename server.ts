@@ -328,7 +328,7 @@ function getOrCreateV2RouterForModel(preferredModelId: string): express.Router {
         maxDonorExamples: 18,
         adaptive: true,
       },
-      minimumStyleScore: 45,
+      minimumStyleScore: 76,
       minimumStyleConfidence: 0.15,
       criticPolishThreshold: 88,
       enableCompactRecovery: true,
