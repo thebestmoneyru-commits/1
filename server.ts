@@ -1939,6 +1939,8 @@ ${text2}
         detectorAiAfter: bestDet.compositeAiPct,
         detectorDistanceAfter: bestDet.donorDistance,
         donorLeakCount: diagAfter.factsReport.donorLeakTerms?.length ?? 0,
+        // Сверка авторских отклонений: частота в доноре против частоты в результате.
+        authorialDnaMatch: diagAfter.authorialDnaMatch,
 
         blueprintExtracted: !!styleBlueprint,
         deSkeletonized: !!deSkeleton,
