@@ -322,8 +322,25 @@ export interface AuthorialDnaMatchReport {
   averageMatchPct: number | null;
 }
 
+export interface DonorAnomalyMatchItem {
+  category: string;
+  donorPer300Words: number;
+  resultPer300Words: number;
+  donorCount: number;
+  resultCount: number;
+  expectedCountInResult: number;
+  matchPct: number;
+  status: 'matched' | 'underrepresented' | 'overrepresented' | 'not_expected_in_short_text';
+}
+
+export interface DonorAnomalyMatchReport {
+  items: DonorAnomalyMatchItem[];
+  averageMatchPct: number | null;
+}
+
 export interface DiagnosticReport {
   authorialDnaMatch: AuthorialDnaMatchReport;
+  donorAnomalyMatch: DonorAnomalyMatchReport | null;
   sentenceCount: number;
   paragraphCount: number;
   avgLen: number;
@@ -1089,6 +1106,7 @@ export function extractDonorDNAProfile(donorText: string): DonorDNAProfile {
 
   return {
     authorialDnaMatch,
+    donorAnomalyMatch,
     sentenceCount: sentences.length,
     paragraphCount: Math.max(1, paragraphs.length),
     avgSentPerPara,
@@ -1599,7 +1617,8 @@ function hasProtectedAuthorialPattern(
 export function diagnoseTextDefects(
   text: string,
   donorProfile?: DonorDNAProfile,
-  sourceText?: string
+  sourceText?: string,
+  blueprint?: DonorStyleBlueprint | null
 ): DiagnosticReport {
   const paragraphs = text
     .split(/\n{2,}/)
@@ -1639,6 +1658,45 @@ export function diagnoseTextDefects(
       ? Math.round(authorialDnaItems.reduce((sum, item) => sum + item.matchPct, 0) / authorialDnaItems.length)
       : null,
   };
+  const anomalyWordCount = Math.max(1, getSentenceWords(text).length);
+  const donorAnomalyItems: DonorAnomalyMatchItem[] = (blueprint?.authorialAnomalies ?? []).map((anomaly) => {
+    const forms = Array.from(new Set(anomaly.observedForms.map((form) => form.trim().toLowerCase().replace(/ё/g, 'е')).filter(Boolean)));
+    let resultCount = 0;
+    for (const form of forms) {
+      const escaped = form.replace(/[.*+?^${}()|[\]\\]/g, '\\  const lengths = sentences.map((s) => getSentenceWords(s).length);');
+      const matches = text.toLowerCase().replace(/ё/g, 'е').match(new RegExp(escaped, 'g'));
+      resultCount += matches?.length ?? 0;
+    }
+    const resultPer300Words = Number(((resultCount / anomalyWordCount) * 300).toFixed(2));
+    const expectedCountInResult = Number(((anomaly.per300Words / 300) * anomalyWordCount).toFixed(2));
+    const tooShort = expectedCountInResult < 0.5;
+    const denominator = Math.max(0.2, anomaly.per300Words);
+    const matchPct = Math.max(0, Math.min(100, Math.round(100 - (Math.abs(resultPer300Words - anomaly.per300Words) / denominator) * 100)));
+    return {
+      category: anomaly.category,
+      donorPer300Words: anomaly.per300Words,
+      resultPer300Words,
+      donorCount: anomaly.count,
+      resultCount,
+      expectedCountInResult,
+      matchPct,
+      status: (tooShort
+        ? 'not_expected_in_short_text'
+        : resultPer300Words < anomaly.per300Words * 0.5
+          ? 'underrepresented'
+          : resultPer300Words > anomaly.per300Words * 1.5
+            ? 'overrepresented'
+            : 'matched') as DonorAnomalyMatchItem['status'],
+    };
+  });
+  const donorAnomalyMatch: DonorAnomalyMatchReport | null = blueprint?.authorialAnomalies
+    ? {
+        items: donorAnomalyItems,
+        averageMatchPct: donorAnomalyItems.length > 0
+          ? Math.round(donorAnomalyItems.reduce((sum, item) => sum + item.matchPct, 0) / donorAnomalyItems.length)
+          : null,
+      }
+    : null;
   const lengths = sentences.map((s) => getSentenceWords(s).length);
   const totalWords = lengths.reduce((a, b) => a + b, 0) || 1;
   const avgLen = Number((totalWords / (lengths.length || 1)).toFixed(1));
